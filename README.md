@@ -17,7 +17,7 @@ Python Scripts to poll your biometric attendance system _(BAS)_ for logs and syn
 
 
 ## Pre-requisites
-* Python 3.6+
+* Python 3.10+ recommended for current dependencies on Windows.
 
 
 ## Usage
@@ -84,13 +84,39 @@ Installing as a Windows service
       > 2. Write Permissions for 'Shift Type' DocType.
 
     - `ERPNEXT_URL`: The web address at which you would access your ERPNext. eg:`'https://yourcompany.erpnext.com'`, `'https://erp.yourcompany.com'`
-    - `ERPNEXT_VERSION`: The base version of your ERPNext app. eg: 12, 13, 14
+    - `ERPNEXT_VERSION`: The base version of your ERPNext/HRMS app. eg: 13, 14, 15
   - This script's operational configs:
     - `PULL_FREQUENCY`: The time in minutes after which a pull for punches from the biometric device and push to ERPNext is attempted again.
     - `LOGS_DIRECTORY`: The Directory in which the logs related to this script's whereabouts are stored.
       > Hint: For most cases you can leave the above two keys unchanged.
     - `IMPORT_START_DATE`: The date after which the punches are pushed to ERPNext. Expected Format: `YYYYMMDD`.
       > For some cases you would have a lot of old punches in the biometric device. But, you would want to only import punches after certain date. You could set this key appropriately. Also, you can leave this as `None` if this case does not apply to you.
+    - `ERPNEXT_REQUEST_TIMEOUT`: The maximum number of seconds to wait for ERPNext API responses.
+  - Biometric device configs:
+    - `device_id`: Permanent unique device identifier. This is sent to ERPNext Employee Checkin and is also used for local retry/status identity. Do not change it when only the IP address or port changes.
+    - `ip`: Device IP address or hostname. `host` is also accepted by the sync engine.
+    - `port`: Optional ZKTeco TCP port. Defaults to `4370` when omitted.
+    - `password`: Optional ZKTeco connection password. Defaults to `0` when omitted.
+    - `punch_direction`: `'IN'`, `'OUT'`, `'AUTO'`, or `None`.
+    - `clear_from_device_on_fetch`: Keep this `False` for production. Setting it to `True` can delete attendance records from the biometric device after fetch.
+    - `latitude` / `longitude`: Optional. Required only when HRMS geolocation tracking requires them.
+
+Example device:
+
+```
+devices = [
+    {
+        'device_id': 'FP1_DEVICE_01',
+        'ip': '10.0.0.20',
+        'port': 4371,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    }
+]
+```
+
+For ERPNext/HRMS v15, ZKTeco User ID/PIN should match the Employee Attendance Device ID.
 
 > TODO: fill this section with more info to help Non-Technical Individuals.
 

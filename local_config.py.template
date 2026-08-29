@@ -3,25 +3,29 @@
 ERPNEXT_API_KEY = ''
 ERPNEXT_API_SECRET = ''
 ERPNEXT_URL = 'http://dev.local:8000'
-ERPNEXT_VERSION = 13
+ERPNEXT_VERSION = 15
 
 
 # operational configs
 PULL_FREQUENCY = 60 # in minutes
 LOGS_DIRECTORY = 'logs' # logs of this script is stored in this directory
 IMPORT_START_DATE = None # format: '20190501'
+ERPNEXT_REQUEST_TIMEOUT = 30 # seconds to wait for ERPNext API responses
 
-# Biometric device configs (all keys mandatory, except latitude and longitude they are mandatory only if 'Allow Geolocation Tracking' is turned on in Frappe HR)
-    #- device_id - must be unique, strictly alphanumerical chars only. no space allowed.
-    #- ip - device IP Address
+# Biometric device configs
+    #- device_id - permanent unique device identifier sent to ERPNext Employee Checkin.
+                  # Keep this stable even if device IP/port changes.
+    #- ip - device IP address or hostname. 'host' is also accepted for compatibility with hostnames.
+    #- port - optional ZKTeco TCP port. Defaults to 4370 when omitted.
+    #- password - optional ZKTeco connection password. Defaults to 0 when omitted.
     #- punch_direction - 'IN'/'OUT'/'AUTO'/None
     #- clear_from_device_on_fetch: if set to true then attendance is deleted after fetch is successful.
-                                    #(Caution: this feature can lead to data loss if used carelessly.)
-    #- latitude - float, latitude of the location of the device
-    #- longitude - float, longitude of the location of the device
+                                    # WARNING: keep this False for production unless you have a verified backup and retention process.
+    #- latitude - optional float, required only if 'Allow Geolocation Tracking' is enabled in HRMS
+    #- longitude - optional float, required only if 'Allow Geolocation Tracking' is enabled in HRMS
 devices = [
-    {'device_id':'test_1','ip':'192.168.0.209', 'punch_direction': None, 'clear_from_device_on_fetch': False, 'latitude':0.0000,'longitude':0.0000},
-    {'device_id':'test_2','ip':'192.168.2.209', 'punch_direction': None, 'clear_from_device_on_fetch': False, 'latitude':0.0000,'longitude':0.0000}
+    {'device_id':'FP1_DEVICE_01','ip':'10.0.0.20', 'port': 4371, 'password': 0, 'punch_direction': None, 'clear_from_device_on_fetch': False},
+    {'device_id':'FP1_DEVICE_02','ip':'10.0.0.21', 'port': 4370, 'password': 0, 'punch_direction': None, 'clear_from_device_on_fetch': False}
 ]
 
 # Configs updating sync timestamp in the Shift Type DocType 

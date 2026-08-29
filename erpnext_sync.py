@@ -25,6 +25,9 @@ if hasattr(config,'allowed_exceptions'):
 device_punch_values_IN = getattr(config, 'device_punch_values_IN', [0,4])
 device_punch_values_OUT = getattr(config, 'device_punch_values_OUT', [1,5])
 ERPNEXT_VERSION = getattr(config, 'ERPNEXT_VERSION', 14)
+ERPNEXT_REQUEST_TIMEOUT = getattr(config, 'ERPNEXT_REQUEST_TIMEOUT', getattr(config, 'REQUEST_TIMEOUT', 30))
+DEFAULT_ZK_PORT = 4370
+DEFAULT_ZK_PASSWORD = 0
 
 # possible area of further developemt
     # Real-time events - setup getting events pushed from the machine rather then polling.
@@ -51,14 +54,15 @@ def main():
             info_logger.info("Cleared for lift off!")
             for device in config.devices:
                 device_attendance_logs = None
+                device = normalize_device_config(device)
                 info_logger.info("Processing Device: "+ device['device_id'])
-                dump_file = get_dump_file_name_and_directory(device['device_id'], device['ip'])
+                dump_file = get_dump_file_name_and_directory(device['device_id'])
                 if os.path.exists(dump_file):
                     info_logger.error('Device Attendance Dump Found in Log Directory. This can mean the program crashed unexpectedly. Retrying with dumped data.')
                     with open(dump_file, 'r') as f:
                         file_contents = f.read()
                         if file_contents:
-                            device_attendance_logs = list(map(lambda x: _apply_function_to_key(x, 'timestamp', datetime.datetime.fromtimestamp), json.loads(file_contents)))
+                            device_attendance_logs = read_attendance_dump(file_contents)
                 try:
                     pull_process_and_push_data(device, device_attendance_logs)
                     status.set(f'{device["device_id"]}_push_timestamp', str(datetime.datetime.now()))
@@ -67,7 +71,7 @@ def main():
                         os.remove(dump_file)
                     info_logger.info("Successfully processed Device: "+ device['device_id'])
                 except:
-                    error_logger.exception('exception when calling pull_process_and_push_data function for device'+json.dumps(device, default=str))
+                    error_logger.exception('exception when calling pull_process_and_push_data function for device'+json.dumps(redact_device_config(device), default=str))
             if hasattr(config,'shift_type_device_mapping'):
                 update_shift_last_sync_timestamp(config.shift_type_device_mapping)
             status.set('mission_accomplished_timestamp', str(datetime.datetime.now()))
@@ -84,14 +88,16 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
     device: a single device config object from the local_config file
     device_attendance_logs: fetching from device is skipped if this param is passed. used to restart failed fetches from previous runs.
     """
+    device = normalize_device_config(device)
     attendance_success_log_file = '_'.join(["attendance_success_log", device['device_id']])
     attendance_failed_log_file = '_'.join(["attendance_failed_log", device['device_id']])
     attendance_success_logger = setup_logger(attendance_success_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_success_log_file])+'.log')
     attendance_failed_logger = setup_logger(attendance_failed_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_failed_log_file])+'.log')
     if not device_attendance_logs:
-        device_attendance_logs = get_all_attendance_from_device(device['ip'], device_id=device['device_id'], clear_from_device_on_fetch=device['clear_from_device_on_fetch'])
+        device_attendance_logs = get_all_attendance_from_device(device['ip'], port=device['port'], password=device['password'], device_id=device['device_id'], clear_from_device_on_fetch=device['clear_from_device_on_fetch'])
         if not device_attendance_logs:
             return
+    device_attendance_logs = normalize_attendance_logs(device_attendance_logs)
     # for finding the last successfull push and restart from that point (or) from a set 'config.IMPORT_START_DATE' (whichever is later)
     index_of_last = -1
     last_line = get_last_line_from_file('/'.join([config.LOGS_DIRECTORY, attendance_success_log_file])+'.log')
@@ -116,8 +122,11 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                     break
             elif last_timestamp:
                 if x['timestamp'] >= last_timestamp:
-                    index_of_last = i
+                    index_of_last = i - 1
                     break
+        else:
+            if last_timestamp and not last_user_id:
+                return
 
     for device_attendance_log in device_attendance_logs[index_of_last+1:]:
         punch_direction = device['punch_direction']
@@ -128,7 +137,7 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 punch_direction = 'IN'
             else:
                 punch_direction = None
-        erpnext_status_code, erpnext_message = send_to_erpnext(device_attendance_log['user_id'], device_attendance_log['timestamp'], device['device_id'], punch_direction, latitude=device['latitude'], longitude=device['longitude'])
+        erpnext_status_code, erpnext_message = send_to_erpnext(device_attendance_log['user_id'], device_attendance_log['timestamp'], device['device_id'], punch_direction, latitude=device.get('latitude'), longitude=device.get('longitude'))
         if erpnext_status_code == 200:
             attendance_success_logger.info("\t".join([erpnext_message, str(device_attendance_log['uid']),
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
@@ -143,9 +152,11 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 raise Exception('API Call to ERPNext Failed.')
 
 
-def get_all_attendance_from_device(ip, port=4370, timeout=30, device_id=None, clear_from_device_on_fetch=False):
+def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, password=DEFAULT_ZK_PASSWORD, device_id=None, clear_from_device_on_fetch=False):
     #  Sample Attendance Logs [{'punch': 255, 'user_id': '22', 'uid': 12349, 'status': 1, 'timestamp': datetime.datetime(2019, 2, 26, 20, 31, 29)},{'punch': 255, 'user_id': '7', 'uid': 7, 'status': 1, 'timestamp': datetime.datetime(2019, 2, 26, 20, 31, 36)}]
-    zk = ZK(ip, port=port, timeout=timeout)
+    port = validate_port(port)
+    password = validate_password(password)
+    zk = ZK(ip, port=port, timeout=timeout, password=password)
     conn = None
     attendances = []
     try:
@@ -161,9 +172,15 @@ def get_all_attendance_from_device(ip, port=4370, timeout=30, device_id=None, cl
         if len(attendances):
             # keeping a backup before clearing data incase the programs fails.
             # if everything goes well then this file is removed automatically at the end.
-            dump_file_name = get_dump_file_name_and_directory(device_id, ip)
+            dump_file_name = get_dump_file_name_and_directory(device_id)
             with open(dump_file_name, 'w+') as f:
-                f.write(json.dumps(list(map(lambda x: x.__dict__, attendances)), default=datetime.datetime.timestamp))
+                f.write(json.dumps({
+                    'device_id': device_id,
+                    'ip': ip,
+                    'port': port,
+                    'fetched_at': datetime.datetime.now(),
+                    'attendances': list(map(lambda x: x.__dict__, attendances))
+                }, default=datetime.datetime.timestamp))
             if clear_from_device_on_fetch:
                 x = conn.clear_attendance()
                 info_logger.info("\t".join((ip, "Attendance Clear Attempted. Result:", str(x))))
@@ -175,7 +192,7 @@ def get_all_attendance_from_device(ip, port=4370, timeout=30, device_id=None, cl
     finally:
         if conn:
             conn.disconnect()
-    return list(map(lambda x: x.__dict__, attendances))
+    return normalize_attendance_logs(list(map(lambda x: x.__dict__, attendances)))
 
 
 def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
@@ -203,7 +220,7 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
         'latitude' : latitude,
         'longitude' : longitude
     }
-    response = requests.request("POST", url, headers=headers, json=data)
+    response = requests.request("POST", url, headers=headers, json=data, timeout=ERPNEXT_REQUEST_TIMEOUT)
     if response.status_code == 200:
         return 200, json.loads(response._content)['message']['name']
     else:
@@ -257,7 +274,7 @@ def send_shift_sync_to_erpnext(shift_type_name, sync_timestamp):
         "last_sync_of_checkin" : str(sync_timestamp)
     }
     try:
-        response = requests.request("PUT", url, headers=headers, data=json.dumps(data))
+        response = requests.request("PUT", url, headers=headers, data=json.dumps(data), timeout=ERPNEXT_REQUEST_TIMEOUT)
         if response.status_code == 200:
             info_logger.info("\t".join(['Shift Type last_sync_of_checkin Updated', str(shift_type_name), str(sync_timestamp.timestamp())]))
         else:
@@ -302,8 +319,65 @@ def setup_logger(name, log_file, level=logging.INFO, formatter=None):
 
     return logger
 
-def get_dump_file_name_and_directory(device_id, device_ip):
-    return config.LOGS_DIRECTORY + '/' + device_id + "_" + device_ip.replace('.', '_') + '_last_fetch_dump.json'
+def get_dump_file_name_and_directory(device_id, device_ip=None):
+    return config.LOGS_DIRECTORY + '/' + device_id + '_last_fetch_dump.json'
+
+def normalize_device_config(device):
+    device_id = device.get('device_id')
+    ip = device.get('ip') or device.get('host')
+    if not device_id:
+        raise ValueError('Device configuration is missing required device_id.')
+    if not ip:
+        raise ValueError('Device configuration for device_id '+str(device_id)+' is missing required ip or host.')
+
+    normalized_device = dict(device)
+    normalized_device['device_id'] = str(device_id)
+    normalized_device['ip'] = ip
+    normalized_device['port'] = validate_port(device.get('port', DEFAULT_ZK_PORT))
+    normalized_device['password'] = validate_password(device.get('password', DEFAULT_ZK_PASSWORD))
+    normalized_device['punch_direction'] = device.get('punch_direction')
+    normalized_device['clear_from_device_on_fetch'] = bool(device.get('clear_from_device_on_fetch', False))
+    if normalized_device['clear_from_device_on_fetch']:
+        info_logger.warning('Device '+str(device_id)+' has clear_from_device_on_fetch enabled. This can delete attendance records from the biometric device.')
+    normalized_device['latitude'] = device.get('latitude')
+    normalized_device['longitude'] = device.get('longitude')
+    return normalized_device
+
+def redact_device_config(device):
+    redacted_device = dict(device)
+    if 'password' in redacted_device:
+        redacted_device['password'] = '***'
+    return redacted_device
+
+def validate_port(port):
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        raise ValueError('Device port must be an integer between 1 and 65535.')
+    if port < 1 or port > 65535:
+        raise ValueError('Device port must be between 1 and 65535.')
+    return port
+
+def validate_password(password):
+    try:
+        return int(password)
+    except (TypeError, ValueError):
+        raise ValueError('Device password must be an integer. Use 0 when the device has no connection password.')
+
+def normalize_attendance_logs(attendance_logs):
+    return sorted(attendance_logs, key=lambda row: (
+        row.get('timestamp') or datetime.datetime.min,
+        row.get('uid') if row.get('uid') is not None else -1,
+        str(row.get('user_id', ''))
+    ))
+
+def read_attendance_dump(file_contents):
+    dump_data = json.loads(file_contents)
+    if isinstance(dump_data, dict):
+        attendance_logs = dump_data.get('attendances', [])
+    else:
+        attendance_logs = dump_data
+    return normalize_attendance_logs(list(map(lambda x: _apply_function_to_key(x, 'timestamp', datetime.datetime.fromtimestamp), attendance_logs)))
 
 def _apply_function_to_key(obj, key, fn):
     obj[key] = fn(obj[key])
