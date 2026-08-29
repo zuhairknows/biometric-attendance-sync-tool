@@ -269,6 +269,50 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "between 1 and 65535"):
             sync.normalize_device_config({"device_id": "FP1", "ip": "10.0.0.20", "port": 70000})
 
+    def test_device_config_accepts_safe_device_id(self):
+        sync = load_sync_module(self.logs_directory)
+        first = sync.normalize_device_config({"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20"})
+        second = sync.normalize_device_config({"device_id": "FP1-GATE-02", "ip": "10.0.0.21"})
+        self.assertEqual(first["device_id"], "FP1_DEVICE_01")
+        self.assertEqual(second["device_id"], "FP1-GATE-02")
+
+    def test_device_config_rejects_unsafe_device_id(self):
+        sync = load_sync_module(self.logs_directory)
+        unsafe_device_ids = ["../FP1", "FP1.DEVICE.01", "FP1:DEVICE:01", "FP1/DEVICE/01", "FP1\\DEVICE\\01"]
+        for device_id in unsafe_device_ids:
+            with self.subTest(device_id=device_id):
+                with self.assertRaisesRegex(ValueError, "invalid"):
+                    sync.normalize_device_config({"device_id": device_id, "ip": "10.0.0.20"})
+
+    def test_config_validation_rejects_duplicate_device_ids(self):
+        sync = load_sync_module(self.logs_directory)
+        with self.assertRaisesRegex(ValueError, "Duplicate device_id"):
+            sync.validate_unique_device_ids([
+                {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20"},
+                {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.21"},
+            ])
+
+    def test_main_isolates_per_device_faults_and_redacts_passwords(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.devices = [
+            {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "password": 1111},
+            {"device_id": "FP1_BAD", "password": 1234},
+            {"device_id": "FP1_DEVICE_03", "ip": "10.0.0.22", "password": 3333},
+        ]
+        processed_device_ids = []
+
+        def fake_pull_process_and_push_data(device, device_attendance_logs=None):
+            processed_device_ids.append(device["device_id"])
+
+        sync.pull_process_and_push_data = fake_pull_process_and_push_data
+        sync.main()
+
+        self.assertEqual(processed_device_ids, ["FP1_DEVICE_01", "FP1_DEVICE_03"])
+        error_log = (self.logs_directory / "error.log").read_text()
+        self.assertIn("FP1_BAD", error_log)
+        self.assertIn("***", error_log)
+        self.assertNotIn("1234", error_log)
+
 
 if __name__ == "__main__":
     unittest.main()

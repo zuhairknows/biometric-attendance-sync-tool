@@ -4,6 +4,7 @@ import requests
 import datetime
 import json
 import os
+import re
 import sys
 import time
 import logging
@@ -28,6 +29,7 @@ ERPNEXT_VERSION = getattr(config, 'ERPNEXT_VERSION', 14)
 ERPNEXT_REQUEST_TIMEOUT = getattr(config, 'ERPNEXT_REQUEST_TIMEOUT', getattr(config, 'REQUEST_TIMEOUT', 30))
 DEFAULT_ZK_PORT = 4370
 DEFAULT_ZK_PASSWORD = 0
+DEVICE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]+$')
 
 # possible area of further developemt
     # Real-time events - setup getting events pushed from the machine rather then polling.
@@ -52,18 +54,19 @@ def main():
             status.set('lift_off_timestamp', str(datetime.datetime.now()))
             status.save()
             info_logger.info("Cleared for lift off!")
+            validate_unique_device_ids(config.devices)
             for device in config.devices:
                 device_attendance_logs = None
-                device = normalize_device_config(device)
-                info_logger.info("Processing Device: "+ device['device_id'])
-                dump_file = get_dump_file_name_and_directory(device['device_id'])
-                if os.path.exists(dump_file):
-                    info_logger.error('Device Attendance Dump Found in Log Directory. This can mean the program crashed unexpectedly. Retrying with dumped data.')
-                    with open(dump_file, 'r') as f:
-                        file_contents = f.read()
-                        if file_contents:
-                            device_attendance_logs = read_attendance_dump(file_contents)
                 try:
+                    device = normalize_device_config(device)
+                    info_logger.info("Processing Device: "+ device['device_id'])
+                    dump_file = get_dump_file_name_and_directory(device['device_id'])
+                    if os.path.exists(dump_file):
+                        info_logger.error('Device Attendance Dump Found in Log Directory. This can mean the program crashed unexpectedly. Retrying with dumped data.')
+                        with open(dump_file, 'r') as f:
+                            file_contents = f.read()
+                            if file_contents:
+                                device_attendance_logs = read_attendance_dump(file_contents)
                     pull_process_and_push_data(device, device_attendance_logs)
                     status.set(f'{device["device_id"]}_push_timestamp', str(datetime.datetime.now()))
                     status.save()
@@ -327,6 +330,7 @@ def normalize_device_config(device):
     ip = device.get('ip') or device.get('host')
     if not device_id:
         raise ValueError('Device configuration is missing required device_id.')
+    validate_device_id(device_id)
     if not ip:
         raise ValueError('Device configuration for device_id '+str(device_id)+' is missing required ip or host.')
 
@@ -342,6 +346,29 @@ def normalize_device_config(device):
     normalized_device['latitude'] = device.get('latitude')
     normalized_device['longitude'] = device.get('longitude')
     return normalized_device
+
+def validate_device_id(device_id):
+    device_id = str(device_id)
+    if not DEVICE_ID_PATTERN.match(device_id):
+        raise ValueError('Device ID '+device_id+' is invalid. Use only letters, numbers, underscore, and hyphen.')
+    return device_id
+
+def validate_unique_device_ids(devices):
+    seen_device_ids = set()
+    duplicate_device_ids = []
+    for device in devices:
+        device_id = device.get('device_id')
+        if not device_id:
+            continue
+        try:
+            device_id = validate_device_id(device_id)
+        except ValueError:
+            continue
+        if device_id in seen_device_ids:
+            duplicate_device_ids.append(device_id)
+        seen_device_ids.add(device_id)
+    if duplicate_device_ids:
+        raise ValueError('Duplicate device_id values found: '+', '.join(sorted(set(duplicate_device_ids))))
 
 def redact_device_config(device):
     redacted_device = dict(device)

@@ -31,7 +31,7 @@ devices = [
 # Configs updating sync timestamp in the Shift Type DocType 
 # please, read this thread to know why this is necessary https://discuss.erpnext.com/t/v-12-hr-auto-attendance-purpose-of-last-sync-of-checkin-in-shift-type/52997
 shift_type_device_mapping = [
-    {'shift_type_name': ['Shift1'], 'related_device_id': ['test_1','test_2']}
+    {'shift_type_name': ['Shift1'], 'related_device_id': ['FP1_DEVICE_01','FP1_DEVICE_02']}
 ]
 
 
