@@ -146,6 +146,11 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
+        elif is_duplicate_employee_checkin_response(erpnext_status_code, erpnext_message):
+            attendance_success_logger.info("\t".join(['DUPLICATE_ALREADY_SYNCED: '+erpnext_message, str(device_attendance_log['uid']),
+                str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
+                str(device_attendance_log['punch']), str(device_attendance_log['status']),
+                json.dumps(device_attendance_log, default=str)]))
         else:
             attendance_failed_logger.error("\t".join([str(erpnext_status_code), str(device_attendance_log['uid']),
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
@@ -234,6 +239,9 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
         else:
             error_logger.error('\t'.join(['Error during ERPNext API Call.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), error_str]))
         return response.status_code, error_str
+
+def is_duplicate_employee_checkin_response(status_code, message):
+    return status_code == 417 and DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE in message
 
 def update_shift_last_sync_timestamp(shift_type_device_mapping):
     """

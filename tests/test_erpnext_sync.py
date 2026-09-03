@@ -202,6 +202,94 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         sync.pull_process_and_push_data(device, logs)
         self.assertEqual([row[0] for row in sent], ["midnight", "later"])
 
+    def test_duplicate_employee_checkin_does_not_halt_processing(self):
+        sync = load_sync_module(self.logs_directory)
+        sent = []
+
+        def fake_send(user_id, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
+            sent.append(user_id)
+            if user_id == "duplicate":
+                return 417, sync.DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE
+            return 200, "CHECKIN-0001"
+
+        sync.send_to_erpnext = fake_send
+        device = {"device_id": "FP1", "ip": "10.0.0.20", "punch_direction": None}
+        logs = [
+            {"uid": 1, "user_id": "duplicate", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1},
+            {"uid": 2, "user_id": "later", "timestamp": datetime.datetime(2026, 8, 27, 8, 1), "punch": 0, "status": 1},
+        ]
+        sync.pull_process_and_push_data(device, logs)
+
+        self.assertEqual(sent, ["duplicate", "later"])
+        success_log = (self.logs_directory / "attendance_success_log_FP1.log").read_text()
+        failed_log = (self.logs_directory / "attendance_failed_log_FP1.log").read_text()
+        self.assertIn("DUPLICATE_ALREADY_SYNCED", success_log)
+        self.assertEqual(failed_log, "")
+
+    def test_duplicate_employee_checkin_advances_local_checkpoint(self):
+        sync = load_sync_module(self.logs_directory)
+        first_run_sent = []
+
+        def first_run_send(user_id, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
+            first_run_sent.append(user_id)
+            return 417, sync.DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE
+
+        sync.send_to_erpnext = first_run_send
+        device = {"device_id": "FP1", "ip": "10.0.0.20", "punch_direction": None}
+        duplicate_log = {"uid": 1, "user_id": "duplicate", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}
+        sync.pull_process_and_push_data(device, [duplicate_log])
+        self.assertEqual(first_run_sent, ["duplicate"])
+
+        second_run_sent = []
+
+        def second_run_send(user_id, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
+            second_run_sent.append(user_id)
+            return 200, "CHECKIN-0002"
+
+        sync.send_to_erpnext = second_run_send
+        later_log = {"uid": 2, "user_id": "later", "timestamp": datetime.datetime(2026, 8, 27, 8, 1), "punch": 0, "status": 1}
+        sync.pull_process_and_push_data(device, [duplicate_log, later_log])
+
+        self.assertEqual(second_run_sent, ["later"])
+
+    def test_unrelated_http_417_remains_failure(self):
+        sync = load_sync_module(self.logs_directory)
+
+        def fake_send(user_id, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
+            return 417, "Some other validation error"
+
+        sync.send_to_erpnext = fake_send
+        device = {"device_id": "FP1", "ip": "10.0.0.20", "punch_direction": None}
+        logs = [{"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
+
+        with self.assertRaisesRegex(Exception, "API Call to ERPNext Failed"):
+            sync.pull_process_and_push_data(device, logs)
+
+        failed_log = (self.logs_directory / "attendance_failed_log_FP1.log").read_text()
+        self.assertIn("417", failed_log)
+        self.assertNotIn("DUPLICATE_ALREADY_SYNCED", failed_log)
+
+    def test_later_punches_are_processed_after_duplicate(self):
+        sync = load_sync_module(self.logs_directory)
+        sent = []
+
+        def fake_send(user_id, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
+            sent.append(user_id)
+            if user_id == "duplicate":
+                return 417, sync.DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE
+            return 200, "CHECKIN-0001"
+
+        sync.send_to_erpnext = fake_send
+        device = {"device_id": "FP1", "ip": "10.0.0.20", "punch_direction": None}
+        logs = [
+            {"uid": 1, "user_id": "duplicate", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1},
+            {"uid": 2, "user_id": "later-1", "timestamp": datetime.datetime(2026, 8, 27, 8, 1), "punch": 0, "status": 1},
+            {"uid": 3, "user_id": "later-2", "timestamp": datetime.datetime(2026, 8, 27, 8, 2), "punch": 0, "status": 1},
+        ]
+        sync.pull_process_and_push_data(device, logs)
+
+        self.assertEqual(sent, ["duplicate", "later-1", "later-2"])
+
     def test_deterministic_attendance_ordering(self):
         sync = load_sync_module(self.logs_directory)
         logs = [
