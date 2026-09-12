@@ -8,7 +8,7 @@ ERPNEXT_API_KEY = 'YOUR_REAL_API_KEY'
 ERPNEXT_API_SECRET = 'YOUR_REAL_API_SECRET'
 
 # Production ERPNext site.
-ERPNEXT_URL = 'https://xyz.com'
+ERPNEXT_URL = 'https://your-erpnext-site.example.com'
 
 # ERPNext / HRMS major version.
 ERPNEXT_VERSION = 15
@@ -26,10 +26,10 @@ PULL_FREQUENCY = 5
 # synchronization checkpoints, and retry dumps.
 LOGS_DIRECTORY = 'logs'
 
-# Production go-live date.
+# Replace this with the actual production go-live date.
 # Any biometric punches before this date will not be imported.
 # Format must remain a STRING in YYYYMMDD format.
-IMPORT_START_DATE = '20260910'
+IMPORT_START_DATE = 'YYYYMMDD'
 
 # Maximum number of seconds to wait for an ERPNext API response.
 ERPNEXT_REQUEST_TIMEOUT = 30
