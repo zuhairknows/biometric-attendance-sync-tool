@@ -1,40 +1,124 @@
+# ============================================================
+# ERPNext Connection
+# ============================================================
 
-# ERPNext related configs
-ERPNEXT_API_KEY = ''
-ERPNEXT_API_SECRET = ''
-ERPNEXT_URL = 'http://dev.local:8000'
-ERPNEXT_VERSION = 13
+# API credentials for the dedicated ERPNext integration user.
+# Keep these credentials only in this local file.
+ERPNEXT_API_KEY = 'YOUR_REAL_API_KEY'
+ERPNEXT_API_SECRET = 'YOUR_REAL_API_SECRET'
+
+# Production ERPNext site.
+ERPNEXT_URL = 'https://erp.myfpf.com'
+
+# ERPNext / HRMS major version.
+ERPNEXT_VERSION = 15
 
 
-# operational configs
-PULL_FREQUENCY = 60 # in minutes
-LOGS_DIRECTORY = 'logs' # logs of this script is stored in this directory
-IMPORT_START_DATE = None # format: '20190501'
+# ============================================================
+# Synchronization Settings
+# ============================================================
 
-# Biometric device configs (all keys mandatory, except latitude and longitude they are mandatory only if 'Allow Geolocation Tracking' is turned on in Frappe HR)
-    #- device_id - must be unique, strictly alphanumerical chars only. no space allowed.
-    #- ip - device IP Address
-    #- punch_direction - 'IN'/'OUT'/'AUTO'/None
-    #- clear_from_device_on_fetch: if set to true then attendance is deleted after fetch is successful.
-                                    #(Caution: this feature can lead to data loss if used carelessly.)
-    #- latitude - float, latitude of the location of the device
-    #- longitude - float, longitude of the location of the device
+# Poll biometric devices every 5 minutes.
+# This is a good starting interval for production attendance.
+PULL_FREQUENCY = 5
+
+# Local directory used for application logs, device status,
+# synchronization checkpoints, and retry dumps.
+LOGS_DIRECTORY = 'logs'
+
+# Production go-live date.
+# Any biometric punches before this date will not be imported.
+# Format must remain a STRING in YYYYMMDD format.
+IMPORT_START_DATE = '20260910'
+
+# Maximum number of seconds to wait for an ERPNext API response.
+ERPNEXT_REQUEST_TIMEOUT = 30
+
+
+# ============================================================
+# ZKTeco Biometric Devices
+# ============================================================
+
 devices = [
-    {'device_id':'test_1','ip':'192.168.0.209', 'punch_direction': None, 'clear_from_device_on_fetch': False, 'latitude':0.0000,'longitude':0.0000},
-    {'device_id':'test_2','ip':'192.168.2.209', 'punch_direction': None, 'clear_from_device_on_fetch': False, 'latitude':0.0000,'longitude':0.0000}
+    {
+        # Permanent device identity.
+        # Do not change this when the device IP or port changes.
+        'device_id': 'FP1_DEVICE_01',
+
+        # Current network settings for the tested uFace800.
+        'ip': '10.0.0.20',
+        'port': 4371,
+
+        # ZKTeco communication password.
+        # 0 means no connection password.
+        'password': 0,
+
+        # Leave as None for now.
+        # ERPNext Auto Attendance will determine attendance
+        # using the employee's assigned Shift Type.
+        'punch_direction': None,
+
+        # IMPORTANT:
+        # Never automatically delete punches from the device.
+        'clear_from_device_on_fetch': False
+    }
 ]
 
-# Configs updating sync timestamp in the Shift Type DocType 
-# please, read this thread to know why this is necessary https://discuss.erpnext.com/t/v-12-hr-auto-attendance-purpose-of-last-sync-of-checkin-in-shift-type/52997
+
+# ============================================================
+# ERPNext Shift Type Synchronization
+# ============================================================
+
+# This device is used by employees working across these
+# ERPNext Shift Types.
+#
+# last_sync_of_checkin will advance only after the related
+# biometric device has been processed successfully.
+
 shift_type_device_mapping = [
-    {'shift_type_name': ['Shift1'], 'related_device_id': ['test_1','test_2']}
+    {
+        'shift_type_name': [
+            'صباحي 1',
+            'ليلي',
+            'صباحي 2',
+            'إداري 1',
+            'إداري 2',
+            'إداري 3',
+            'إداري 4',
+            'الصحة والسلامة المهنية 1',
+            'الصحة والسلامة المهنية 2',
+            'الصحة والسلامة المهنية 3',
+            'الصحة والسلامة المهنية 4',
+            'الصيانة',
+            'الادارة العامة 1',
+            'الادارة العامة 2',
+            'الادارة العامة 3',
+            'الادارة العامة 4',
+            'الادارة العامة 5',
+            'الادارة العامة 6',
+            'مرن',
+            'ليلي 2',
+            'مندوبين المشتريات'
+        ],
+        'related_device_id': [
+            'FP1_DEVICE_01'
+        ]
+    }
 ]
 
 
-# Ignore following exceptions thrown by ERPNext and continue importing punch logs.
-# Note: All other exceptions will halt the punch log import to erpnext.
-#       1. No Employee found for the given employee User ID in the Biometric device.
-#       2. Employee is inactive for the given employee User ID in the Biometric device.
-#       3. Duplicate Employee Checkin found. (This exception can happen if you have cleared the logs/status.json of this script)
-# Use the corresponding number to ignore the above exceptions. (Default: Ignores all the listed exceptions)
-allowed_exceptions = [1,2,3]
+# ============================================================
+# Allowed ERPNext Exceptions
+# ============================================================
+
+# These known conditions must not stop synchronization of
+# subsequent biometric punches:
+#
+# 1 = No Employee found for Attendance Device ID
+# 2 = Employee is inactive
+# 3 = Duplicate Employee Checkin
+#
+# Duplicate Employee Checkins are additionally handled by our
+# customized integration as idempotent/already synchronized.
+
+allowed_exceptions = [1, 2, 3]
