@@ -4,7 +4,7 @@ import sys
 import time
 from dataclasses import dataclass
 
-from .paths import SERVICE_SCRIPT
+from .paths import SERVICE_SCRIPT, get_packaged_service_executable
 
 
 SERVICE_NAME = "ERPNextBiometricPushService"
@@ -69,11 +69,12 @@ def _parse_startup(sc_output):
 
 
 class ServiceController:
-    def __init__(self, runner=None, python_executable=None, admin_checker=None, sleep=None):
+    def __init__(self, runner=None, python_executable=None, admin_checker=None, sleep=None, service_executable_resolver=None):
         self.runner = runner or subprocess.run
         self.python_executable = python_executable or sys.executable
         self.admin_checker = admin_checker or is_running_as_admin
         self.sleep = sleep or time.sleep
+        self.service_executable_resolver = service_executable_resolver or get_packaged_service_executable
 
     def is_installed(self):
         result = self._run(["sc.exe", "query", SERVICE_NAME], timeout=10)
@@ -143,6 +144,9 @@ class ServiceController:
         )
 
     def _service_script_command(self, action):
+        service_executable = self.service_executable_resolver()
+        if service_executable:
+            return (str(service_executable), action)
         return (self.python_executable, str(SERVICE_SCRIPT), action)
 
     def _wait_for_state(self, target_state, timeout_seconds=30):

@@ -1,6 +1,8 @@
 import subprocess
 import unittest
+from pathlib import Path
 
+from manager import paths
 from manager.service_controller import SERVICE_NAME, ServiceController
 
 
@@ -48,7 +50,7 @@ class ServiceControllerTests(unittest.TestCase):
 
     def test_install_command_construction(self):
         runner = FakeRunner([completed()])
-        controller = ServiceController(runner=runner, python_executable="python.exe", admin_checker=lambda: True)
+        controller = ServiceController(runner=runner, python_executable="python.exe", admin_checker=lambda: True, service_executable_resolver=lambda: None)
 
         result = controller.install_service()
 
@@ -56,6 +58,29 @@ class ServiceControllerTests(unittest.TestCase):
         self.assertEqual(runner.calls[0][0][0], "python.exe")
         self.assertTrue(runner.calls[0][0][1].endswith("erpnext_sync_win.py"))
         self.assertEqual(runner.calls[0][0][2], "install")
+
+    def test_service_executable_command_construction(self):
+        runner = FakeRunner([completed()])
+        service_exe = Path(r"C:\Program Files\FPF Biometric Sync\FPF-Biometric-Sync-Service.exe")
+        controller = ServiceController(
+            runner=runner,
+            python_executable="python.exe",
+            admin_checker=lambda: True,
+            service_executable_resolver=lambda: service_exe,
+        )
+
+        result = controller.install_service()
+
+        self.assertTrue(result.success)
+        self.assertEqual(runner.calls[0][0], [str(service_exe), "install"])
+
+    def test_manager_uses_frozen_service_executable_when_available(self):
+        test_dir = Path.cwd() / ".test-logs" / self._testMethodName
+        test_dir.mkdir(parents=True, exist_ok=True)
+        service_exe = test_dir / paths.SERVICE_EXE_NAME
+        service_exe.write_text("placeholder", encoding="utf-8")
+        with unittest.mock.patch.object(paths, "is_frozen_app", return_value=True), unittest.mock.patch.object(paths, "get_app_root", return_value=test_dir):
+            self.assertEqual(paths.get_packaged_service_executable(), service_exe.resolve())
 
     def test_install_requires_admin(self):
         runner = FakeRunner()
@@ -76,7 +101,13 @@ class ServiceControllerTests(unittest.TestCase):
             completed(stdout="START_TYPE         : 2   AUTO_START\n"),
             completed(),
         ])
-        controller = ServiceController(runner=runner, python_executable="python.exe", admin_checker=lambda: True, sleep=lambda _seconds: None)
+        controller = ServiceController(
+            runner=runner,
+            python_executable="python.exe",
+            admin_checker=lambda: True,
+            sleep=lambda _seconds: None,
+            service_executable_resolver=lambda: None,
+        )
 
         result = controller.uninstall_service()
 
@@ -104,4 +135,3 @@ class ServiceControllerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

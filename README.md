@@ -139,6 +139,8 @@ The Windows service wakes on a short heartbeat so it can stop promptly, but `PUL
 
 See [Windows service deployment](docs/windows-service.md) and [production checklist](docs/production-checklist.md) before installing the service.
 
+For production packaging, see [Packaged Windows Service](docs/packaged-service.md). The packaged service avoids depending on a virtual environment, user-profile Python, or `pythonservice.exe`.
+
 ## FPF Biometric Sync Manager
 
 This branch includes a Windows desktop utility named `FPF Biometric Sync Manager` for non-technical operation of the existing Windows service.
