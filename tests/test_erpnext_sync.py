@@ -290,6 +290,28 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
         self.assertEqual(sent, ["duplicate", "later-1", "later-2"])
 
+    def test_info_logger_writes_utf8_arabic_and_mixed_text(self):
+        sync = load_sync_module(self.logs_directory)
+        message = "Shift Type صباحي 1 synchronized"
+
+        sync.info_logger.info(message)
+        for handler in sync.info_logger.handlers:
+            handler.flush()
+
+        log_text = (self.logs_directory / "logs.log").read_text(encoding="utf-8")
+        self.assertIn(message, log_text)
+
+    def test_error_logger_writes_utf8_arabic_and_mixed_text(self):
+        sync = load_sync_module(self.logs_directory)
+        message = "Error updating Shift Type ليلي"
+
+        sync.error_logger.error(message)
+        for handler in sync.error_logger.handlers:
+            handler.flush()
+
+        log_text = (self.logs_directory / "error.log").read_text(encoding="utf-8")
+        self.assertIn(message, log_text)
+
     def test_deterministic_attendance_ordering(self):
         sync = load_sync_module(self.logs_directory)
         logs = [

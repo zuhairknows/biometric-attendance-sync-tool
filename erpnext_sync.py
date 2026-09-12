@@ -320,12 +320,11 @@ def setup_logger(name, log_file, level=logging.INFO, formatter=None):
     if not formatter:
         formatter = logging.Formatter('%(asctime)s\t%(levelname)s\t%(message)s')
 
-    handler = RotatingFileHandler(log_file, maxBytes=10000000, backupCount=50)
-    handler.setFormatter(formatter)
-
     logger = logging.getLogger(name)
     logger.setLevel(level)
     if not logger.hasHandlers():
+        handler = RotatingFileHandler(log_file, maxBytes=10000000, backupCount=50, encoding='utf-8')
+        handler.setFormatter(formatter)
         logger.addHandler(handler)
 
     return logger
