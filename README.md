@@ -139,6 +139,20 @@ The Windows service wakes on a short heartbeat so it can stop promptly, but `PUL
 
 See [Windows service deployment](docs/windows-service.md) and [production checklist](docs/production-checklist.md) before installing the service.
 
+## FPF Biometric Sync Manager
+
+This branch includes a Windows desktop utility named `FPF Biometric Sync Manager` for non-technical operation of the existing Windows service.
+
+It can show service health, validate configuration, test ERPNext, test ZKTeco devices, run one manual sync cycle, and open the logs/config folders. It does not replace the sync engine and does not change the Windows service name.
+
+Launch locally from this folder with:
+
+```text
+python -m manager.app
+```
+
+See [FPF Biometric Sync Manager](docs/sync-manager.md) for details.
+
 ## To build executable file for GUI
 ### Linux and Windows:
 1. Activate virtual environment.
