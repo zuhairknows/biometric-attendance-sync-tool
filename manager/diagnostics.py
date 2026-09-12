@@ -28,6 +28,7 @@ def _get_logger(config_module=None):
     log_file.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("manager")
     logger.setLevel(logging.INFO)
+    logger.propagate = False
     if not logger.handlers:
         handler = logging.FileHandler(log_file, encoding="utf-8")
         handler.setFormatter(logging.Formatter("%(asctime)s\t%(levelname)s\t%(message)s"))

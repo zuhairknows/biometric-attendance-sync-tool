@@ -1,8 +1,9 @@
 import datetime
+import logging
 import sys
 import traceback
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5 import QtCore, QtWidgets
 
 from . import diagnostics
 from .health import get_health_snapshot
@@ -11,6 +12,9 @@ from .service_controller import ServiceController
 
 
 APP_NAME = "FPF Biometric Sync Manager"
+APP_LOGGER = logging.getLogger("manager.app")
+APP_LOGGER.addHandler(logging.NullHandler())
+APP_LOGGER.propagate = False
 
 
 class Worker(QtCore.QObject):
@@ -32,7 +36,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
     def __init__(self, controller=None):
         super().__init__()
         self.controller = controller or ServiceController()
-        self.active_threads = []
+        self.active_jobs = []
         self.sync_running = False
         self.config_module = None
         self.sync_module = None
@@ -223,15 +227,33 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
     def _run_worker(self, callback, finished_callback):
         thread = QtCore.QThread(self)
         worker = Worker(callback)
+        job = {"thread": thread, "worker": worker, "callback": finished_callback}
+        self.active_jobs.append(job)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.finished.connect(finished_callback)
+        worker.finished.connect(self._handle_worker_finished)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda: self._forget_thread(thread))
-        self.active_threads.append(thread)
+        thread.finished.connect(lambda checked=False, finished_job=job: self._forget_job(finished_job))
         thread.start()
+
+    @QtCore.pyqtSlot(object)
+    def _handle_worker_finished(self, result):
+        worker = self.sender()
+        job = self._find_job_by_worker(worker)
+        if job is None:
+            APP_LOGGER.error("Background worker finished without an active job reference")
+            self._recover_controls_after_handler_failure()
+            return
+
+        try:
+            job["callback"](result)
+        except Exception:
+            APP_LOGGER.exception("Background result handler failed")
+            diagnostics._get_logger(self.config_module).exception("Background result handler failed")
+            self._append_message("Operation finished, but the manager could not update the result. Check manager.log.")
+            self._recover_controls_after_handler_failure()
 
     def _handle_action_result(self, result):
         self._set_busy(False)
@@ -256,6 +278,8 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             self.sync_running = False
         button.setEnabled(True)
         self.refresh()
+        if not isinstance(result, Exception) and button is self.device_button:
+            self._apply_device_test_results(result.details)
 
     def _confirm_uninstall(self):
         answer = QtWidgets.QMessageBox.question(
@@ -286,6 +310,12 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         for button in [self.start_button, self.stop_button, self.restart_button, self.install_button, self.uninstall_button]:
             button.setEnabled(not busy)
 
+    def _recover_controls_after_handler_failure(self):
+        self._set_busy(False)
+        self.sync_running = False
+        for button in [self.erp_button, self.device_button, self.validate_button, self.sync_button]:
+            button.setEnabled(True)
+
     def _append_message(self, message):
         self.messages.append(str(message))
 
@@ -309,9 +339,44 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             return "unknown"
         return "warning"
 
-    def _forget_thread(self, thread):
-        if thread in self.active_threads:
-            self.active_threads.remove(thread)
+    def _find_job_by_worker(self, worker):
+        for job in self.active_jobs:
+            if job["worker"] is worker:
+                return job
+        return None
+
+    def _forget_job(self, job):
+        if job in self.active_jobs:
+            self.active_jobs.remove(job)
+
+    def _apply_device_test_results(self, details):
+        for detail in details:
+            device_id, status = self._parse_device_result(detail)
+            if not device_id:
+                continue
+            row = self._find_device_row(device_id)
+            if row is None:
+                continue
+            item = QtWidgets.QTableWidgetItem(status)
+            if status == "Connected":
+                item.setForeground(QtCore.Qt.darkGreen)
+            elif status == "Failed":
+                item.setForeground(QtCore.Qt.red)
+            self.device_table.setItem(row, 2, item)
+
+    def _parse_device_result(self, detail):
+        if " - Connected" in detail:
+            return detail.split(" ", 1)[0], "Connected"
+        if " - Connection failed" in detail:
+            return detail.split(" ", 1)[0], "Failed"
+        return "", ""
+
+    def _find_device_row(self, device_id):
+        for row in range(self.device_table.rowCount()):
+            item = self.device_table.item(row, 0)
+            if item and item.text() == device_id:
+                return row
+        return None
 
 
 def main():
@@ -323,4 +388,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
