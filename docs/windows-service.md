@@ -24,7 +24,7 @@ Create `local_config.py` from `local_config.py.template`, then fill in the real 
 Run one manual sync from the activated virtual environment:
 
 ```bat
-python erpnext_sync.py
+.venv\Scripts\python.exe -c \"import erpnext_sync; erpnext_sync.main()\"
 ```
 
 Inspect:
