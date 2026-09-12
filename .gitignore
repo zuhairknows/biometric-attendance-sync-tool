@@ -1,4 +1,4 @@
-#local_config.py
+local_config.py
 .vscode
 logs/
 .test-logs/
