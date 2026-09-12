@@ -1,23 +1,75 @@
-import time
+import os
+import sys
 from pathlib import Path
+
+APP_DIR = Path(__file__).resolve().parent
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+# Windows services may start from C:\Windows\System32. The sync tool still uses
+# Python-source config and relative log paths, so make those resolve from here.
+os.chdir(str(APP_DIR))
+
+import servicemanager
+import win32event
+
+import erpnext_sync
 from SMWinservice import SMWinservice
-from erpnext_sync import main
+
+
+SERVICE_CHECK_INTERVAL_MS = 15000
+
+
+def log_service_info(message):
+    erpnext_sync.info_logger.info(message)
+    try:
+        servicemanager.LogInfoMsg(message)
+    except Exception:
+        pass
+
+
+def log_service_error(message):
+    erpnext_sync.error_logger.error(message)
+    try:
+        servicemanager.LogErrorMsg(message)
+    except Exception:
+        pass
+
 
 class PythonCornerExample(SMWinservice):
     _svc_name_ = "ERPNextBiometricPushService"
     _svc_display_name_ = "ERPNext Biometric Push Service"
-    _svc_description_ = "Service to push biometric data from device to ERPNext"
+    _svc_description_ = "Synchronizes ZKTeco biometric attendance punches with ERPNext HRMS."
 
     def start(self):
+        log_service_info("ERPNext Biometric Push Service starting")
+        try:
+            erpnext_sync.validate_runtime_config()
+        except Exception as e:
+            log_service_error("Configuration validation failed: "+str(e))
+            raise
+        log_service_info("Configuration validation passed")
         self.isrunning = True
 
     def stop(self):
         self.isrunning = False
+        log_service_info("Service stop requested")
 
     def main(self):
+        log_service_info("Service loop started")
         while self.isrunning:
-            main()
-            time.sleep(15)
+            try:
+                erpnext_sync.main()
+            except Exception:
+                erpnext_sync.error_logger.exception("Unexpected service cycle exception")
+                log_service_error("Unexpected service cycle exception")
+
+            wait_result = win32event.WaitForSingleObject(self.hWaitStop, SERVICE_CHECK_INTERVAL_MS)
+            if wait_result == win32event.WAIT_OBJECT_0:
+                self.isrunning = False
+
+        log_service_info("Service stopped")
+
 
 if __name__ == '__main__':
     PythonCornerExample.parse_command_line()

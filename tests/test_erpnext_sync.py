@@ -402,6 +402,46 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
                 {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.21"},
             ])
 
+    def test_runtime_config_validation_passes_without_device_connectivity(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.devices = [
+            {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "port": 4371, "password": 0}
+        ]
+
+        self.assertTrue(sync.validate_runtime_config())
+        self.assertEqual(FakeZK.instances, [])
+
+    def test_runtime_config_validation_rejects_missing_required_values(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.ERPNEXT_URL = ""
+        sync.config.devices = [
+            {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "port": 4371, "password": 0}
+        ]
+
+        with self.assertRaisesRegex(ValueError, "ERPNEXT_URL is required"):
+            sync.validate_runtime_config()
+
+    def test_runtime_config_validation_rejects_invalid_url(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.ERPNEXT_URL = "erp.myfpf.com"
+        sync.config.devices = [
+            {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "port": 4371, "password": 0}
+        ]
+
+        with self.assertRaisesRegex(ValueError, "ERPNEXT_URL must start"):
+            sync.validate_runtime_config()
+
+    def test_runtime_config_validation_rejects_credential_placeholders(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.ERPNEXT_API_KEY = "YOUR_REAL_API_KEY"
+        sync.config.ERPNEXT_API_SECRET = "YOUR_REAL_API_SECRET"
+        sync.config.devices = [
+            {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "port": 4371, "password": 0}
+        ]
+
+        with self.assertRaisesRegex(ValueError, "real local credential"):
+            sync.validate_runtime_config()
+
     def test_main_isolates_per_device_faults_and_redacts_passwords(self):
         sync = load_sync_module(self.logs_directory)
         sync.config.devices = [

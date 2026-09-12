@@ -55,8 +55,8 @@ There's a [Wiki](https://github.com/frappe/biometric-attendance-sync-tool/wiki/R
 
 Installing as a Windows service
 
-1. Install pywin32 using `pip install pywin32`
-2. Got to this repository's Directory
+1. Install dependencies using `pip install -r requirements.txt`
+2. Go to this repository's Directory
 3. Install the windows service using `python erpnext_sync_win.py install`
 4. Done
 
@@ -119,6 +119,25 @@ devices = [
 For ERPNext/HRMS v15, ZKTeco User ID/PIN should match the Employee Attendance Device ID.
 
 > TODO: fill this section with more info to help Non-Technical Individuals.
+
+## FPF Production Deployment
+
+This fork is prepared for the FPF ZKTeco to ERPNext attendance integration on a Windows integration PC. ERPNext/HRMS v15 remains the authoritative attendance system; this tool only polls ZKTeco devices and submits Employee Checkin records.
+
+Production behavior:
+- ZKTeco User ID/PIN must match the ERPNext Employee `attendance_device_id`.
+- Each biometric device must have a permanent logical `device_id`, such as `FP1_DEVICE_01`. Do not change `device_id` when only the device IP address, hostname, port, or password changes.
+- Device IP/host, port, and connection password are network settings and can be updated independently from `device_id`.
+- Retry dump files, success logs, failure logs, and status keys use `device_id` for local identity.
+- Known duplicate Employee Checkin responses from ERPNext are treated as idempotent/already synchronized when ERPNext returns HTTP 417 with the expected duplicate timestamp message. Other HTTP 417 responses remain failures.
+- Logs use UTF-8 so Arabic Shift Type names and mixed Arabic/English messages can be written on Windows.
+- `local_config.py` contains production credentials and must remain local and untracked by Git.
+
+Do not enable `clear_from_device_on_fetch` in production.
+
+The Windows service wakes on a short heartbeat so it can stop promptly, but `PULL_FREQUENCY` in `local_config.py` controls the actual biometric synchronization frequency.
+
+See [Windows service deployment](docs/windows-service.md) and [production checklist](docs/production-checklist.md) before installing the service.
 
 ## To build executable file for GUI
 ### Linux and Windows:

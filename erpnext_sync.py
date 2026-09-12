@@ -243,6 +243,48 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
 def is_duplicate_employee_checkin_response(status_code, message):
     return status_code == 417 and DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE in message
 
+def validate_runtime_config(config_module=None):
+    config_module = config_module or config
+    errors = []
+
+    for key in ['ERPNEXT_URL', 'ERPNEXT_API_KEY', 'ERPNEXT_API_SECRET', 'LOGS_DIRECTORY']:
+        if not str(getattr(config_module, key, '')).strip():
+            errors.append(key+' is required.')
+
+    erpnext_url = str(getattr(config_module, 'ERPNEXT_URL', '')).strip()
+    if erpnext_url and not erpnext_url.startswith(('http://', 'https://')):
+        errors.append('ERPNEXT_URL must start with http:// or https://.')
+
+    for key in ['ERPNEXT_API_KEY', 'ERPNEXT_API_SECRET']:
+        if str(getattr(config_module, key, '')).strip().startswith('YOUR_REAL_'):
+            errors.append(key+' must be set to the real local credential.')
+
+    try:
+        pull_frequency = int(getattr(config_module, 'PULL_FREQUENCY', 0))
+        if pull_frequency <= 0:
+            errors.append('PULL_FREQUENCY must be greater than 0.')
+    except (TypeError, ValueError):
+        errors.append('PULL_FREQUENCY must be a positive integer.')
+
+    devices = getattr(config_module, 'devices', None)
+    if not isinstance(devices, list) or not devices:
+        errors.append('devices must be a non-empty list.')
+    else:
+        try:
+            validate_unique_device_ids(devices)
+        except ValueError as e:
+            errors.append(str(e))
+        for index, device in enumerate(devices):
+            try:
+                normalize_device_config(device)
+            except ValueError as e:
+                errors.append('devices['+str(index)+']: '+str(e))
+
+    if errors:
+        raise ValueError('Invalid configuration:\n- ' + '\n- '.join(errors))
+
+    return True
+
 def update_shift_last_sync_timestamp(shift_type_device_mapping):
     """
     ### algo for updating the sync_current_timestamp
