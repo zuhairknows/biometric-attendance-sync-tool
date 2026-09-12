@@ -1,5 +1,6 @@
 import shutil
 import logging
+import json
 import types
 import unittest
 from pathlib import Path
@@ -142,6 +143,62 @@ class ManagerDiagnosticsTests(unittest.TestCase):
 
     def test_run_sync_invokes_exactly_one_cycle(self):
         sync_module = FakeSyncModule(self.config)
+        (self.logs_directory / "status.json").write_text(json.dumps({
+            "mission_accomplished_timestamp": "2026-09-12 14:00:00"
+        }), encoding="utf-8")
+        sync_module.main.side_effect = lambda: (self.logs_directory / "status.json").write_text(json.dumps({
+            "mission_accomplished_timestamp": "2026-09-12 14:05:00"
+        }), encoding="utf-8")
+
+        result = diagnostics.run_one_sync(sync_module)
+
+        self.assertTrue(result.ok)
+        sync_module.main.assert_called_once_with()
+
+    def test_run_sync_success_requires_timestamp_advancement(self):
+        sync_module = FakeSyncModule(self.config)
+        (self.logs_directory / "status.json").write_text(json.dumps({
+            "mission_accomplished_timestamp": "2026-09-12 14:00:00"
+        }), encoding="utf-8")
+        sync_module.main.side_effect = lambda: (self.logs_directory / "status.json").write_text(json.dumps({
+            "mission_accomplished_timestamp": "2026-09-12 14:15:00"
+        }), encoding="utf-8")
+
+        result = diagnostics.run_one_sync(sync_module)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.message, "Manual sync completed.")
+
+    def test_run_sync_reports_failure_when_timestamp_does_not_change(self):
+        sync_module = FakeSyncModule(self.config)
+        (self.logs_directory / "status.json").write_text(json.dumps({
+            "mission_accomplished_timestamp": "2026-09-12 14:00:00"
+        }), encoding="utf-8")
+
+        result = diagnostics.run_one_sync(sync_module)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.message, "Manual sync did not complete successfully. Check logs.")
+        sync_module.main.assert_called_once_with()
+
+    def test_run_sync_handles_missing_status_json_safely(self):
+        sync_module = FakeSyncModule(self.config)
+        sync_module.main.side_effect = lambda: (self.logs_directory / "status.json").write_text(json.dumps({
+            "mission_accomplished_timestamp": "2026-09-12 14:05:00"
+        }), encoding="utf-8")
+
+        result = diagnostics.run_one_sync(sync_module)
+
+        self.assertTrue(result.ok)
+        sync_module.main.assert_called_once_with()
+
+    def test_run_sync_handles_corrupt_status_json_safely(self):
+        sync_module = FakeSyncModule(self.config)
+        status_file = self.logs_directory / "status.json"
+        status_file.write_text("{not-json", encoding="utf-8")
+        sync_module.main.side_effect = lambda: status_file.write_text(json.dumps({
+            "mission_accomplished_timestamp": "2026-09-12 14:05:00"
+        }), encoding="utf-8")
 
         result = diagnostics.run_one_sync(sync_module)
 

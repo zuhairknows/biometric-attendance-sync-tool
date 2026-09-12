@@ -1,5 +1,6 @@
 import logging
 import types
+from datetime import datetime
 from dataclasses import dataclass, field
 
 try:
@@ -10,6 +11,7 @@ except ImportError:
         exceptions=types.SimpleNamespace(Timeout=TimeoutError, ConnectionError=ConnectionError),
     )
 
+from .health import read_status_data
 from .paths import get_manager_log_file
 
 
@@ -119,12 +121,48 @@ def test_devices(config_module=None, sync_module=None, zk_class=None):
 def run_one_sync(sync_module=None):
     if sync_module is None:
         import erpnext_sync as sync_module
+    before_timestamp = _read_mission_accomplished_timestamp(sync_module.config)
     try:
         sync_module.main()
-        return DiagnosticResult(True, "ok", "Manual sync completed.")
     except Exception:
         _get_logger(sync_module.config).exception("Manual sync failed")
         return DiagnosticResult(False, "error", "Manual sync failed.")
+
+    after_timestamp = _read_mission_accomplished_timestamp(sync_module.config)
+    if _timestamp_advanced(before_timestamp, after_timestamp):
+        return DiagnosticResult(True, "ok", "Manual sync completed.")
+    return DiagnosticResult(False, "error", "Manual sync did not complete successfully. Check logs.")
+
+
+def _read_mission_accomplished_timestamp(config_module):
+    status_data, _found = read_status_data(config_module)
+    timestamp = status_data.get("mission_accomplished_timestamp")
+    if timestamp is None:
+        return ""
+    return str(timestamp)
+
+
+def _timestamp_advanced(before_timestamp, after_timestamp):
+    if not after_timestamp:
+        return False
+    before_date = _parse_timestamp(before_timestamp)
+    after_date = _parse_timestamp(after_timestamp)
+    if not after_date:
+        return False
+    if after_date and before_date:
+        return after_date > before_date
+    if not before_timestamp:
+        return True
+    return before_date is None
+
+
+def _parse_timestamp(timestamp):
+    if not timestamp:
+        return None
+    try:
+        return datetime.fromisoformat(str(timestamp))
+    except ValueError:
+        return None
 
 
 def _friendly_validation_errors(message):

@@ -38,6 +38,8 @@ Install runs the equivalent of:
 python erpnext_sync_win.py install
 ```
 
+Developer note: service installation currently uses the Python interpreter that launched the manager. This is correct for development and virtual environment usage. Final PyInstaller packaging will need a dedicated installed service executable or runtime path; do not redesign that until the installer phase.
+
 Uninstall first stops the service if it is running, then removes the service registration.
 
 Uninstall does not delete:
@@ -92,4 +94,3 @@ From the repository folder:
 ```text
 python -m manager.app
 ```
-
