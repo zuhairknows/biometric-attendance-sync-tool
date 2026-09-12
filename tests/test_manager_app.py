@@ -264,7 +264,7 @@ def install_fake_pyqt():
     qtcore.QThread = FakeQThread
     qtcore.pyqtSignal = FakeSignal
     qtcore.pyqtSlot = pyqt_slot
-    qtcore.Qt = types.SimpleNamespace(AlignRight=1, darkGreen="darkGreen", red="red")
+    qtcore.Qt = types.SimpleNamespace(AlignRight=1, darkGreen="darkGreen", red="red", gray="gray")
 
     qtwidgets = types.ModuleType("PyQt5.QtWidgets")
     qtwidgets.QApplication = FakeQApplication
@@ -426,6 +426,63 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: self.window.validate_button.isEnabled() and len(self.window.active_jobs) == 0))
 
         self.assertEqual(len(self.window.active_jobs), 0)
+
+    def test_initial_device_status_is_unknown(self):
+        self.assertEqual(self.window.device_table.item(0, 2).text(), "Unknown")
+        self.assertEqual(self.window.device_table.item(1, 2).text(), "Unknown")
+
+    def test_successful_device_test_changes_row_to_connected(self):
+        result = DiagnosticResult(
+            True,
+            "ok",
+            "All devices connected.",
+            ["FP1_DEVICE_01 (10.0.0.20:4371) - Connected"],
+        )
+
+        self.window._run_diagnostic("Testing devices...", lambda: result, self.window.device_button)
+        self.assertTrue(wait_until(lambda: self.window.device_button.isEnabled() and len(self.window.active_jobs) == 0))
+
+        self.assertEqual(self.window.device_table.item(0, 2).text(), "Connected")
+        self.assertEqual(self.window.device_table.item(0, 2).foreground, "darkGreen")
+        self.assertEqual(self.window.device_table.item(1, 2).text(), "Unknown")
+
+    def test_failed_device_test_changes_row_to_failed(self):
+        result = DiagnosticResult(
+            False,
+            "warning",
+            "One or more devices failed.",
+            ["FP1_DEVICE_01 (10.0.0.20:4371) - Connection failed"],
+        )
+
+        self.window._run_diagnostic("Testing devices...", lambda: result, self.window.device_button)
+        self.assertTrue(wait_until(lambda: self.window.device_button.isEnabled() and len(self.window.active_jobs) == 0))
+
+        self.assertEqual(self.window.device_table.item(0, 2).text(), "Failed")
+        self.assertEqual(self.window.device_table.item(0, 2).foreground, "red")
+
+    def test_refresh_preserves_device_diagnostic_status(self):
+        self.window.device_connection_status["FP1_DEVICE_01"] = "Connected"
+        self.window.device_connection_status["FP1_DEVICE_02"] = "Failed"
+
+        self.window.refresh()
+
+        self.assertEqual(self.window.device_table.item(0, 2).text(), "Connected")
+        self.assertEqual(self.window.device_table.item(1, 2).text(), "Failed")
+
+    def test_second_device_test_replaces_prior_status(self):
+        self.window.device_connection_status["FP1_DEVICE_01"] = "Failed"
+        result = DiagnosticResult(
+            True,
+            "ok",
+            "All devices connected.",
+            ["FP1_DEVICE_01 (10.0.0.20:4371) - Connected"],
+        )
+
+        self.window._run_diagnostic("Testing devices...", lambda: result, self.window.device_button)
+        self.assertTrue(wait_until(lambda: self.window.device_button.isEnabled() and len(self.window.active_jobs) == 0))
+
+        self.assertEqual(self.window.device_table.item(0, 2).text(), "Connected")
+        self.assertEqual(self.window.device_connection_status["FP1_DEVICE_01"], "Connected")
 
     def test_device_diagnostic_updates_table_statuses(self):
         result = DiagnosticResult(

@@ -38,6 +38,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.controller = controller or ServiceController()
         self.active_jobs = []
         self.sync_running = False
+        self.device_connection_status = {}
         self.config_module = None
         self.sync_module = None
         self.setWindowTitle(APP_NAME)
@@ -197,12 +198,15 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             values = [
                 device.device_id,
                 str(device.ip) + ":" + str(device.port) if device.ip else "",
-                "Unknown",
+                self.device_connection_status.get(device.device_id, "Unknown"),
                 device.last_pull or "Never",
                 device.last_push or "Never",
             ]
             for column, value in enumerate(values):
-                self.device_table.setItem(row, column, QtWidgets.QTableWidgetItem(value))
+                if column == 2:
+                    self.device_table.setItem(row, column, self._device_status_item(value))
+                else:
+                    self.device_table.setItem(row, column, QtWidgets.QTableWidgetItem(value))
         self.device_table.resizeColumnsToContents()
 
     def _run_service_action(self, running_message, callback):
@@ -274,12 +278,12 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
                 self._append_message("- " + line)
             if button is self.erp_button:
                 self._set_state(self.erp_status, "Connected" if result.ok else "Failed", result.status)
+            if button is self.device_button:
+                self._store_device_test_results(result.details)
         if is_sync:
             self.sync_running = False
         button.setEnabled(True)
         self.refresh()
-        if not isinstance(result, Exception) and button is self.device_button:
-            self._apply_device_test_results(result.details)
 
     def _confirm_uninstall(self):
         answer = QtWidgets.QMessageBox.question(
@@ -349,20 +353,22 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         if job in self.active_jobs:
             self.active_jobs.remove(job)
 
-    def _apply_device_test_results(self, details):
+    def _store_device_test_results(self, details):
         for detail in details:
             device_id, status = self._parse_device_result(detail)
             if not device_id:
                 continue
-            row = self._find_device_row(device_id)
-            if row is None:
-                continue
-            item = QtWidgets.QTableWidgetItem(status)
-            if status == "Connected":
-                item.setForeground(QtCore.Qt.darkGreen)
-            elif status == "Failed":
-                item.setForeground(QtCore.Qt.red)
-            self.device_table.setItem(row, 2, item)
+            self.device_connection_status[device_id] = status
+
+    def _device_status_item(self, status):
+        item = QtWidgets.QTableWidgetItem(status)
+        if status == "Connected":
+            item.setForeground(QtCore.Qt.darkGreen)
+        elif status == "Failed":
+            item.setForeground(QtCore.Qt.red)
+        elif status == "Unknown":
+            item.setForeground(QtCore.Qt.gray)
+        return item
 
     def _parse_device_result(self, detail):
         if " - Connected" in detail:
@@ -370,13 +376,6 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         if " - Connection failed" in detail:
             return detail.split(" ", 1)[0], "Failed"
         return "", ""
-
-    def _find_device_row(self, device_id):
-        for row in range(self.device_table.rowCount()):
-            item = self.device_table.item(row, 0)
-            if item and item.text() == device_id:
-                return row
-        return None
 
 
 def main():
