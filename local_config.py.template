@@ -8,7 +8,7 @@ ERPNEXT_API_KEY = 'YOUR_REAL_API_KEY'
 ERPNEXT_API_SECRET = 'YOUR_REAL_API_SECRET'
 
 # Production ERPNext site.
-ERPNEXT_URL = 'https://erp.myfpf.com'
+ERPNEXT_URL = 'https://xyz.com'
 
 # ERPNext / HRMS major version.
 ERPNEXT_VERSION = 15
