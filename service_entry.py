@@ -1,5 +1,7 @@
 """Frozen Windows service entry point for FPF Biometric Sync."""
 
+import sys
+
 from service_runtime import load_runtime_config, prepare_runtime_paths
 
 
@@ -77,8 +79,18 @@ class FPFBiometricSyncService(win32serviceutil.ServiceFramework):
         log_service_info("Service stopped")
 
 
-def main():
+def run_service_dispatch(argv=None):
+    argv = argv or sys.argv
+    if len(argv) == 1:
+        servicemanager.Initialize()
+        servicemanager.PrepareToHostSingle(FPFBiometricSyncService)
+        servicemanager.StartServiceCtrlDispatcher()
+        return
     win32serviceutil.HandleCommandLine(FPFBiometricSyncService)
+
+
+def main():
+    run_service_dispatch()
 
 
 if __name__ == "__main__":
