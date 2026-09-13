@@ -30,6 +30,7 @@ LEGACY_CONFIG_DIR_ENV = "FPF_BIOMETRIC_CONFIG_DIR"
 LEGACY_SERVICE_EXE_ENV = "FPF_BIOMETRIC_SERVICE_EXE"
 
 CONFIG_FILE_NAME = "local_config.py"
+JSON_CONFIG_FILE_NAME = "config.json"
 
 
 def _first_environment_value(names):
@@ -68,7 +69,12 @@ def get_service_exe_override():
 
 
 def _has_real_config(config_dir):
-    return (Path(config_dir) / CONFIG_FILE_NAME).is_file()
+    config_dir = Path(config_dir)
+    root_dir = config_dir.parent if config_dir.name == "config" else config_dir
+    return (
+        (config_dir / CONFIG_FILE_NAME).is_file()
+        or (root_dir / JSON_CONFIG_FILE_NAME).is_file()
+    )
 
 
 def resolve_active_programdata_root():

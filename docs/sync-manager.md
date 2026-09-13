@@ -107,9 +107,12 @@ If `status.json` is missing or corrupt, the manager stays open and shows unknown
 Packaged mode uses:
 
 ```text
+C:\ProgramData\BiometricAttendanceSync\config.json
 C:\ProgramData\BiometricAttendanceSync\config\local_config.py
 C:\ProgramData\BiometricAttendanceSync\logs
 ```
+
+The JSON file has precedence. The Python file is retained for legacy compatibility.
 
 Development mode continues to use the repo-local `local_config.py` and logs unless environment overrides are set.
 

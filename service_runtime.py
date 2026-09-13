@@ -1,11 +1,11 @@
 """Runtime path setup for the packaged biometric attendance Windows service."""
 
-import importlib
 import os
 import sys
 from pathlib import Path
 
 import runtime_paths
+from config.loader import load_config
 
 
 def is_frozen_runtime():
@@ -42,7 +42,7 @@ def prepare_runtime_paths():
 
 
 def load_runtime_config():
-    config = importlib.import_module("local_config")
+    config = load_config()
     if is_frozen_runtime():
         logs_directory = Path(str(getattr(config, "LOGS_DIRECTORY", "logs")))
         if not logs_directory.is_absolute():

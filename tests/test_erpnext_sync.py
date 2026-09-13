@@ -491,6 +491,22 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         self.assertIn("***", error_log)
         self.assertNotIn("1234", error_log)
 
+    def test_main_skips_disabled_devices(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.devices = [
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10", "enabled": False},
+            {"device_id": "DEVICE_02", "ip": "192.0.2.11"},
+        ]
+        processed_device_ids = []
+
+        def fake_pull_process_and_push_data(device, device_attendance_logs=None):
+            processed_device_ids.append(device["device_id"])
+
+        sync.pull_process_and_push_data = fake_pull_process_and_push_data
+        sync.main()
+
+        self.assertEqual(processed_device_ids, ["DEVICE_02"])
+
 
 if __name__ == "__main__":
     unittest.main()

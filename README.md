@@ -13,7 +13,21 @@ ERPNext remains the attendance source of truth. This tool reads device punches, 
 
 ## Configuration
 
-Create a real `local_config.py` from `local_config.py.template`.
+Commercial deployments should use versioned JSON configuration:
+
+```text
+C:\ProgramData\BiometricAttendanceSync\config.json
+```
+
+Configuration precedence is:
+
+1. `C:\ProgramData\BiometricAttendanceSync\config.json`
+2. legacy `local_config.py`
+3. safe application defaults
+
+Existing `local_config.py` deployments remain supported. See [Commercial Configuration](docs/configuration.md) for the JSON schema and compatibility notes.
+
+For legacy/source setup, create a real `local_config.py` from `local_config.py.template`.
 
 For source/development usage, keep `local_config.py` in the repository folder.
 
@@ -27,10 +41,11 @@ Mutable packaged runtime data uses:
 
 ```text
 C:\ProgramData\BiometricAttendanceSync\
-    config\
+    config.json
     logs\
     state\
     retry\
+    secrets\
 ```
 
 Current environment overrides:

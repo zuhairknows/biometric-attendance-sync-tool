@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import runtime_paths
+from config import paths as config_paths
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SERVICE_SCRIPT = PROJECT_ROOT / "erpnext_sync_win.py"
@@ -37,7 +38,7 @@ def get_app_root():
 
 
 def get_programdata_root():
-    return runtime_paths.resolve_active_programdata_root()
+    return config_paths.get_active_app_data_dir()
 
 
 def get_programdata_config_folder():
@@ -45,15 +46,19 @@ def get_programdata_config_folder():
 
 
 def get_programdata_logs_folder():
-    return get_programdata_root() / "logs"
+    return config_paths.get_logs_dir()
 
 
 def get_programdata_state_folder():
-    return get_programdata_root() / "state"
+    return config_paths.get_state_dir()
 
 
 def get_programdata_retry_folder():
-    return get_programdata_root() / "retry"
+    return config_paths.get_retry_dir()
+
+
+def get_programdata_secrets_folder():
+    return config_paths.get_secrets_dir()
 
 
 def uses_packaged_service_runtime():

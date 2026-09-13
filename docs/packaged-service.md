@@ -12,11 +12,13 @@ C:\Program Files\Biometric Attendance Sync\
         _internal\...
 
 C:\ProgramData\BiometricAttendanceSync\
+    config.json
     config\
         local_config.py
     logs\
     state\
     retry\
+    secrets\
 ```
 
 The manager controls `ERPNextBiometricPushService`. The packaged service executable runs the existing `erpnext_sync.py` logic. Sync engine behavior remains unchanged.
@@ -60,19 +62,25 @@ C:\ProgramData\BiometricAttendanceSync\
 Subfolders:
 
 ```text
-config\
 logs\
 state\
 retry\
+secrets\
 ```
 
-Place external configuration at:
+Commercial JSON configuration is loaded first from:
+
+```text
+C:\ProgramData\BiometricAttendanceSync\config.json
+```
+
+Existing production installations can still use legacy Python configuration at:
 
 ```text
 C:\ProgramData\BiometricAttendanceSync\config\local_config.py
 ```
 
-Do not bundle `local_config.py` into the executable or distribution folder. It contains credentials.
+Do not bundle `config.json` with real credentials or `local_config.py` into the executable or distribution folder. They contain customer-specific configuration.
 
 If packaged `local_config.py` uses a relative `LOGS_DIRECTORY`, the service runtime resolves it to:
 
@@ -117,8 +125,8 @@ ERPNext Biometric Push Service
    dist\Biometric-Attendance-Sync-Service\Biometric-Attendance-Sync-Service.exe
    ```
 
-3. Create `C:\ProgramData\BiometricAttendanceSync\config\local_config.py` from the reviewed config template.
-4. Confirm the config points logs to a LocalSystem-writable location, preferably `C:\ProgramData\BiometricAttendanceSync\logs`.
+3. Create `C:\ProgramData\BiometricAttendanceSync\config.json`, or keep an existing reviewed `C:\ProgramData\BiometricAttendanceSync\config\local_config.py`.
+4. Confirm logs resolve to a LocalSystem-writable location, preferably `C:\ProgramData\BiometricAttendanceSync\logs`.
 5. Run debug mode only where it is safe and will not duplicate production sync work:
 
    ```powershell

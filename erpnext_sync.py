@@ -1,5 +1,5 @@
 
-import local_config as config
+from config.loader import load_config
 import requests
 import datetime
 import json
@@ -11,6 +11,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pickledb import PickleDB
 from zk import ZK, const
+
+config = load_config()
 
 EMPLOYEE_NOT_FOUND_ERROR_MESSAGE = "No Employee found for the given employee field value"
 EMPLOYEE_INACTIVE_ERROR_MESSAGE = "Transactions cannot be created for an Inactive Employee"
@@ -60,6 +62,9 @@ def main():
                 device_attendance_logs = None
                 try:
                     device = normalize_device_config(device)
+                    if not device['enabled']:
+                        info_logger.info("Skipping disabled Device: "+ device['device_id'])
+                        continue
                     info_logger.info("Processing Device: "+ device['device_id'])
                     dump_file = get_dump_file_name_and_directory(device['device_id'])
                     if os.path.exists(dump_file):
@@ -376,7 +381,8 @@ def setup_logger(name, log_file, level=logging.INFO, formatter=None):
     return logger
 
 def get_dump_file_name_and_directory(device_id, device_ip=None):
-    return config.LOGS_DIRECTORY + '/' + device_id + '_last_fetch_dump.json'
+    retry_directory = getattr(config, 'RETRY_DIRECTORY', config.LOGS_DIRECTORY)
+    return os.path.join(retry_directory, device_id + '_last_fetch_dump.json')
 
 def normalize_device_config(device):
     device_id = device.get('device_id')
@@ -392,6 +398,7 @@ def normalize_device_config(device):
     normalized_device['ip'] = ip
     normalized_device['port'] = validate_port(device.get('port', DEFAULT_ZK_PORT))
     normalized_device['password'] = validate_password(device.get('password', DEFAULT_ZK_PASSWORD))
+    normalized_device['enabled'] = bool(device.get('enabled', True))
     normalized_device['punch_direction'] = device.get('punch_direction')
     normalized_device['clear_from_device_on_fetch'] = bool(device.get('clear_from_device_on_fetch', False))
     if normalized_device['clear_from_device_on_fetch']:
@@ -483,9 +490,16 @@ def _safe_get_error_str(res):
 # setup logger and status
 if not os.path.exists(config.LOGS_DIRECTORY):
     os.makedirs(config.LOGS_DIRECTORY)
+state_file_path = getattr(config, 'STATE_FILE_PATH', os.path.join(config.LOGS_DIRECTORY, 'status.json'))
+state_directory = os.path.dirname(state_file_path)
+if state_directory and not os.path.exists(state_directory):
+    os.makedirs(state_directory)
+retry_directory = getattr(config, 'RETRY_DIRECTORY', config.LOGS_DIRECTORY)
+if retry_directory and not os.path.exists(retry_directory):
+    os.makedirs(retry_directory)
 error_logger = setup_logger('error_logger', '/'.join([config.LOGS_DIRECTORY, 'error.log']), logging.ERROR)
 info_logger = setup_logger('info_logger', '/'.join([config.LOGS_DIRECTORY, 'logs.log']))
-status = PickleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']))
+status = PickleDB(state_file_path)
 
 def infinite_loop(sleep_time=15):
     print("Service Running...")
