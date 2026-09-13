@@ -2,6 +2,12 @@ local_config.py
 .vscode
 logs/
 .test-logs/
+state/
+retry/
+status.json
+*.db
+*.pkl
+diagnostic*.zip
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -89,6 +95,8 @@ celerybeat-schedule
 
 # Environments
 .env
+*.pem
+*.key
 .venv
 env/
 venv/
