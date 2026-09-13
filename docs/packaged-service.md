@@ -7,16 +7,43 @@ Do not fix that production failure by manually copying Python DLLs. The producti
 ## Architecture
 
 ```text
-FPF Biometric Sync Manager
-    |
-    +-- controls ERPNextBiometricPushService
-            |
-            +-- FPF-Biometric-Sync-Service.exe
-                    |
-                    +-- existing erpnext_sync logic
+C:\Program Files\FPF Biometric Sync\
+    FPF-Biometric-Sync-Manager.exe
+    service\
+        FPF-Biometric-Sync-Service.exe
+        _internal\...
+
+C:\ProgramData\FPF\BiometricSync\
+    config\
+        local_config.py
+    logs\
+    state\
+    retry\
 ```
 
-The sync engine behavior remains in `erpnext_sync.py`.
+The manager controls `ERPNextBiometricPushService`. The packaged service executable runs the existing `erpnext_sync.py` logic. Sync engine behavior remains unchanged.
+
+During FP1 validation, the service may temporarily live at:
+
+```text
+C:\FPF-Test\FPF-Biometric-Sync-Service\
+```
+
+That path is a transitional test fallback, not the final installer location.
+
+## FP1 Packaged Service Result
+
+The packaged service has been validated on real FP1 hardware:
+
+- Service installs successfully.
+- `net start ERPNextBiometricPushService` works.
+- `sc query` shows `RUNNING`.
+- Service runs as LocalSystem.
+- Config loads from `C:\ProgramData\FPF\BiometricSync\config\local_config.py`.
+- Logs and `status.json` are written under `C:\ProgramData\FPF\BiometricSync\logs`.
+- `FP1_DEVICE_01` connects successfully.
+- Real attendance sync completes successfully.
+- Reboot auto-start test passed and completed with `Mission Accomplished!`.
 
 ## Build Command
 
@@ -85,6 +112,8 @@ FPF-Biometric-Sync-Service.exe stop
 FPF-Biometric-Sync-Service.exe debug
 ```
 
+When launched with no arguments by Windows Service Control Manager, the executable attaches to the pywin32 service dispatcher. Command-line service management verbs still use pywin32 `HandleCommandLine`.
+
 The service name remains:
 
 ```text
@@ -116,6 +145,19 @@ ERPNext Biometric Push Service
 
 6. Confirm service startup reaches the Python service code and writes logs under ProgramData.
 7. Do not install the packaged service on the development PC during build verification.
+
+## Manager Integration
+
+The manager resolves the service runtime in this order:
+
+1. `FPF_BIOMETRIC_SERVICE_EXE`
+2. `<manager app root>\service\FPF-Biometric-Sync-Service.exe`
+3. `C:\FPF-Test\FPF-Biometric-Sync-Service\FPF-Biometric-Sync-Service.exe`
+4. Development fallback: `python erpnext_sync_win.py`
+
+Packaged and FP1 packaged-service modes use ProgramData for config and logs. Development mode keeps the repo-local paths unless environment overrides are set.
+
+The manager disables manual sync while the service is running. Stop the service first, then use **Run Sync Now** if an operator needs a one-cycle manual sync.
 
 ## Remaining Installer Work
 

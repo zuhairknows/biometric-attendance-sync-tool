@@ -4,7 +4,7 @@ import sys
 import time
 from dataclasses import dataclass
 
-from .paths import SERVICE_SCRIPT, get_packaged_service_executable
+from .paths import resolve_service_runtime
 
 
 SERVICE_NAME = "ERPNextBiometricPushService"
@@ -24,6 +24,7 @@ class ServiceStatus:
     installed: bool
     state: str = "Unknown"
     startup: str = "Unknown"
+    recovery: str = "Unknown"
 
 
 def is_running_as_admin():
@@ -41,6 +42,17 @@ def _completed_process_text(process):
     return (output + "\n" + error).strip()
 
 
+SC_STATE_LABELS = {
+    "STOPPED": "Stopped",
+    "START_PENDING": "Start Pending",
+    "STOP_PENDING": "Stop Pending",
+    "RUNNING": "Running",
+    "CONTINUE_PENDING": "Continue Pending",
+    "PAUSE_PENDING": "Pause Pending",
+    "PAUSED": "Paused",
+}
+
+
 def _parse_state(sc_output):
     for line in sc_output.splitlines():
         if "STATE" not in line:
@@ -51,30 +63,70 @@ def _parse_state(sc_output):
             continue
         tokens = parts[1].strip().split()
         if tokens:
-            return tokens[-1].title()
+            return SC_STATE_LABELS.get(tokens[-1].upper(), tokens[-1].replace("_", " ").title())
     return "Unknown"
 
 
-def _parse_startup(sc_output):
+def _parse_startup(sc_output, delayed_output=""):
+    delayed = False
+    for line in delayed_output.splitlines():
+        if "DELAYED" not in line.upper():
+            continue
+        parts = line.split(":", 1)
+        if len(parts) == 2:
+            delayed = parts[1].strip().split()[0:1] == ["1"]
+        elif "1" in line:
+            delayed = True
     for line in sc_output.splitlines():
         if "START_TYPE" not in line:
             continue
         parts = line.split(":", 1)
         if len(parts) != 2:
             continue
-        tokens = parts[1].strip().split(maxsplit=1)
-        if len(tokens) == 2:
-            return tokens[1].replace("_", " ").title()
+        value = parts[1].upper()
+        if "DISABLED" in value:
+            return "Disabled"
+        if "DEMAND_START" in value:
+            return "Manual"
+        if "AUTO_START" in value:
+            return "Automatic (Delayed Start)" if delayed or "DELAYED" in value else "Automatic"
     return "Unknown"
 
 
+def _parse_recovery(sc_output):
+    upper = sc_output.upper()
+    if "RESTART" not in upper:
+        return "Unknown"
+    for line in sc_output.splitlines():
+        if "RESTART" not in line.upper():
+            continue
+        parts = line.split("--", 1)
+        if len(parts) == 2:
+            for token in parts[1].replace("=", " ").replace(".", " ").split():
+                if token.isdigit():
+                    return "Restart after " + str(int(token) // 1000) + "s"
+        return "Restart configured"
+    return "Restart configured"
+
+
+def _is_service_missing(process):
+    detail = _completed_process_text(process).lower()
+    return process.returncode == 1060 or "does not exist" in detail or "not exist" in detail
+
+
+def _is_access_denied(process):
+    detail = _completed_process_text(process).lower()
+    return process.returncode == 5 or "access is denied" in detail or "access denied" in detail
+
+
 class ServiceController:
-    def __init__(self, runner=None, python_executable=None, admin_checker=None, sleep=None, service_executable_resolver=None):
+    def __init__(self, runner=None, python_executable=None, admin_checker=None, sleep=None, service_runtime_resolver=None, time_func=None):
         self.runner = runner or subprocess.run
         self.python_executable = python_executable or sys.executable
         self.admin_checker = admin_checker or is_running_as_admin
         self.sleep = sleep or time.sleep
-        self.service_executable_resolver = service_executable_resolver or get_packaged_service_executable
+        self.time_func = time_func or time.time
+        self.service_runtime_resolver = service_runtime_resolver or resolve_service_runtime
 
     def is_installed(self):
         result = self._run(["sc.exe", "query", SERVICE_NAME], timeout=10)
@@ -86,15 +138,20 @@ class ServiceController:
             return ServiceStatus(installed=False, state="Not Installed", startup="Not Installed")
 
         qc = self._run(["sc.exe", "qc", SERVICE_NAME], timeout=10)
+        delayed = self._run(["sc.exe", "qdelayedauto", SERVICE_NAME], timeout=10)
+        failure = self._run(["sc.exe", "qfailure", SERVICE_NAME], timeout=10)
         return ServiceStatus(
             installed=True,
             state=_parse_state(_completed_process_text(query)),
-            startup=_parse_startup(_completed_process_text(qc)) if qc.returncode == 0 else "Unknown",
+            startup=_parse_startup(_completed_process_text(qc), _completed_process_text(delayed)) if qc.returncode == 0 else "Unknown",
+            recovery=_parse_recovery(_completed_process_text(failure)) if failure.returncode == 0 else "Unknown",
         )
 
     def install_service(self):
         if not self._has_admin_for_setup():
             return self._admin_required("install")
+        if self.is_installed():
+            return ActionResult(True, "Service already installed.")
         command = self._service_script_command("install")
         result = self._run(command, timeout=60)
         return self._action_result(result, "Service installed successfully.", "Could not install the service.", command)
@@ -103,35 +160,80 @@ class ServiceController:
         if not self._has_admin_for_setup():
             return self._admin_required("remove")
         status = self.get_status()
-        if status.installed and status.state == "Running":
+        if not status.installed:
+            return ActionResult(True, "Service is not installed.")
+        if status.state == "Running":
             stop_result = self.stop_service(wait=True)
             if not stop_result.success:
                 return stop_result
         command = self._service_script_command("remove")
         result = self._run(command, timeout=60)
-        return self._action_result(result, "Service uninstalled successfully.", "Could not uninstall the service.", command)
+        if _is_service_missing(result):
+            return ActionResult(True, "Service is not installed.", command=tuple(command))
+        return self._action_result(result, "Service removed successfully.", "Could not remove the service.", command)
 
     def start_service(self, wait=True):
+        status = self.get_status()
+        if not status.installed:
+            return ActionResult(False, "Service is not installed.")
+        if status.state == "Running":
+            return ActionResult(True, "Service is already running.")
         result = self._run(["sc.exe", "start", SERVICE_NAME], timeout=30)
         if result.returncode != 0:
             return self._action_result(result, "Service started successfully.", "Could not start the service.", ("sc.exe", "start", SERVICE_NAME))
-        if wait and not self._wait_for_state("Running"):
-            return ActionResult(False, "Service start was requested, but it did not report Running before timeout.")
+        if wait and not self._wait_for_state("Running", timeout_seconds=30):
+            final_state = self.get_status().state
+            return ActionResult(False, "Service start was requested, but final state is " + final_state + ".")
         return ActionResult(True, "Service started successfully.", command=("sc.exe", "start", SERVICE_NAME))
 
     def stop_service(self, wait=True):
+        status = self.get_status()
+        if not status.installed:
+            return ActionResult(False, "Service is not installed.")
+        if status.state == "Stopped":
+            return ActionResult(True, "Service is already stopped.")
         result = self._run(["sc.exe", "stop", SERVICE_NAME], timeout=30)
         if result.returncode != 0:
             return self._action_result(result, "Service stopped successfully.", "Could not stop the service.", ("sc.exe", "stop", SERVICE_NAME))
-        if wait and not self._wait_for_state("Stopped"):
-            return ActionResult(False, "Service stop was requested, but it did not report Stopped before timeout.")
+        if wait and not self._wait_for_state("Stopped", timeout_seconds=30):
+            final_state = self.get_status().state
+            return ActionResult(False, "Service stop was requested, but final state is " + final_state + ".")
         return ActionResult(True, "Service stopped successfully.", command=("sc.exe", "stop", SERVICE_NAME))
 
     def restart_service(self):
-        stop_result = self.stop_service(wait=True)
-        if not stop_result.success:
-            return stop_result
+        status = self.get_status()
+        if not status.installed:
+            return ActionResult(False, "Service is not installed.")
+        if status.state != "Stopped":
+            stop_result = self.stop_service(wait=True)
+            if not stop_result.success:
+                return stop_result
         return self.start_service(wait=True)
+
+    def set_delayed_auto_start(self):
+        if not self._has_admin_for_setup():
+            return self._admin_required("change startup mode for")
+        if not self.is_installed():
+            return ActionResult(False, "Service is not installed.")
+        result = self._run(["sc.exe", "config", SERVICE_NAME, "start=", "delayed-auto"], timeout=30)
+        return self._action_result(result, "Service startup set to Automatic (Delayed Start).", "Could not change service startup mode.", ("sc.exe", "config", SERVICE_NAME, "start=", "delayed-auto"))
+
+    def configure_recovery(self):
+        if not self._has_admin_for_setup():
+            return self._admin_required("configure recovery for")
+        if not self.is_installed():
+            return ActionResult(False, "Service is not installed.")
+        command = [
+            "sc.exe",
+            "failure",
+            SERVICE_NAME,
+            "reset=",
+            "86400",
+            "actions=",
+            "restart/60000/restart/60000/restart/60000",
+        ]
+        result = self._run(command, timeout=30)
+        return self._action_result(result, "Service recovery configured.", "Could not configure service recovery.", command)
 
     def _has_admin_for_setup(self):
         return bool(self.admin_checker())
@@ -139,19 +241,17 @@ class ServiceController:
     def _admin_required(self, action):
         return ActionResult(
             False,
-            "Administrator permission is required to " + action + " the service. Please restart FPF Biometric Sync Manager as Administrator.",
+            "Administrator privileges are required for this action.",
             requires_admin=True,
         )
 
     def _service_script_command(self, action):
-        service_executable = self.service_executable_resolver()
-        if service_executable:
-            return (str(service_executable), action)
-        return (self.python_executable, str(SERVICE_SCRIPT), action)
+        runtime = self.service_runtime_resolver(self.python_executable)
+        return tuple(runtime.command_prefix) + (action,)
 
     def _wait_for_state(self, target_state, timeout_seconds=30):
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
+        deadline = self.time_func() + timeout_seconds
+        while self.time_func() < deadline:
             if self.get_status().state == target_state:
                 return True
             self.sleep(1)
@@ -166,6 +266,8 @@ class ServiceController:
     def _action_result(self, process, success_message, failure_message, command):
         if process.returncode == 0:
             return ActionResult(True, success_message, command=tuple(command))
+        if _is_access_denied(process):
+            return ActionResult(False, "Administrator privileges are required for this action.", requires_admin=True, command=tuple(command))
         detail = _completed_process_text(process)
         if detail:
             failure_message = failure_message + " " + detail
@@ -198,3 +300,11 @@ def stop_service():
 
 def restart_service():
     return ServiceController().restart_service()
+
+
+def set_delayed_auto_start():
+    return ServiceController().set_delayed_auto_start()
+
+
+def configure_recovery():
+    return ServiceController().configure_recovery()

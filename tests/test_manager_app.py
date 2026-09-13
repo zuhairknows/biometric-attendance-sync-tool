@@ -114,6 +114,12 @@ class FakeWidget(FakeQObject):
     def setStyleSheet(self, stylesheet):
         self.stylesheet = stylesheet
 
+    def setToolTip(self, tooltip):
+        self.tooltip = tooltip
+
+    def toolTip(self):
+        return getattr(self, "tooltip", "")
+
     def close(self):
         pass
 
@@ -307,8 +313,11 @@ from manager.service_controller import ServiceStatus
 
 
 class FakeController:
+    def __init__(self, status=None):
+        self.status = status or ServiceStatus(installed=False, state="Not Installed", startup="Not Installed")
+
     def get_status(self):
-        return ServiceStatus(installed=False, state="Not Installed", startup="Not Installed")
+        return self.status
 
 
 class TestableSyncManagerWindow(app_module.SyncManagerWindow):
@@ -321,6 +330,7 @@ class TestableSyncManagerWindow(app_module.SyncManagerWindow):
     def refresh(self):
         self._load_sync_module_safely()
         status = self.controller.get_status()
+        self.last_service_status = status
         self._set_state(self.service_status, status.state, self._state_for_service(status.state))
         self._set_state(self.service_startup, status.startup, "unknown")
         self.last_success.setText("2026-09-12 14:15:26")
@@ -329,6 +339,7 @@ class TestableSyncManagerWindow(app_module.SyncManagerWindow):
             DeviceHealth("FP1_DEVICE_02", "10.0.0.21", 4371),
         ])
         self.refresh_label.setText("Last refreshed: test")
+        self._apply_button_policy(status)
 
 
 class ManagerAppWorkerLifecycleTests(unittest.TestCase):
@@ -500,6 +511,33 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
 
         self.assertEqual(self.window.device_table.item(0, 2).text(), "Connected")
         self.assertEqual(self.window.device_table.item(1, 2).text(), "Failed")
+
+    def test_service_buttons_disable_by_not_installed_state(self):
+        self.assertFalse(self.window.start_button.isEnabled())
+        self.assertFalse(self.window.stop_button.isEnabled())
+        self.assertFalse(self.window.restart_button.isEnabled())
+        self.assertTrue(self.window.install_button.isEnabled())
+        self.assertFalse(self.window.uninstall_button.isEnabled())
+
+    def test_run_sync_now_disabled_while_service_running(self):
+        controller = FakeController(ServiceStatus(installed=True, state="Running", startup="Automatic"))
+        window = TestableSyncManagerWindow(controller=controller)
+        try:
+            self.assertFalse(window.sync_button.isEnabled())
+            self.assertEqual(window.sync_button.toolTip(), "Stop the Windows service before running a manual sync.")
+            window._run_sync_now()
+            self.assertIn("Stop the Windows service before running a manual sync.", window.messages.lines[-1])
+        finally:
+            window.close()
+
+    def test_run_sync_now_enabled_while_service_stopped(self):
+        controller = FakeController(ServiceStatus(installed=True, state="Stopped", startup="Automatic"))
+        window = TestableSyncManagerWindow(controller=controller)
+        try:
+            self.assertTrue(window.sync_button.isEnabled())
+            self.assertEqual(window.sync_button.toolTip(), "")
+        finally:
+            window.close()
 
 
 if __name__ == "__main__":

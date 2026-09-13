@@ -7,7 +7,7 @@ from PyQt5 import QtCore, QtWidgets
 
 from . import diagnostics
 from .health import get_health_snapshot
-from .paths import CONFIG_FOLDER, get_logs_folder, open_folder
+from .paths import get_config_folder, get_logs_folder, open_folder
 from .service_controller import ServiceController
 
 
@@ -39,6 +39,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.active_jobs = []
         self.sync_running = False
         self.device_connection_status = {}
+        self.last_service_status = None
         self.config_module = None
         self.sync_module = None
         self.setWindowTitle(APP_NAME)
@@ -67,6 +68,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
 
         self.service_status = self._value_label()
         self.service_startup = self._value_label()
+        self.service_recovery = self._value_label()
         self.last_success = self._value_label()
         self.messages = QtWidgets.QTextEdit()
         self.messages.setReadOnly(True)
@@ -96,24 +98,34 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.service_status, 0, 1)
         layout.addWidget(QtWidgets.QLabel("Startup:"), 1, 0)
         layout.addWidget(self.service_startup, 1, 1)
-        layout.addWidget(QtWidgets.QLabel("Last Successful Sync:"), 2, 0)
-        layout.addWidget(self.last_success, 2, 1)
+        layout.addWidget(QtWidgets.QLabel("Recovery:"), 2, 0)
+        layout.addWidget(self.service_recovery, 2, 1)
+        layout.addWidget(QtWidgets.QLabel("Last Successful Sync:"), 3, 0)
+        layout.addWidget(self.last_success, 3, 1)
 
         self.start_button = QtWidgets.QPushButton("Start")
         self.stop_button = QtWidgets.QPushButton("Stop")
         self.restart_button = QtWidgets.QPushButton("Restart")
         self.install_button = QtWidgets.QPushButton("Install Service")
         self.uninstall_button = QtWidgets.QPushButton("Uninstall Service")
+        self.delayed_auto_button = QtWidgets.QPushButton("Set Delayed Auto Start")
+        self.recovery_button = QtWidgets.QPushButton("Configure Recovery")
         self.start_button.clicked.connect(lambda: self._run_service_action("Starting service...", self.controller.start_service))
         self.stop_button.clicked.connect(self._confirm_stop)
         self.restart_button.clicked.connect(lambda: self._run_service_action("Restarting service...", self.controller.restart_service))
         self.install_button.clicked.connect(lambda: self._run_service_action("Installing service...", self.controller.install_service))
         self.uninstall_button.clicked.connect(self._confirm_uninstall)
+        self.delayed_auto_button.clicked.connect(lambda: self._run_service_action("Setting delayed auto start...", self.controller.set_delayed_auto_start))
+        self.recovery_button.clicked.connect(lambda: self._run_service_action("Configuring service recovery...", self.controller.configure_recovery))
 
         buttons = QtWidgets.QHBoxLayout()
         for button in [self.start_button, self.stop_button, self.restart_button, self.install_button, self.uninstall_button]:
             buttons.addWidget(button)
-        layout.addLayout(buttons, 3, 0, 1, 2)
+        layout.addLayout(buttons, 4, 0, 1, 2)
+        advanced_buttons = QtWidgets.QHBoxLayout()
+        for button in [self.delayed_auto_button, self.recovery_button]:
+            advanced_buttons.addWidget(button)
+        layout.addLayout(advanced_buttons, 5, 0, 1, 2)
         return group
 
     def _erpnext_group(self):
@@ -153,7 +165,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.sync_button.clicked.connect(self._run_sync_now)
         self.validate_button.clicked.connect(lambda: self._run_diagnostic("Validating configuration...", diagnostics.validate_configuration, self.validate_button))
         self.logs_button.clicked.connect(lambda: self._safe_open_folder(get_logs_folder(self.config_module)))
-        self.config_button.clicked.connect(lambda: self._safe_open_folder(CONFIG_FOLDER))
+        self.config_button.clicked.connect(lambda: self._safe_open_folder(get_config_folder()))
         for button in [self.sync_button, self.validate_button, self.logs_button, self.config_button]:
             layout.addWidget(button)
         return group
@@ -167,8 +179,10 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
     def refresh(self):
         self._load_sync_module_safely()
         status = self.controller.get_status()
+        self.last_service_status = status
         self._set_state(self.service_status, status.state, self._state_for_service(status.state))
         self._set_state(self.service_startup, status.startup, "unknown")
+        self._set_state(self.service_recovery, status.recovery, "unknown")
 
         if self.sync_module:
             health = get_health_snapshot(self.config_module, self.sync_module)
@@ -181,9 +195,14 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             self._append_message("Warnings:\n" + "\n".join("- " + warning for warning in health.warnings))
         elif self.sync_module:
             self._append_message("Health refreshed.")
+        self._apply_button_policy(status)
 
     def _load_sync_module_safely(self):
         try:
+            config_folder = get_config_folder()
+            if config_folder.exists() and str(config_folder) not in sys.path:
+                # Packaged/FP1 service mode keeps credentials outside the program files.
+                sys.path.insert(0, str(config_folder))
             import erpnext_sync
             self.sync_module = erpnext_sync
             self.config_module = erpnext_sync.config
@@ -220,6 +239,9 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self._run_worker(callback, lambda result: self._handle_diagnostic_result(result, button))
 
     def _run_sync_now(self):
+        if self.last_service_status and self.last_service_status.state == "Running":
+            self._append_message("Stop the Windows service before running a manual sync.")
+            return
         if self.sync_running:
             self._append_message("Manual sync is already running.")
             return
@@ -260,7 +282,6 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             self._recover_controls_after_handler_failure()
 
     def _handle_action_result(self, result):
-        self._set_busy(False)
         if isinstance(result, Exception):
             self._append_message("Action failed.")
         else:
@@ -311,14 +332,18 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             self._append_message("Could not open folder: " + str(folder))
 
     def _set_busy(self, busy):
-        for button in [self.start_button, self.stop_button, self.restart_button, self.install_button, self.uninstall_button]:
-            button.setEnabled(not busy)
+        if busy:
+            for button in self._service_action_buttons():
+                button.setEnabled(False)
+            return
+        self._apply_button_policy(self.last_service_status)
 
     def _recover_controls_after_handler_failure(self):
         self._set_busy(False)
         self.sync_running = False
         for button in [self.erp_button, self.device_button, self.validate_button, self.sync_button]:
             button.setEnabled(True)
+        self._apply_button_policy(self.last_service_status)
 
     def _append_message(self, message):
         self.messages.append(str(message))
@@ -376,6 +401,37 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         if " - Connection failed" in detail:
             return detail.split(" ", 1)[0], "Failed"
         return "", ""
+
+    def _service_action_buttons(self):
+        return [
+            self.start_button,
+            self.stop_button,
+            self.restart_button,
+            self.install_button,
+            self.uninstall_button,
+            self.delayed_auto_button,
+            self.recovery_button,
+        ]
+
+    def _apply_button_policy(self, status):
+        if status is None:
+            return
+        installed = bool(status.installed)
+        running = status.state == "Running"
+        stopped = status.state == "Stopped"
+        self.start_button.setEnabled(installed and not running)
+        self.stop_button.setEnabled(installed and not stopped)
+        self.restart_button.setEnabled(installed)
+        self.install_button.setEnabled(not installed)
+        self.uninstall_button.setEnabled(installed)
+        self.delayed_auto_button.setEnabled(installed)
+        self.recovery_button.setEnabled(installed)
+        self.sync_button.setEnabled((not running) and (not self.sync_running))
+        self._set_tooltip(self.sync_button, "Stop the Windows service before running a manual sync." if running else "")
+
+    def _set_tooltip(self, widget, message):
+        if hasattr(widget, "setToolTip"):
+            widget.setToolTip(message)
 
 
 def main():

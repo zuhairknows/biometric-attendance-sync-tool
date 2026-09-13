@@ -55,3 +55,46 @@ Use this checklist before and after the first controlled Windows service install
 - [ ] Logs are still written
 - [ ] ERPNext receives new checkins
 - [ ] Service recovery is configured
+
+## Manager Validation On FP1
+
+Use this after the packaged service has been installed and validated.
+
+- [ ] Launch Manager as a normal user
+- [ ] Confirm service shows `Running`
+- [ ] Confirm Startup shows `Automatic (Delayed Start)` if configured
+- [ ] Confirm Recovery shows restart behavior if configured
+- [ ] Confirm Last Successful Sync is current
+- [ ] Confirm device pull/push timestamps are current
+- [ ] Click **Test ERPNext** and confirm `Connected`
+- [ ] Click **Test Devices** and confirm `FP1_DEVICE_01` shows `Connected`
+- [ ] Click **Refresh** and confirm device status stays `Connected`
+- [ ] Confirm **Run Sync Now** is disabled while service is `Running`
+- [ ] Stop service from Manager
+- [ ] Confirm service status becomes `Stopped`
+- [ ] Confirm **Run Sync Now** becomes enabled
+- [ ] Run manual sync
+- [ ] Confirm mission timestamp advances and the UI reports success
+- [ ] Start service from Manager
+- [ ] Confirm service returns to `Running`
+- [ ] Restart service from Manager
+- [ ] Confirm service returns to `Running`
+- [ ] Close Manager
+- [ ] Confirm service remains `Running`
+- [ ] Re-open Manager
+- [ ] Confirm actual service state is detected correctly
+
+Do not uninstall the production service during the first Manager validation unless it is necessary for recovery.
+
+## Runtime Paths
+
+- [ ] Program files planned for `C:\Program Files\FPF Biometric Sync\`
+- [ ] Service executable planned for `C:\Program Files\FPF Biometric Sync\service\FPF-Biometric-Sync-Service.exe`
+- [ ] Config exists at `C:\ProgramData\FPF\BiometricSync\config\local_config.py`
+- [ ] Logs are written under `C:\ProgramData\FPF\BiometricSync\logs`
+- [ ] `local_config.py` is external and not bundled into the executable
+- [ ] Manager opens ProgramData logs/config folders in packaged mode
+
+## Known Console Display Note
+
+- [ ] If Arabic text looks garbled in `cmd.exe`, open the UTF-8 log file in the Manager or a UTF-8 capable editor before treating it as a logging defect

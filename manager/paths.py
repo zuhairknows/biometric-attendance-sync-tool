@@ -1,14 +1,27 @@
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SERVICE_SCRIPT = PROJECT_ROOT / "erpnext_sync_win.py"
 SERVICE_EXE_NAME = "FPF-Biometric-Sync-Service.exe"
-CONFIG_FOLDER = PROJECT_ROOT
 PROGRAM_DATA_ROOT = Path(os.environ.get("FPF_BIOMETRIC_PROGRAMDATA", r"C:\ProgramData\FPF\BiometricSync"))
+FP1_TEST_SERVICE_EXE = Path(r"C:\FPF-Test\FPF-Biometric-Sync-Service") / SERVICE_EXE_NAME
+
+
+@dataclass(frozen=True)
+class ServiceRuntime:
+    runtime_type: str
+    executable: Path
+    command_prefix: tuple
+    source: str
+
+    @property
+    def is_packaged(self):
+        return self.runtime_type == "packaged"
 
 
 def is_frozen_app():
@@ -41,22 +54,60 @@ def get_programdata_retry_folder():
     return get_programdata_root() / "retry"
 
 
-def get_packaged_service_executable():
+def uses_packaged_service_runtime():
+    return resolve_service_runtime().is_packaged
+
+
+def get_config_folder():
+    override = os.environ.get("FPF_BIOMETRIC_CONFIG_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    if is_frozen_app() or uses_packaged_service_runtime():
+        return get_programdata_config_folder()
+    return PROJECT_ROOT
+
+
+def _existing_packaged_service_candidates():
     override = os.environ.get("FPF_BIOMETRIC_SERVICE_EXE")
     if override:
         path = Path(override).expanduser()
         if path.exists():
-            return path.resolve()
+            yield "environment", path.resolve()
 
     app_root = get_app_root()
     candidates = [
-        app_root / SERVICE_EXE_NAME,
-        app_root / "FPF-Biometric-Sync-Service" / SERVICE_EXE_NAME,
-        PROJECT_ROOT / "dist" / "FPF-Biometric-Sync-Service" / SERVICE_EXE_NAME,
+        ("packaged-manager", app_root / "service" / SERVICE_EXE_NAME),
+        ("packaged-manager", app_root / SERVICE_EXE_NAME),
+        ("packaged-manager", app_root / "FPF-Biometric-Sync-Service" / SERVICE_EXE_NAME),
+        ("fp1-test", FP1_TEST_SERVICE_EXE),
     ]
-    for candidate in candidates:
+    for source, candidate in candidates:
         if candidate.exists():
-            return candidate.resolve()
+            yield source, candidate.resolve()
+
+
+def resolve_service_runtime(python_executable=None):
+    for source, service_exe in _existing_packaged_service_candidates():
+        return ServiceRuntime(
+            runtime_type="packaged",
+            executable=service_exe,
+            command_prefix=(str(service_exe),),
+            source=source,
+        )
+
+    python_executable = python_executable or sys.executable
+    return ServiceRuntime(
+        runtime_type="development",
+        executable=Path(python_executable),
+        command_prefix=(str(python_executable), str(SERVICE_SCRIPT)),
+        source="development",
+    )
+
+
+def get_packaged_service_executable():
+    runtime = resolve_service_runtime()
+    if runtime.is_packaged:
+        return runtime.executable
     return None
 
 
@@ -68,12 +119,13 @@ def resolve_from_project(path_value):
 
 
 def get_logs_folder(config_module=None):
-    if config_module is None and is_frozen_app():
+    production_paths = is_frozen_app() or uses_packaged_service_runtime()
+    if config_module is None and production_paths:
         return get_programdata_logs_folder()
     logs_directory = "logs"
     if config_module is not None:
         logs_directory = getattr(config_module, "LOGS_DIRECTORY", logs_directory)
-        if is_frozen_app() and not Path(str(logs_directory)).is_absolute():
+        if production_paths and not Path(str(logs_directory)).is_absolute():
             return (get_programdata_root() / str(logs_directory)).resolve()
     return resolve_from_project(logs_directory)
 
