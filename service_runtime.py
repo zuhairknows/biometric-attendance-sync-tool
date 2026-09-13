@@ -1,12 +1,11 @@
-"""Runtime path setup for the packaged FPF biometric Windows service."""
+"""Runtime path setup for the packaged biometric attendance Windows service."""
 
 import importlib
 import os
 import sys
 from pathlib import Path
 
-
-PROGRAMDATA_ROOT = Path(os.environ.get("FPF_BIOMETRIC_PROGRAMDATA", r"C:\ProgramData\FPF\BiometricSync"))
+import runtime_paths
 
 
 def is_frozen_runtime():
@@ -19,12 +18,16 @@ def get_application_root():
     return Path(__file__).resolve().parent
 
 
+def get_programdata_root():
+    return runtime_paths.resolve_active_programdata_root()
+
+
 def get_external_config_dir():
-    override = os.environ.get("FPF_BIOMETRIC_CONFIG_DIR")
+    override = runtime_paths.get_config_dir_override()
     if override:
-        return Path(override).expanduser().resolve()
+        return override
     if is_frozen_runtime():
-        return PROGRAMDATA_ROOT / "config"
+        return get_programdata_root() / "config"
     return get_application_root()
 
 
@@ -43,5 +46,5 @@ def load_runtime_config():
     if is_frozen_runtime():
         logs_directory = Path(str(getattr(config, "LOGS_DIRECTORY", "logs")))
         if not logs_directory.is_absolute():
-            config.LOGS_DIRECTORY = str(PROGRAMDATA_ROOT / "logs")
+            config.LOGS_DIRECTORY = str(get_programdata_root() / "logs")
     return config

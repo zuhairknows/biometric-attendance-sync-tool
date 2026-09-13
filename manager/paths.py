@@ -4,12 +4,12 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import runtime_paths
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SERVICE_SCRIPT = PROJECT_ROOT / "erpnext_sync_win.py"
+# Current packaged service executable name; renamed together with the build and installer in M2.5.
 SERVICE_EXE_NAME = "FPF-Biometric-Sync-Service.exe"
-PROGRAM_DATA_ROOT = Path(os.environ.get("FPF_BIOMETRIC_PROGRAMDATA", r"C:\ProgramData\FPF\BiometricSync"))
-FP1_TEST_SERVICE_EXE = Path(r"C:\FPF-Test\FPF-Biometric-Sync-Service") / SERVICE_EXE_NAME
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ def get_app_root():
 
 
 def get_programdata_root():
-    return PROGRAM_DATA_ROOT
+    return runtime_paths.resolve_active_programdata_root()
 
 
 def get_programdata_config_folder():
@@ -59,27 +59,25 @@ def uses_packaged_service_runtime():
 
 
 def get_config_folder():
-    override = os.environ.get("FPF_BIOMETRIC_CONFIG_DIR")
+    override = runtime_paths.get_config_dir_override()
     if override:
-        return Path(override).expanduser().resolve()
+        return override
     if is_frozen_app() or uses_packaged_service_runtime():
         return get_programdata_config_folder()
     return PROJECT_ROOT
 
 
 def _existing_packaged_service_candidates():
-    override = os.environ.get("FPF_BIOMETRIC_SERVICE_EXE")
-    if override:
-        path = Path(override).expanduser()
-        if path.exists():
-            yield "environment", path.resolve()
+    override = runtime_paths.get_service_exe_override()
+    if override is not None and override.exists():
+        yield "environment", override.resolve()
 
     app_root = get_app_root()
     candidates = [
         ("packaged-manager", app_root / "service" / SERVICE_EXE_NAME),
         ("packaged-manager", app_root / SERVICE_EXE_NAME),
+        # Current PyInstaller output folder name; renamed together with the build in M2.5.
         ("packaged-manager", app_root / "FPF-Biometric-Sync-Service" / SERVICE_EXE_NAME),
-        ("fp1-test", FP1_TEST_SERVICE_EXE),
     ]
     for source, candidate in candidates:
         if candidate.exists():
