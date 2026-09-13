@@ -115,7 +115,7 @@ class ServiceControllerTests(unittest.TestCase):
 
     def test_service_executable_command_construction(self):
         runner = FakeRunner([completed(returncode=1060), completed()])
-        service_exe = Path(r"C:\Program Files\FPF Biometric Sync\FPF-Biometric-Sync-Service.exe")
+        service_exe = Path(r"C:\Program Files\Biometric Attendance Sync\Biometric-Attendance-Sync-Service.exe")
         controller = ServiceController(
             runner=runner,
             python_executable="python.exe",

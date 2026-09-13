@@ -71,7 +71,7 @@ class ServiceEntryDispatchTests(unittest.TestCase):
     def test_no_args_selects_scm_dispatcher_path(self):
         service_entry = load_service_entry_with_fakes()
 
-        service_entry.run_service_dispatch(["FPF-Biometric-Sync-Service.exe"])
+        service_entry.run_service_dispatch(["Biometric-Attendance-Sync-Service.exe"])
 
         service_entry.servicemanager.Initialize.assert_called_once_with()
         service_entry.servicemanager.PrepareToHostSingle.assert_called_once_with(service_entry.BiometricAttendanceSyncService)
@@ -81,7 +81,7 @@ class ServiceEntryDispatchTests(unittest.TestCase):
     def test_install_selects_command_line_path(self):
         service_entry = load_service_entry_with_fakes()
 
-        service_entry.run_service_dispatch(["FPF-Biometric-Sync-Service.exe", "install"])
+        service_entry.run_service_dispatch(["Biometric-Attendance-Sync-Service.exe", "install"])
 
         service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.BiometricAttendanceSyncService)
         service_entry.servicemanager.StartServiceCtrlDispatcher.assert_not_called()
@@ -89,7 +89,7 @@ class ServiceEntryDispatchTests(unittest.TestCase):
     def test_install_does_not_require_runtime_config(self):
         service_entry = load_service_entry_with_fakes()
 
-        service_entry.run_service_dispatch(["FPF-Biometric-Sync-Service.exe", "install"])
+        service_entry.run_service_dispatch(["Biometric-Attendance-Sync-Service.exe", "install"])
 
         sys.modules["service_runtime"].prepare_runtime_paths.assert_not_called()
         sys.modules["service_runtime"].load_runtime_config.assert_not_called()
@@ -97,7 +97,7 @@ class ServiceEntryDispatchTests(unittest.TestCase):
     def test_debug_selects_command_line_path(self):
         service_entry = load_service_entry_with_fakes()
 
-        service_entry.run_service_dispatch(["FPF-Biometric-Sync-Service.exe", "debug"])
+        service_entry.run_service_dispatch(["Biometric-Attendance-Sync-Service.exe", "debug"])
 
         service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.BiometricAttendanceSyncService)
         service_entry.servicemanager.StartServiceCtrlDispatcher.assert_not_called()
@@ -105,7 +105,7 @@ class ServiceEntryDispatchTests(unittest.TestCase):
     def test_remove_selects_command_line_path(self):
         service_entry = load_service_entry_with_fakes()
 
-        service_entry.run_service_dispatch(["FPF-Biometric-Sync-Service.exe", "remove"])
+        service_entry.run_service_dispatch(["Biometric-Attendance-Sync-Service.exe", "remove"])
 
         service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.BiometricAttendanceSyncService)
         service_entry.servicemanager.StartServiceCtrlDispatcher.assert_not_called()

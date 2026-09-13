@@ -37,7 +37,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='FPF-Biometric-Sync-Service',
+    name='Biometric-Attendance-Sync-Service',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -57,5 +57,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='FPF-Biometric-Sync-Service',
+    name='Biometric-Attendance-Sync-Service',
 )

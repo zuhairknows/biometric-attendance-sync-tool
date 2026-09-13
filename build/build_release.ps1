@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $releaseRoot = Join-Path $repoRoot "release"
-$appStage = Join-Path $releaseRoot "FPF Biometric Sync"
+$appStage = Join-Path $releaseRoot "Biometric Attendance Sync"
 $installerOut = Join-Path $releaseRoot "installer"
 
 if (-not $Version) {
@@ -32,23 +32,28 @@ function Remove-WorkspacePath {
 
 Push-Location $repoRoot
 try {
+    Remove-WorkspacePath (Join-Path $repoRoot "dist\Biometric-Attendance-Sync-Service")
+    Remove-WorkspacePath (Join-Path $repoRoot "dist\Biometric-Attendance-Sync-Manager")
     Remove-WorkspacePath (Join-Path $repoRoot "dist\FPF-Biometric-Sync-Service")
     Remove-WorkspacePath (Join-Path $repoRoot "dist\FPF-Biometric-Sync-Manager")
     Remove-WorkspacePath (Join-Path $repoRoot "build\service")
     Remove-WorkspacePath (Join-Path $repoRoot "build\manager")
     Remove-WorkspacePath $appStage
+    Remove-WorkspacePath (Join-Path $releaseRoot "FPF Biometric Sync")
+    Remove-WorkspacePath (Join-Path $installerOut "FPF-Biometric-Sync-Setup-$Version.exe")
+    Remove-WorkspacePath (Join-Path $installerOut "FPF-Biometric-Sync-Setup-$Version.rar")
     New-Item -ItemType Directory -Force -Path $appStage | Out-Null
     New-Item -ItemType Directory -Force -Path $installerOut | Out-Null
 
     python -m PyInstaller -y --clean "build\service.spec"
     python -m PyInstaller -y --clean "build\manager.spec"
 
-    $managerDist = Join-Path $repoRoot "dist\FPF-Biometric-Sync-Manager"
-    $serviceDist = Join-Path $repoRoot "dist\FPF-Biometric-Sync-Service"
-    if (-not (Test-Path -LiteralPath (Join-Path $managerDist "FPF-Biometric-Sync-Manager.exe"))) {
+    $managerDist = Join-Path $repoRoot "dist\Biometric-Attendance-Sync-Manager"
+    $serviceDist = Join-Path $repoRoot "dist\Biometric-Attendance-Sync-Service"
+    if (-not (Test-Path -LiteralPath (Join-Path $managerDist "Biometric-Attendance-Sync-Manager.exe"))) {
         throw "Manager executable was not produced."
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $serviceDist "FPF-Biometric-Sync-Service.exe"))) {
+    if (-not (Test-Path -LiteralPath (Join-Path $serviceDist "Biometric-Attendance-Sync-Service.exe"))) {
         throw "Service executable was not produced."
     }
 
@@ -74,7 +79,7 @@ try {
         exit 2
     }
 
-    & $InnoCompiler "/DAppVersion=$Version" "installer\FPF-Biometric-Sync.iss"
+    & $InnoCompiler "/DAppVersion=$Version" "installer\Biometric-Attendance-Sync.iss"
 }
 finally {
     Pop-Location

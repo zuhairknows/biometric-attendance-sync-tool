@@ -40,6 +40,29 @@ class PackagedServicePathTests(unittest.TestCase):
         with mock.patch.object(paths, "is_frozen_app", return_value=True), mock.patch.object(paths, "get_app_root", return_value=self.test_dir):
             self.assertEqual(paths.get_packaged_service_executable(), service_exe.resolve())
 
+    def test_legacy_packaged_service_exe_is_detected_when_new_exe_is_absent(self):
+        legacy_exe = self.test_dir / paths.LEGACY_SERVICE_EXE_NAME
+        legacy_exe.write_text("placeholder", encoding="utf-8")
+
+        with mock.patch.object(paths, "is_frozen_app", return_value=True), mock.patch.object(paths, "get_app_root", return_value=self.test_dir):
+            runtime = paths.resolve_service_runtime("python.exe")
+
+        self.assertEqual(runtime.runtime_type, "packaged")
+        self.assertEqual(runtime.source, "legacy-packaged-manager")
+        self.assertEqual(runtime.executable, legacy_exe.resolve())
+
+    def test_generic_packaged_service_exe_wins_over_legacy_exe(self):
+        service_exe = self.test_dir / paths.SERVICE_EXE_NAME
+        service_exe.write_text("placeholder", encoding="utf-8")
+        legacy_exe = self.test_dir / paths.LEGACY_SERVICE_EXE_NAME
+        legacy_exe.write_text("placeholder", encoding="utf-8")
+
+        with mock.patch.object(paths, "is_frozen_app", return_value=True), mock.patch.object(paths, "get_app_root", return_value=self.test_dir):
+            runtime = paths.resolve_service_runtime("python.exe")
+
+        self.assertEqual(runtime.source, "packaged-manager")
+        self.assertEqual(runtime.executable, service_exe.resolve())
+
     def test_explicit_service_exe_env_override(self):
         service_exe = self.test_dir / "custom-service.exe"
         service_exe.write_text("placeholder", encoding="utf-8")

@@ -8,8 +8,10 @@ import runtime_paths
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SERVICE_SCRIPT = PROJECT_ROOT / "erpnext_sync_win.py"
-# Current packaged service executable name; renamed together with the build and installer in M2.5.
-SERVICE_EXE_NAME = "FPF-Biometric-Sync-Service.exe"
+# Primary packaged service executable name. Keep the legacy value only for one
+# compatibility release so existing staged/package layouts can still be found.
+SERVICE_EXE_NAME = "Biometric-Attendance-Sync-Service.exe"
+LEGACY_SERVICE_EXE_NAME = "FPF-Biometric-Sync-Service.exe"
 
 
 @dataclass(frozen=True)
@@ -76,8 +78,10 @@ def _existing_packaged_service_candidates():
     candidates = [
         ("packaged-manager", app_root / "service" / SERVICE_EXE_NAME),
         ("packaged-manager", app_root / SERVICE_EXE_NAME),
-        # Current PyInstaller output folder name; renamed together with the build in M2.5.
-        ("packaged-manager", app_root / "FPF-Biometric-Sync-Service" / SERVICE_EXE_NAME),
+        ("packaged-manager", app_root / "Biometric-Attendance-Sync-Service" / SERVICE_EXE_NAME),
+        ("legacy-packaged-manager", app_root / "service" / LEGACY_SERVICE_EXE_NAME),
+        ("legacy-packaged-manager", app_root / LEGACY_SERVICE_EXE_NAME),
+        ("legacy-packaged-manager", app_root / "FPF-Biometric-Sync-Service" / LEGACY_SERVICE_EXE_NAME),
     ]
     for source, candidate in candidates:
         if candidate.exists():
