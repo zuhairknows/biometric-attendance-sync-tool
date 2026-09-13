@@ -1,182 +1,208 @@
-# Biometric Attendance Sync Tool <span style="font-size: 0.6em; font-style: italic">(For ERPNext)</span>
+# Biometric Attendance Sync
 
-Python Scripts to poll your biometric attendance system _(BAS)_ for logs and sync with your ERPNext instance
+Biometric Attendance Sync polls ZKTeco-compatible biometric attendance devices and submits Employee Checkin records to ERPNext/HRMS.
 
+ERPNext remains the attendance source of truth. This tool reads device punches, sends them to ERPNext, writes local logs/checkpoints, and provides a Windows Manager app for day-to-day operation.
 
-## Table of Contents
- - [Pre-requisites](#pre-requisites)
- - [Usage](#usage)
-    - [GUI](#gui)
-    - [CLI](#cli)
- - [Setup Specifications](#setup-specifications-(for-cli))
-    - [UNIX](#unix)
-    - [Windows](#windows)
-  - [Setting Up Config](#setting-up-config)
-  - [Resources](#resources)
-  - [License](#license)
+## Prerequisites
 
+- Python 3.10+ for source/development usage.
+- Windows for the packaged Manager, packaged Service, and Inno Setup installer flow.
+- ERPNext/HRMS API credentials with permission to create Employee Checkin records.
+- Network access from the integration PC to the biometric devices and ERPNext site.
 
-## Pre-requisites
-* Python 3.10+ recommended for current dependencies on Windows.
+## Configuration
 
+Create a real `local_config.py` from `local_config.py.template`.
 
-## Usage
-There's two ways you can use this tool. If accessing the CLI is a bit of a pain for you, the GUI has a simple form to guide you through the process.
+For source/development usage, keep `local_config.py` in the repository folder.
 
-Under [/releases](https://github.com/frappe/biometric-attendance-sync-tool/releases), for a particular release download the `biometric-attendance-sync-tool-[version]-[distribution].zip` and unzip it's contents. Now from the location of the unzipped files, you can go ahead with the CLI or GUI method.
+For packaged Windows usage, keep it outside Program Files:
 
-### GUI
-Run the `attendance-sync` file from the folder; This should setup all it's dependencies automatically and start the GUI.
-
-### CLI
-The `erpnext_sync.py` file is the "backbone" of this project. Apart from Windows _(which has its own wrapper `erpnext_sync_win.py`)_, this file can be directly used to set up the sync tool. Further information provided in the [/Wiki](https://github.com/frappe/biometric-attendance-sync-tool/wiki).
-
-
-## Setup Specifications (For CLI)
-
-1. Setup dependencies
-    ```
-    cd biometric-attendance-sync-tool
-      && python3 -m venv venv
-      && source venv/bin/activate
-      && pip install -r requirements.txt
-    ```
-2. Setup `local_config.py`
-
-   Make a copy of and rename `local_config.py.template` file. [Learn More](#setting-up-config)
-
-3. Run this script using `python3 erpnext_sync.py`
-
-### UNIX
-
-There's a [Wiki](https://github.com/frappe/biometric-attendance-sync-tool/wiki/Running-this-script-in-production) for this.
-
-### Windows
-
-Installing as a Windows service
-
-1. Install dependencies using `pip install -r requirements.txt`
-2. Go to this repository's Directory
-3. Install the windows service using `python erpnext_sync_win.py install`
-4. Done
-
-#### Update the installed windows service
-    python erpnext_sync_win.py update
-
-#### Stop the windows service
-    net stop ERPNextBiometricPushService
-
-#### To see the status of the service
-    mmc Services.msc
-
-
-## Setting up config
-- You need to make a copy of `local_config.py.template` file and rename it to `local_config.py`
-- Please fill in the relevant sections in this file as per the comments in it.
-- Below are the delineation of the keys contained in `local_config.py`:
-  - ERPNext connection configs:
-    - `ERPNEXT_API_KEY`: The API Key of the ERPNext User
-    - `ERPNEXT_API_SECRET`: The API Secret of the ERPNext User
-
-      > Please refer to [this link](https://frappe.io/docs/user/en/guides/integration/how_to_set_up_token_based_auth#generate-a-token) to learn how to generate API key and secret for a user in ERPNext.
-      > The ERPNext User who's API key and secret is used, needs to have at least the following permissions:
-      > 1. Create Permissions for 'Employee Checkin' DocType.
-      > 2. Write Permissions for 'Shift Type' DocType.
-
-    - `ERPNEXT_URL`: The web address at which you would access your ERPNext. eg:`'https://yourcompany.erpnext.com'`, `'https://erp.yourcompany.com'`
-    - `ERPNEXT_VERSION`: The base version of your ERPNext/HRMS app. eg: 13, 14, 15
-  - This script's operational configs:
-    - `PULL_FREQUENCY`: The time in minutes after which a pull for punches from the biometric device and push to ERPNext is attempted again.
-    - `LOGS_DIRECTORY`: The Directory in which the logs related to this script's whereabouts are stored.
-      > Hint: For most cases you can leave the above two keys unchanged.
-    - `IMPORT_START_DATE`: The date after which the punches are pushed to ERPNext. Expected Format: `YYYYMMDD`.
-      > For some cases you would have a lot of old punches in the biometric device. But, you would want to only import punches after certain date. You could set this key appropriately. Also, you can leave this as `None` if this case does not apply to you.
-    - `ERPNEXT_REQUEST_TIMEOUT`: The maximum number of seconds to wait for ERPNext API responses.
-  - Biometric device configs:
-    - `device_id`: Permanent unique device identifier. This is sent to ERPNext Employee Checkin and is also used for local retry/status identity. Do not change it when only the IP address or port changes.
-    - `ip`: Device IP address or hostname. `host` is also accepted by the sync engine.
-    - `port`: Optional ZKTeco TCP port. Defaults to `4370` when omitted.
-    - `password`: Optional ZKTeco connection password. Defaults to `0` when omitted.
-    - `punch_direction`: `'IN'`, `'OUT'`, `'AUTO'`, or `None`.
-    - `clear_from_device_on_fetch`: Keep this `False` for production. Setting it to `True` can delete attendance records from the biometric device after fetch.
-    - `latitude` / `longitude`: Optional. Required only when HRMS geolocation tracking requires them.
-
-Example device:
-
+```text
+C:\ProgramData\BiometricAttendanceSync\config\local_config.py
 ```
+
+Mutable packaged runtime data uses:
+
+```text
+C:\ProgramData\BiometricAttendanceSync\
+    config\
+    logs\
+    state\
+    retry\
+```
+
+Current environment overrides:
+
+```text
+BIOMETRIC_SYNC_PROGRAMDATA
+BIOMETRIC_SYNC_CONFIG_DIR
+BIOMETRIC_SYNC_SERVICE_EXE
+```
+
+Legacy compatibility aliases from older builds are still accepted temporarily:
+
+```text
+FPF_BIOMETRIC_PROGRAMDATA
+FPF_BIOMETRIC_CONFIG_DIR
+FPF_BIOMETRIC_SERVICE_EXE
+C:\ProgramData\FPF\BiometricSync
+```
+
+Use the `BIOMETRIC_SYNC_*` names for new deployments.
+
+## Device Configuration
+
+Each configured biometric device needs a stable logical `device_id`. Do not change `device_id` when only the IP address, hostname, port, or password changes; it is used for ERPNext device identity, retry dumps, logs, and status keys.
+
+Example:
+
+```python
 devices = [
     {
-        'device_id': 'FP1_DEVICE_01',
-        'ip': '10.0.0.20',
-        'port': 4371,
-        'password': 0,
-        'punch_direction': None,
-        'clear_from_device_on_fetch': False
+        "device_id": "DEVICE_01",
+        "ip": "192.0.2.10",
+        "port": 4370,
+        "password": 0,
+        "punch_direction": None,
+        "clear_from_device_on_fetch": False,
     }
 ]
 ```
 
-For ERPNext/HRMS v15, ZKTeco User ID/PIN should match the Employee Attendance Device ID.
+For ERPNext/HRMS v15, the biometric device User ID/PIN should match the Employee Attendance Device ID.
 
-> TODO: fill this section with more info to help Non-Technical Individuals.
+Keep `clear_from_device_on_fetch = False` in production. Setting it to `True` can delete attendance records from the biometric device after fetch.
 
-## FPF Production Deployment
+## Source Usage
 
-This fork is prepared for the FPF ZKTeco to ERPNext attendance integration on a Windows integration PC. ERPNext/HRMS v15 remains the authoritative attendance system; this tool only polls ZKTeco devices and submits Employee Checkin records.
+Install dependencies:
 
-Production behavior:
-- ZKTeco User ID/PIN must match the ERPNext Employee `attendance_device_id`.
-- Each biometric device must have a permanent logical `device_id`, such as `FP1_DEVICE_01`. Do not change `device_id` when only the device IP address, hostname, port, or password changes.
-- Device IP/host, port, and connection password are network settings and can be updated independently from `device_id`.
-- Retry dump files, success logs, failure logs, and status keys use `device_id` for local identity.
-- Known duplicate Employee Checkin responses from ERPNext are treated as idempotent/already synchronized when ERPNext returns HTTP 417 with the expected duplicate timestamp message. Other HTTP 417 responses remain failures.
-- Logs use UTF-8 so Arabic Shift Type names and mixed Arabic/English messages can be written on Windows.
-- `local_config.py` contains production credentials and must remain local and untracked by Git.
+```powershell
+cd C:\Projects\biometric-attendance-sync-tool
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-Do not enable `clear_from_device_on_fetch` in production.
+Run one manual sync cycle:
 
-The Windows service wakes on a short heartbeat so it can stop promptly, but `PULL_FREQUENCY` in `local_config.py` controls the actual biometric synchronization frequency.
+```powershell
+python -c "import erpnext_sync; erpnext_sync.main()"
+```
 
-See [Windows service deployment](docs/windows-service.md) and [production checklist](docs/production-checklist.md) before installing the service.
+Run the legacy GUI entry point only when needed:
 
-For production packaging, see [Packaged Windows Service](docs/packaged-service.md). The packaged service avoids depending on a virtual environment, user-profile Python, or `pythonservice.exe`.
+```powershell
+python gui.py
+```
 
-## FPF Biometric Sync Manager
+## Windows Service
 
-This branch includes a Windows desktop utility named `FPF Biometric Sync Manager` for non-technical operation of the existing Windows service.
-
-It can show service health, validate configuration, test ERPNext, test ZKTeco devices, run one manual sync cycle, and open the logs/config folders. It does not replace the sync engine and does not change the Windows service name.
-
-Launch locally from this folder with:
+The Windows service name remains stable for upgrade compatibility:
 
 ```text
+ERPNextBiometricPushService
+```
+
+Development/source install commands:
+
+```powershell
+.\.venv\Scripts\python.exe erpnext_sync_win.py install
+net start ERPNextBiometricPushService
+net stop ERPNextBiometricPushService
+.\.venv\Scripts\python.exe erpnext_sync_win.py remove
+```
+
+The packaged service executable is:
+
+```text
+Biometric-Attendance-Sync-Service.exe
+```
+
+See [Windows Service Deployment](docs/windows-service.md) and [Packaged Windows Service](docs/packaged-service.md) for the full service contract.
+
+## Manager
+
+The Windows desktop utility is named:
+
+```text
+Biometric Attendance Sync Manager
+```
+
+Local launch:
+
+```powershell
 python -m manager.app
 ```
 
-See [FPF Biometric Sync Manager](docs/sync-manager.md) for details.
+Packaged executable:
 
-## To build executable file for GUI
-### Linux and Windows:
-1. Activate virtual environment.
-1. Navigate to the repository folder (where `gui.py` located) by
-    ```
-    cd biometric-attendance-sync-tool
-    ```
-1. Run the following commands:
-    ```
-    pip install pyinstaller
-    ```
+```text
+Biometric-Attendance-Sync-Manager.exe
+```
 
-    ```
-    python -m PyInstaller --name="attendance-sync" --windowed --onefile gui.py
-    ```
-1. The executable file `attendance-sync` created inside `dist/` folder.
+The Manager can show service health, validate configuration, test ERPNext, test biometric devices, run one manual sync cycle, and open runtime folders. It does not change the Windows service name.
 
-### Resources
+See [Sync Manager](docs/sync-manager.md).
 
-* Article on [ERPNext Documentation](https://docs.erpnext.com/docs/user/manual/en/setting-up/articles/integrating-erpnext-with-biometric-attendance-devices).
-* This Repo's [/Wiki](https://github.com/frappe/biometric-attendance-sync-tool/wiki).
+## Build
 
-### License
+Run the normal release build from the repository root:
 
-This project is licensed under [GNU General Public License v3.0](LICENSE)
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build\build_release.ps1
+```
+
+Expected packaged outputs:
+
+```text
+dist\Biometric-Attendance-Sync-Manager\Biometric-Attendance-Sync-Manager.exe
+dist\Biometric-Attendance-Sync-Service\Biometric-Attendance-Sync-Service.exe
+release\Biometric Attendance Sync\
+```
+
+Expected installer when Inno Setup is available:
+
+```text
+release\installer\Biometric-Attendance-Sync-Setup-<version>.exe
+```
+
+## Logs And State
+
+Development mode uses the configured `LOGS_DIRECTORY`, usually repo-local `logs`.
+
+Packaged mode writes runtime files under `C:\ProgramData\BiometricAttendanceSync` unless an environment override or legacy compatibility config path is active.
+
+Important files:
+
+```text
+logs\logs.log
+logs\error.log
+logs\status.json
+logs\attendance_success_log_<device_id>.log
+logs\attendance_failed_log_<device_id>.log
+retry\...
+```
+
+Known duplicate Employee Checkin responses from ERPNext are treated as already synchronized only when ERPNext returns HTTP 417 with the expected duplicate timestamp message. Other HTTP 417 responses remain failures.
+
+Logs are UTF-8 so Arabic and mixed-language messages can be written on Windows.
+
+## Validation
+
+Run the test suite:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+## Resources
+
+- [ERPNext biometric attendance device integration](https://docs.erpnext.com/docs/user/manual/en/setting-up/articles/integrating-erpnext-with-biometric-attendance-devices)
+- [Original Frappe project wiki](https://github.com/frappe/biometric-attendance-sync-tool/wiki)
+
+## License
+
+This project is licensed under [GNU General Public License v3.0](LICENSE).

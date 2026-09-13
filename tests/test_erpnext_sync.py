@@ -128,7 +128,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_default_port_4370(self):
         sync = load_sync_module(self.logs_directory)
-        device = sync.normalize_device_config({"device_id": "FP1", "ip": "10.0.0.20"})
+        device = sync.normalize_device_config({"device_id": "DEVICE_01", "ip": "192.0.2.10"})
         sync.get_all_attendance_from_device(
             device["ip"],
             port=device["port"],
@@ -139,7 +139,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_custom_port_4371(self):
         sync = load_sync_module(self.logs_directory)
-        device = sync.normalize_device_config({"device_id": "FP1", "ip": "10.0.0.20", "port": 4371})
+        device = sync.normalize_device_config({"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4371})
         sync.get_all_attendance_from_device(
             device["ip"],
             port=device["port"],
@@ -150,7 +150,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_default_password_0(self):
         sync = load_sync_module(self.logs_directory)
-        device = sync.normalize_device_config({"device_id": "FP1", "ip": "10.0.0.20"})
+        device = sync.normalize_device_config({"device_id": "DEVICE_01", "ip": "192.0.2.10"})
         sync.get_all_attendance_from_device(
             device["ip"],
             port=device["port"],
@@ -161,7 +161,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_custom_password(self):
         sync = load_sync_module(self.logs_directory)
-        device = sync.normalize_device_config({"device_id": "FP1", "ip": "10.0.0.20", "password": 1234})
+        device = sync.normalize_device_config({"device_id": "DEVICE_01", "ip": "192.0.2.10", "password": 1234})
         sync.get_all_attendance_from_device(
             device["ip"],
             port=device["port"],
@@ -179,7 +179,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             return 200, "CHECKIN-0001"
 
         sync.send_to_erpnext = fake_send
-        device = {"device_id": "FP1", "ip": "10.0.0.20", "punch_direction": None}
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         logs = [{"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27), "punch": 0, "status": 1}]
         sync.pull_process_and_push_data(device, logs)
         self.assertEqual(sent, [("100", None, None)])
@@ -193,7 +193,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             return 200, "CHECKIN-0001"
 
         sync.send_to_erpnext = fake_send
-        device = {"device_id": "FP1", "ip": "10.0.0.20", "punch_direction": None, "latitude": 0.0, "longitude": 0.0}
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None, "latitude": 0.0, "longitude": 0.0}
         logs = [
             {"uid": 1, "user_id": "before", "timestamp": datetime.datetime(2026, 8, 26, 23, 59), "punch": 0, "status": 1},
             {"uid": 2, "user_id": "midnight", "timestamp": datetime.datetime(2026, 8, 27, 0, 0), "punch": 0, "status": 1},
@@ -213,7 +213,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             return 200, "CHECKIN-0001"
 
         sync.send_to_erpnext = fake_send
-        device = {"device_id": "FP1", "ip": "10.0.0.20", "punch_direction": None}
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         logs = [
             {"uid": 1, "user_id": "duplicate", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1},
             {"uid": 2, "user_id": "later", "timestamp": datetime.datetime(2026, 8, 27, 8, 1), "punch": 0, "status": 1},
@@ -221,8 +221,8 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         sync.pull_process_and_push_data(device, logs)
 
         self.assertEqual(sent, ["duplicate", "later"])
-        success_log = (self.logs_directory / "attendance_success_log_FP1.log").read_text()
-        failed_log = (self.logs_directory / "attendance_failed_log_FP1.log").read_text()
+        success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
+        failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         self.assertIn("DUPLICATE_ALREADY_SYNCED", success_log)
         self.assertEqual(failed_log, "")
 
@@ -235,7 +235,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             return 417, sync.DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE
 
         sync.send_to_erpnext = first_run_send
-        device = {"device_id": "FP1", "ip": "10.0.0.20", "punch_direction": None}
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         duplicate_log = {"uid": 1, "user_id": "duplicate", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}
         sync.pull_process_and_push_data(device, [duplicate_log])
         self.assertEqual(first_run_sent, ["duplicate"])
@@ -259,13 +259,13 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             return 417, "Some other validation error"
 
         sync.send_to_erpnext = fake_send
-        device = {"device_id": "FP1", "ip": "10.0.0.20", "punch_direction": None}
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         logs = [{"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
 
         with self.assertRaisesRegex(Exception, "API Call to ERPNext Failed"):
             sync.pull_process_and_push_data(device, logs)
 
-        failed_log = (self.logs_directory / "attendance_failed_log_FP1.log").read_text()
+        failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         self.assertIn("417", failed_log)
         self.assertNotIn("DUPLICATE_ALREADY_SYNCED", failed_log)
 
@@ -280,7 +280,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             return 200, "CHECKIN-0001"
 
         sync.send_to_erpnext = fake_send
-        device = {"device_id": "FP1", "ip": "10.0.0.20", "punch_direction": None}
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         logs = [
             {"uid": 1, "user_id": "duplicate", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1},
             {"uid": 2, "user_id": "later-1", "timestamp": datetime.datetime(2026, 8, 27, 8, 1), "punch": 0, "status": 1},
@@ -292,7 +292,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_info_logger_writes_utf8_arabic_and_mixed_text(self):
         sync = load_sync_module(self.logs_directory)
-        message = "Shift Type صباحي 1 synchronized"
+        message = "Shift Type الوردية الصباحية synchronized"
 
         sync.info_logger.info(message)
         for handler in sync.info_logger.handlers:
@@ -303,7 +303,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_error_logger_writes_utf8_arabic_and_mixed_text(self):
         sync = load_sync_module(self.logs_directory)
-        message = "Error updating Shift Type ليلي"
+        message = "Error updating Shift Type الوردية الليلية"
 
         sync.error_logger.error(message)
         for handler in sync.error_logger.handlers:
@@ -324,14 +324,14 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_retry_dump_identity_is_stable_when_ip_changes(self):
         sync = load_sync_module(self.logs_directory)
-        first = sync.get_dump_file_name_and_directory("FP1", "10.0.0.20")
-        second = sync.get_dump_file_name_and_directory("FP1", "10.0.0.21")
+        first = sync.get_dump_file_name_and_directory("DEVICE_01", "192.0.2.10")
+        second = sync.get_dump_file_name_and_directory("DEVICE_01", "192.0.2.11")
         self.assertEqual(first, second)
-        self.assertTrue(first.endswith("FP1_last_fetch_dump.json"))
+        self.assertTrue(first.endswith("DEVICE_01_last_fetch_dump.json"))
 
     def test_erpnext_requests_use_configured_timeout(self):
         sync = load_sync_module(self.logs_directory, request_timeout=12)
-        sync.send_to_erpnext("100", datetime.datetime(2026, 8, 27), "FP1")
+        sync.send_to_erpnext("100", datetime.datetime(2026, 8, 27), "DEVICE_01")
         sys.modules["requests"].request.assert_called_with(
             "POST",
             "https://erp.example.test/api/method/hrms.hr.doctype.employee_checkin.employee_checkin.add_log_based_on_employee_field",
@@ -342,7 +342,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             json={
                 "employee_field_value": "100",
                 "timestamp": "2026-08-27 00:00:00",
-                "device_id": "FP1",
+                "device_id": "DEVICE_01",
                 "log_type": None,
                 "latitude": None,
                 "longitude": None,
@@ -367,17 +367,17 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
     def test_device_config_requires_device_id(self):
         sync = load_sync_module(self.logs_directory)
         with self.assertRaisesRegex(ValueError, "device_id"):
-            sync.normalize_device_config({"ip": "10.0.0.20"})
+            sync.normalize_device_config({"ip": "192.0.2.10"})
 
     def test_device_config_requires_ip_or_host(self):
         sync = load_sync_module(self.logs_directory)
         with self.assertRaisesRegex(ValueError, "ip or host"):
-            sync.normalize_device_config({"device_id": "FP1"})
+            sync.normalize_device_config({"device_id": "DEVICE_01"})
 
     def test_device_config_rejects_invalid_port(self):
         sync = load_sync_module(self.logs_directory)
         with self.assertRaisesRegex(ValueError, "between 1 and 65535"):
-            sync.normalize_device_config({"device_id": "FP1", "ip": "10.0.0.20", "port": 70000})
+            sync.normalize_device_config({"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 70000})
 
     def test_device_config_accepts_safe_device_id(self):
         sync = load_sync_module(self.logs_directory)
@@ -388,11 +388,11 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_device_config_rejects_unsafe_device_id(self):
         sync = load_sync_module(self.logs_directory)
-        unsafe_device_ids = ["../FP1", "FP1.DEVICE.01", "FP1:DEVICE:01", "FP1/DEVICE/01", "FP1\\DEVICE\\01"]
+        unsafe_device_ids = ["../DEVICE_01", "DEVICE.01", "DEVICE:01", "DEVICE/01", "DEVICE\\01"]
         for device_id in unsafe_device_ids:
             with self.subTest(device_id=device_id):
                 with self.assertRaisesRegex(ValueError, "invalid"):
-                    sync.normalize_device_config({"device_id": device_id, "ip": "10.0.0.20"})
+                    sync.normalize_device_config({"device_id": device_id, "ip": "192.0.2.10"})
 
     def test_config_validation_rejects_duplicate_device_ids(self):
         sync = load_sync_module(self.logs_directory)

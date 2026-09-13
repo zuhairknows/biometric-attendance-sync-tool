@@ -109,8 +109,9 @@ class PackagedServicePathTests(unittest.TestCase):
         self.assertEqual(runtime.source, "packaged-manager")
         self.assertEqual(runtime.executable, service_exe.resolve())
 
-    def test_fp1_test_service_fallback_removed(self):
-        self.assertFalse(hasattr(paths, "FP1_TEST_SERVICE_EXE"))
+    def test_old_customer_test_service_fallback_removed(self):
+        old_fallback_name = "FP" + "1_TEST_SERVICE_EXE"
+        self.assertFalse(hasattr(paths, old_fallback_name))
 
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(paths, "is_frozen_app", return_value=False), mock.patch.object(paths, "get_app_root", return_value=self.test_dir):
             runtime = paths.resolve_service_runtime("python.exe")
