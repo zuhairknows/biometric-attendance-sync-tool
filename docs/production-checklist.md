@@ -11,6 +11,21 @@ Use this checklist before and after the first controlled Windows service install
 - [ ] `local_config.py` is not tracked by Git
 - [ ] No logs, `status.json`, retry dumps, `.venv`, or cache files tracked
 
+## Installer
+
+- [ ] Built with `powershell -ExecutionPolicy Bypass -File build\build_release.ps1`
+- [ ] Final artifact exists at `release\installer\FPF-Biometric-Sync-Setup-0.1.0.exe`
+- [ ] Setup run as Administrator
+- [ ] Program files installed under `C:\Program Files\FPF Biometric Sync`
+- [ ] Manager installed at `C:\Program Files\FPF Biometric Sync\FPF-Biometric-Sync-Manager.exe`
+- [ ] Service installed at `C:\Program Files\FPF Biometric Sync\service\FPF-Biometric-Sync-Service.exe`
+- [ ] ProgramData config/log/state/retry folders created
+- [ ] Real `local_config.py` preserved if already present
+- [ ] Only `local_config.py.template` installed when config is missing
+- [ ] Apps & Features entry appears
+- [ ] Uninstall removes service and binaries
+- [ ] Uninstall preserves `C:\ProgramData\FPF\BiometricSync`
+
 ## ERPNext
 
 - [ ] API user is active

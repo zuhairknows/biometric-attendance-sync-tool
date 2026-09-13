@@ -9,19 +9,28 @@ SERVICE_NAME = "ERPNextBiometricPushService"
 SERVICE_DISPLAY_NAME = "ERPNext Biometric Push Service"
 SERVICE_DESCRIPTION = "Synchronizes ZKTeco biometric attendance punches with ERPNext HRMS."
 SERVICE_CHECK_INTERVAL_MS = 15000
-prepare_runtime_paths()
-load_runtime_config()
 
 import servicemanager
 import win32event
 import win32service
 import win32serviceutil
 
-import erpnext_sync
+erpnext_sync = None
+
+
+def load_sync_runtime():
+    global erpnext_sync
+    if erpnext_sync is None:
+        prepare_runtime_paths()
+        load_runtime_config()
+        import erpnext_sync as sync_module
+        erpnext_sync = sync_module
+    return erpnext_sync
 
 
 def log_service_info(message):
-    erpnext_sync.info_logger.info(message)
+    if erpnext_sync is not None:
+        erpnext_sync.info_logger.info(message)
     try:
         servicemanager.LogInfoMsg(message)
     except Exception:
@@ -29,7 +38,8 @@ def log_service_info(message):
 
 
 def log_service_error(message):
-    erpnext_sync.error_logger.error(message)
+    if erpnext_sync is not None:
+        erpnext_sync.error_logger.error(message)
     try:
         servicemanager.LogErrorMsg(message)
     except Exception:
@@ -53,9 +63,10 @@ class FPFBiometricSyncService(win32serviceutil.ServiceFramework):
         win32event.SetEvent(self.hWaitStop)
 
     def SvcDoRun(self):
+        sync_module = load_sync_runtime()
         log_service_info("ERPNext Biometric Push Service starting")
         try:
-            erpnext_sync.validate_runtime_config()
+            sync_module.validate_runtime_config()
         except Exception as exc:
             log_service_error("Configuration validation failed: " + str(exc))
             raise
@@ -67,9 +78,10 @@ class FPFBiometricSyncService(win32serviceutil.ServiceFramework):
         log_service_info("Service loop started")
         while self.isrunning:
             try:
-                erpnext_sync.main()
+                load_sync_runtime().main()
             except Exception:
-                erpnext_sync.error_logger.exception("Unexpected service cycle exception")
+                if erpnext_sync is not None:
+                    erpnext_sync.error_logger.exception("Unexpected service cycle exception")
                 log_service_error("Unexpected service cycle exception")
 
             wait_result = win32event.WaitForSingleObject(self.hWaitStop, SERVICE_CHECK_INTERVAL_MS)

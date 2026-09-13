@@ -29,6 +29,14 @@ The explicit `FPF_BIOMETRIC_SERVICE_EXE` environment variable takes priority ove
 
 The FP1 fallback is transitional and exists only to support the current packaged-service validation layout before the final installer places files under `C:\Program Files\FPF Biometric Sync\`.
 
+The installer packages the manager as:
+
+```text
+C:\Program Files\FPF Biometric Sync\FPF-Biometric-Sync-Manager.exe
+```
+
+See [Production Windows Installer](installer.md) for setup, upgrade, and uninstall behavior.
+
 ## Administrator Permissions
 
 Installing and uninstalling a Windows service requires Administrator permission.

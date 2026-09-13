@@ -62,6 +62,12 @@ def load_service_entry_with_fakes():
 
 
 class ServiceEntryDispatchTests(unittest.TestCase):
+    def test_import_does_not_require_runtime_config(self):
+        service_entry = load_service_entry_with_fakes()
+
+        sys.modules["service_runtime"].prepare_runtime_paths.assert_not_called()
+        sys.modules["service_runtime"].load_runtime_config.assert_not_called()
+
     def test_no_args_selects_scm_dispatcher_path(self):
         service_entry = load_service_entry_with_fakes()
 
@@ -79,6 +85,14 @@ class ServiceEntryDispatchTests(unittest.TestCase):
 
         service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.FPFBiometricSyncService)
         service_entry.servicemanager.StartServiceCtrlDispatcher.assert_not_called()
+
+    def test_install_does_not_require_runtime_config(self):
+        service_entry = load_service_entry_with_fakes()
+
+        service_entry.run_service_dispatch(["FPF-Biometric-Sync-Service.exe", "install"])
+
+        sys.modules["service_runtime"].prepare_runtime_paths.assert_not_called()
+        sys.modules["service_runtime"].load_runtime_config.assert_not_called()
 
     def test_debug_selects_command_line_path(self):
         service_entry = load_service_entry_with_fakes()
