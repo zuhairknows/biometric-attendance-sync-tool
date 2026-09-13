@@ -29,6 +29,7 @@ ERPNEXT_VERSION = getattr(config, 'ERPNEXT_VERSION', 14)
 ERPNEXT_REQUEST_TIMEOUT = getattr(config, 'ERPNEXT_REQUEST_TIMEOUT', getattr(config, 'REQUEST_TIMEOUT', 30))
 DEFAULT_ZK_PORT = 4370
 DEFAULT_ZK_PASSWORD = 0
+PLACEHOLDER_CREDENTIALS = {'YOUR_API_KEY', 'YOUR_API_SECRET', 'YOUR_REAL_API_KEY', 'YOUR_REAL_API_SECRET'}
 DEVICE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]+$')
 
 # possible area of further developemt
@@ -243,6 +244,9 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
 def is_duplicate_employee_checkin_response(status_code, message):
     return status_code == 417 and DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE in message
 
+def is_placeholder_credential(value):
+    return str(value).strip() in PLACEHOLDER_CREDENTIALS
+
 def validate_runtime_config(config_module=None):
     config_module = config_module or config
     errors = []
@@ -256,7 +260,7 @@ def validate_runtime_config(config_module=None):
         errors.append('ERPNEXT_URL must start with http:// or https://.')
 
     for key in ['ERPNEXT_API_KEY', 'ERPNEXT_API_SECRET']:
-        if str(getattr(config_module, key, '')).strip().startswith('YOUR_REAL_'):
+        if is_placeholder_credential(getattr(config_module, key, '')):
             errors.append(key+' must be set to the real local credential.')
 
     try:

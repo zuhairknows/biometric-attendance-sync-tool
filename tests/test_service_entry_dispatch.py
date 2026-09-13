@@ -74,7 +74,7 @@ class ServiceEntryDispatchTests(unittest.TestCase):
         service_entry.run_service_dispatch(["FPF-Biometric-Sync-Service.exe"])
 
         service_entry.servicemanager.Initialize.assert_called_once_with()
-        service_entry.servicemanager.PrepareToHostSingle.assert_called_once_with(service_entry.FPFBiometricSyncService)
+        service_entry.servicemanager.PrepareToHostSingle.assert_called_once_with(service_entry.BiometricAttendanceSyncService)
         service_entry.servicemanager.StartServiceCtrlDispatcher.assert_called_once_with()
         service_entry.win32serviceutil.HandleCommandLine.assert_not_called()
 
@@ -83,7 +83,7 @@ class ServiceEntryDispatchTests(unittest.TestCase):
 
         service_entry.run_service_dispatch(["FPF-Biometric-Sync-Service.exe", "install"])
 
-        service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.FPFBiometricSyncService)
+        service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.BiometricAttendanceSyncService)
         service_entry.servicemanager.StartServiceCtrlDispatcher.assert_not_called()
 
     def test_install_does_not_require_runtime_config(self):
@@ -99,7 +99,7 @@ class ServiceEntryDispatchTests(unittest.TestCase):
 
         service_entry.run_service_dispatch(["FPF-Biometric-Sync-Service.exe", "debug"])
 
-        service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.FPFBiometricSyncService)
+        service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.BiometricAttendanceSyncService)
         service_entry.servicemanager.StartServiceCtrlDispatcher.assert_not_called()
 
     def test_remove_selects_command_line_path(self):
@@ -107,7 +107,7 @@ class ServiceEntryDispatchTests(unittest.TestCase):
 
         service_entry.run_service_dispatch(["FPF-Biometric-Sync-Service.exe", "remove"])
 
-        service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.FPFBiometricSyncService)
+        service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.BiometricAttendanceSyncService)
         service_entry.servicemanager.StartServiceCtrlDispatcher.assert_not_called()
 
 

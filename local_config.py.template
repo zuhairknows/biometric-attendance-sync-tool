@@ -3,12 +3,15 @@
 # ============================================================
 
 # API credentials for the dedicated ERPNext integration user.
-# Keep these credentials only in this local file.
-ERPNEXT_API_KEY = 'YOUR_REAL_API_KEY'
-ERPNEXT_API_SECRET = 'YOUR_REAL_API_SECRET'
+# Replace the placeholders with the real credentials for your
+# ERPNext site, and keep them only in this local file.
+# The live configuration file (local_config.py) is not tracked
+# by Git and must never be committed or shared.
+ERPNEXT_API_KEY = 'YOUR_API_KEY'
+ERPNEXT_API_SECRET = 'YOUR_API_SECRET'
 
-# Production ERPNext site.
-ERPNEXT_URL = 'https://your-erpnext-site.example.com'
+# Web address of your ERPNext site.
+ERPNEXT_URL = 'https://erp.example.com'
 
 # ERPNext / HRMS major version.
 ERPNEXT_VERSION = 15
@@ -43,23 +46,27 @@ devices = [
     {
         # Permanent device identity.
         # Do not change this when the device IP or port changes.
-        'device_id': 'FP1_DEVICE_01',
+        'device_id': 'DEVICE_01',
 
-        # Current network settings for the tested uFace800.
-        'ip': '10.0.0.20',
-        'port': 4371,
+        # Device IP address or hostname on your network.
+        'ip': '192.0.2.10',
+
+        # ZKTeco TCP port. 4370 is the common default on ZKTeco
+        # devices, but use the port actually configured on yours.
+        'port': 4370,
 
         # ZKTeco communication password.
         # 0 means no connection password.
         'password': 0,
 
-        # Leave as None for now.
-        # ERPNext Auto Attendance will determine attendance
-        # using the employee's assigned Shift Type.
+        # Leave as None to let ERPNext Auto Attendance determine
+        # IN/OUT from the employee's assigned Shift Type.
+        # Allowed values: 'IN', 'OUT', 'AUTO', or None.
         'punch_direction': None,
 
         # IMPORTANT:
         # Never automatically delete punches from the device.
+        # Keep this False in production.
         'clear_from_device_on_fetch': False
     }
 ]
@@ -69,8 +76,15 @@ devices = [
 # ERPNext Shift Type Synchronization
 # ============================================================
 
-# This device is used by employees working across these
-# ERPNext Shift Types.
+# Map the biometric devices to the ERPNext Shift Types whose
+# employees use them.
+#
+# - 'shift_type_name' entries must exactly match the Shift Type
+#   names configured in your ERPNext site.
+# - 'related_device_id' entries must match the 'device_id' values
+#   defined in the devices list above.
+# - One device may be related to multiple Shift Types when
+#   employees on different shifts use the same device.
 #
 # last_sync_of_checkin will advance only after the related
 # biometric device has been processed successfully.
@@ -78,30 +92,11 @@ devices = [
 shift_type_device_mapping = [
     {
         'shift_type_name': [
-            'صباحي 1',
-            'ليلي',
-            'صباحي 2',
-            'إداري 1',
-            'إداري 2',
-            'إداري 3',
-            'إداري 4',
-            'الصحة والسلامة المهنية 1',
-            'الصحة والسلامة المهنية 2',
-            'الصحة والسلامة المهنية 3',
-            'الصحة والسلامة المهنية 4',
-            'الصيانة',
-            'الادارة العامة 1',
-            'الادارة العامة 2',
-            'الادارة العامة 3',
-            'الادارة العامة 4',
-            'الادارة العامة 5',
-            'الادارة العامة 6',
-            'مرن',
-            'ليلي 2',
-            'مندوبين المشتريات'
+            'Morning Shift',
+            'Night Shift'
         ],
         'related_device_id': [
-            'FP1_DEVICE_01'
+            'DEVICE_01'
         ]
     }
 ]
@@ -117,8 +112,5 @@ shift_type_device_mapping = [
 # 1 = No Employee found for Attendance Device ID
 # 2 = Employee is inactive
 # 3 = Duplicate Employee Checkin
-#
-# Duplicate Employee Checkins are additionally handled by our
-# customized integration as idempotent/already synchronized.
 
 allowed_exceptions = [1, 2, 3]

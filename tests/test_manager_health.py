@@ -30,7 +30,7 @@ class ManagerHealthTests(unittest.TestCase):
         self.logs_directory.mkdir(parents=True)
         self.config = types.SimpleNamespace(
             LOGS_DIRECTORY=str(self.logs_directory),
-            devices=[{"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "port": 4371}],
+            devices=[{"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4370}],
         )
 
     def tearDown(self):
@@ -40,8 +40,8 @@ class ManagerHealthTests(unittest.TestCase):
     def test_status_json_parsing(self):
         (self.logs_directory / "status.json").write_text(json.dumps({
             "mission_accomplished_timestamp": "2026-09-12 14:15:26",
-            "FP1_DEVICE_01_pull_timestamp": "2026-09-12 14:15:06",
-            "FP1_DEVICE_01_push_timestamp": "2026-09-12 14:15:08",
+            "DEVICE_01_pull_timestamp": "2026-09-12 14:15:06",
+            "DEVICE_01_push_timestamp": "2026-09-12 14:15:08",
         }), encoding="utf-8")
 
         snapshot = get_health_snapshot(self.config, FakeSyncModule)
@@ -58,15 +58,15 @@ class ManagerHealthTests(unittest.TestCase):
         self.assertFalse(found)
 
     def test_invalid_config_device_does_not_crash_health(self):
-        self.config.devices = [{"device_id": "FP1_BAD"}]
+        self.config.devices = [{"device_id": "DEVICE_BAD"}]
 
         snapshot = get_health_snapshot(self.config, FakeSyncModule)
 
-        self.assertEqual(snapshot.devices[0].device_id, "FP1_BAD")
+        self.assertEqual(snapshot.devices[0].device_id, "DEVICE_BAD")
         self.assertIn("Configuration problem", snapshot.devices[0].last_push)
 
     def test_missing_employee_warning_count(self):
-        failed_log = self.logs_directory / "attendance_failed_log_FP1_DEVICE_01.log"
+        failed_log = self.logs_directory / "attendance_failed_log_DEVICE_01.log"
         failed_log.write_text(
             "No Employee found for the given employee field value\n"
             "No Employee found for the given employee field value\n",

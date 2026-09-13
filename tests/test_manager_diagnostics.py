@@ -78,7 +78,7 @@ class ManagerDiagnosticsTests(unittest.TestCase):
             ERPNEXT_API_KEY="key",
             ERPNEXT_API_SECRET="secret",
             ERPNEXT_REQUEST_TIMEOUT=12,
-            devices=[{"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "port": 4371, "password": 0}],
+            devices=[{"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4370, "password": 0}],
         )
         FakeZK.should_fail = False
         FakeZK.connections = []
@@ -130,7 +130,7 @@ class ManagerDiagnosticsTests(unittest.TestCase):
         result = diagnostics.test_devices(self.config, FakeSyncModule(self.config), FakeZK)
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.details, ["FP1_DEVICE_01 (10.0.0.20:4371) - Connected"])
+        self.assertEqual(result.details, ["DEVICE_01 (192.0.2.10:4370) - Connected"])
         self.assertTrue(FakeZK.connections[0].disconnected)
 
     def test_device_test_failure(self):
@@ -139,7 +139,7 @@ class ManagerDiagnosticsTests(unittest.TestCase):
         result = diagnostics.test_devices(self.config, FakeSyncModule(self.config), FakeZK)
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.details, ["FP1_DEVICE_01 (10.0.0.20:4371) - Connection failed"])
+        self.assertEqual(result.details, ["DEVICE_01 (192.0.2.10:4370) - Connection failed"])
 
     def test_run_sync_invokes_exactly_one_cycle(self):
         sync_module = FakeSyncModule(self.config)

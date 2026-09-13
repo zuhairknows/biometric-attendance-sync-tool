@@ -1,4 +1,4 @@
-"""Frozen Windows service entry point for FPF Biometric Sync."""
+"""Frozen Windows service entry point for Biometric Attendance Sync."""
 
 import sys
 
@@ -46,7 +46,7 @@ def log_service_error(message):
         pass
 
 
-class FPFBiometricSyncService(win32serviceutil.ServiceFramework):
+class BiometricAttendanceSyncService(win32serviceutil.ServiceFramework):
     _svc_name_ = SERVICE_NAME
     _svc_display_name_ = SERVICE_DISPLAY_NAME
     _svc_description_ = SERVICE_DESCRIPTION
@@ -95,10 +95,10 @@ def run_service_dispatch(argv=None):
     argv = argv or sys.argv
     if len(argv) == 1:
         servicemanager.Initialize()
-        servicemanager.PrepareToHostSingle(FPFBiometricSyncService)
+        servicemanager.PrepareToHostSingle(BiometricAttendanceSyncService)
         servicemanager.StartServiceCtrlDispatcher()
         return
-    win32serviceutil.HandleCommandLine(FPFBiometricSyncService)
+    win32serviceutil.HandleCommandLine(BiometricAttendanceSyncService)
 
 
 def main():

@@ -11,7 +11,7 @@ from .paths import get_config_folder, get_logs_folder, open_folder
 from .service_controller import ServiceController
 
 
-APP_NAME = "FPF Biometric Sync Manager"
+APP_NAME = "Biometric Attendance Sync Manager"
 APP_LOGGER = logging.getLogger("manager.app")
 APP_LOGGER.addHandler(logging.NullHandler())
 APP_LOGGER.propagate = False
@@ -201,7 +201,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         try:
             config_folder = get_config_folder()
             if config_folder.exists() and str(config_folder) not in sys.path:
-                # Packaged/FP1 service mode keeps credentials outside the program files.
+                # Packaged service mode keeps credentials outside the program files.
                 sys.path.insert(0, str(config_folder))
             import erpnext_sync
             self.sync_module = erpnext_sync

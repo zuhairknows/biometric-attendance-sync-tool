@@ -335,8 +335,8 @@ class TestableSyncManagerWindow(app_module.SyncManagerWindow):
         self._set_state(self.service_startup, status.startup, "unknown")
         self.last_success.setText("2026-09-12 14:15:26")
         self._populate_devices([
-            DeviceHealth("FP1_DEVICE_01", "10.0.0.20", 4371),
-            DeviceHealth("FP1_DEVICE_02", "10.0.0.21", 4371),
+            DeviceHealth("DEVICE_01", "192.0.2.10", 4370),
+            DeviceHealth("DEVICE_02", "192.0.2.11", 4370),
         ])
         self.refresh_label.setText("Last refreshed: test")
         self._apply_button_policy(status)
@@ -447,7 +447,7 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
             True,
             "ok",
             "All devices connected.",
-            ["FP1_DEVICE_01 (10.0.0.20:4371) - Connected"],
+            ["DEVICE_01 (192.0.2.10:4370) - Connected"],
         )
 
         self.window._run_diagnostic("Testing devices...", lambda: result, self.window.device_button)
@@ -462,7 +462,7 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
             False,
             "warning",
             "One or more devices failed.",
-            ["FP1_DEVICE_01 (10.0.0.20:4371) - Connection failed"],
+            ["DEVICE_01 (192.0.2.10:4370) - Connection failed"],
         )
 
         self.window._run_diagnostic("Testing devices...", lambda: result, self.window.device_button)
@@ -472,8 +472,8 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         self.assertEqual(self.window.device_table.item(0, 2).foreground, "red")
 
     def test_refresh_preserves_device_diagnostic_status(self):
-        self.window.device_connection_status["FP1_DEVICE_01"] = "Connected"
-        self.window.device_connection_status["FP1_DEVICE_02"] = "Failed"
+        self.window.device_connection_status["DEVICE_01"] = "Connected"
+        self.window.device_connection_status["DEVICE_02"] = "Failed"
 
         self.window.refresh()
 
@@ -481,19 +481,19 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         self.assertEqual(self.window.device_table.item(1, 2).text(), "Failed")
 
     def test_second_device_test_replaces_prior_status(self):
-        self.window.device_connection_status["FP1_DEVICE_01"] = "Failed"
+        self.window.device_connection_status["DEVICE_01"] = "Failed"
         result = DiagnosticResult(
             True,
             "ok",
             "All devices connected.",
-            ["FP1_DEVICE_01 (10.0.0.20:4371) - Connected"],
+            ["DEVICE_01 (192.0.2.10:4370) - Connected"],
         )
 
         self.window._run_diagnostic("Testing devices...", lambda: result, self.window.device_button)
         self.assertTrue(wait_until(lambda: self.window.device_button.isEnabled() and len(self.window.active_jobs) == 0))
 
         self.assertEqual(self.window.device_table.item(0, 2).text(), "Connected")
-        self.assertEqual(self.window.device_connection_status["FP1_DEVICE_01"], "Connected")
+        self.assertEqual(self.window.device_connection_status["DEVICE_01"], "Connected")
 
     def test_device_diagnostic_updates_table_statuses(self):
         result = DiagnosticResult(
@@ -501,8 +501,8 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
             "warning",
             "One or more devices failed.",
             [
-                "FP1_DEVICE_01 (10.0.0.20:4371) - Connected",
-                "FP1_DEVICE_02 (10.0.0.21:4371) - Connection failed",
+                "DEVICE_01 (192.0.2.10:4370) - Connected",
+                "DEVICE_02 (192.0.2.11:4370) - Connection failed",
             ],
         )
 

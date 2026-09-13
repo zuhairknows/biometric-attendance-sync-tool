@@ -381,10 +381,10 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_device_config_accepts_safe_device_id(self):
         sync = load_sync_module(self.logs_directory)
-        first = sync.normalize_device_config({"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20"})
-        second = sync.normalize_device_config({"device_id": "FP1-GATE-02", "ip": "10.0.0.21"})
-        self.assertEqual(first["device_id"], "FP1_DEVICE_01")
-        self.assertEqual(second["device_id"], "FP1-GATE-02")
+        first = sync.normalize_device_config({"device_id": "DEVICE_01", "ip": "192.0.2.10"})
+        second = sync.normalize_device_config({"device_id": "GATE-02", "ip": "192.0.2.11"})
+        self.assertEqual(first["device_id"], "DEVICE_01")
+        self.assertEqual(second["device_id"], "GATE-02")
 
     def test_device_config_rejects_unsafe_device_id(self):
         sync = load_sync_module(self.logs_directory)
@@ -398,14 +398,14 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         sync = load_sync_module(self.logs_directory)
         with self.assertRaisesRegex(ValueError, "Duplicate device_id"):
             sync.validate_unique_device_ids([
-                {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20"},
-                {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.21"},
+                {"device_id": "DEVICE_01", "ip": "192.0.2.10"},
+                {"device_id": "DEVICE_01", "ip": "192.0.2.11"},
             ])
 
     def test_runtime_config_validation_passes_without_device_connectivity(self):
         sync = load_sync_module(self.logs_directory)
         sync.config.devices = [
-            {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "port": 4371, "password": 0}
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4370, "password": 0}
         ]
 
         self.assertTrue(sync.validate_runtime_config())
@@ -415,7 +415,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         sync = load_sync_module(self.logs_directory)
         sync.config.ERPNEXT_URL = ""
         sync.config.devices = [
-            {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "port": 4371, "password": 0}
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4370, "password": 0}
         ]
 
         with self.assertRaisesRegex(ValueError, "ERPNEXT_URL is required"):
@@ -423,9 +423,9 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_runtime_config_validation_rejects_invalid_url(self):
         sync = load_sync_module(self.logs_directory)
-        sync.config.ERPNEXT_URL = "erp.myfpf.com"
+        sync.config.ERPNEXT_URL = "erp.example.com"
         sync.config.devices = [
-            {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "port": 4371, "password": 0}
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4370, "password": 0}
         ]
 
         with self.assertRaisesRegex(ValueError, "ERPNEXT_URL must start"):
@@ -433,21 +433,49 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_runtime_config_validation_rejects_credential_placeholders(self):
         sync = load_sync_module(self.logs_directory)
-        sync.config.ERPNEXT_API_KEY = "YOUR_REAL_API_KEY"
-        sync.config.ERPNEXT_API_SECRET = "YOUR_REAL_API_SECRET"
         sync.config.devices = [
-            {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "port": 4371, "password": 0}
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4370, "password": 0}
+        ]
+        placeholder_cases = [
+            ("ERPNEXT_API_KEY", "YOUR_API_KEY"),
+            ("ERPNEXT_API_SECRET", "YOUR_API_SECRET"),
+            ("ERPNEXT_API_KEY", "YOUR_REAL_API_KEY"),
+            ("ERPNEXT_API_SECRET", "YOUR_REAL_API_SECRET"),
+        ]
+        for key, placeholder in placeholder_cases:
+            with self.subTest(key=key, placeholder=placeholder):
+                original_value = getattr(sync.config, key)
+                setattr(sync.config, key, placeholder)
+                with self.assertRaisesRegex(ValueError, key + " must be set to the real local credential"):
+                    sync.validate_runtime_config()
+                setattr(sync.config, key, original_value)
+
+    def test_runtime_config_validation_rejects_empty_credentials(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.ERPNEXT_API_KEY = ""
+        sync.config.devices = [
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4370, "password": 0}
         ]
 
-        with self.assertRaisesRegex(ValueError, "real local credential"):
+        with self.assertRaisesRegex(ValueError, "ERPNEXT_API_KEY is required"):
             sync.validate_runtime_config()
+
+    def test_runtime_config_validation_allows_custom_credential_with_placeholder_like_prefix(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.ERPNEXT_API_KEY = "YOUR_CUSTOM_REAL_CREDENTIAL_123"
+        sync.config.ERPNEXT_API_SECRET = "YOUR_CUSTOM_SECRET_456"
+        sync.config.devices = [
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4370, "password": 0}
+        ]
+
+        self.assertTrue(sync.validate_runtime_config())
 
     def test_main_isolates_per_device_faults_and_redacts_passwords(self):
         sync = load_sync_module(self.logs_directory)
         sync.config.devices = [
-            {"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20", "password": 1111},
-            {"device_id": "FP1_BAD", "password": 1234},
-            {"device_id": "FP1_DEVICE_03", "ip": "10.0.0.22", "password": 3333},
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10", "password": 1111},
+            {"device_id": "DEVICE_BAD", "password": 1234},
+            {"device_id": "DEVICE_03", "ip": "192.0.2.12", "password": 3333},
         ]
         processed_device_ids = []
 
@@ -457,9 +485,9 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         sync.pull_process_and_push_data = fake_pull_process_and_push_data
         sync.main()
 
-        self.assertEqual(processed_device_ids, ["FP1_DEVICE_01", "FP1_DEVICE_03"])
+        self.assertEqual(processed_device_ids, ["DEVICE_01", "DEVICE_03"])
         error_log = (self.logs_directory / "error.log").read_text()
-        self.assertIn("FP1_BAD", error_log)
+        self.assertIn("DEVICE_BAD", error_log)
         self.assertIn("***", error_log)
         self.assertNotIn("1234", error_log)
 

@@ -49,7 +49,7 @@ class WindowsServiceTests(unittest.TestCase):
 
     def test_service_start_validates_configuration(self):
         service_module, sync, _win32event = load_service_module(self.logs_directory)
-        sync.config.devices = [{"device_id": "FP1_DEVICE_01", "ip": "10.0.0.20"}]
+        sync.config.devices = [{"device_id": "DEVICE_01", "ip": "192.0.2.10"}]
         sync.validate_runtime_config = mock.Mock(return_value=True)
 
         service = service_module.PythonCornerExample([])

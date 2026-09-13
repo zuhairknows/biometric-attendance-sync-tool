@@ -1,4 +1,4 @@
-"""Packaged entry point for FPF Biometric Sync Manager."""
+"""Packaged entry point for Biometric Attendance Sync Manager."""
 
 from manager.app import main
 
