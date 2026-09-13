@@ -3,7 +3,7 @@
 block_cipher = None
 
 a = Analysis(
-    ['../manager/app.py'],
+    ['../manager_entry.py'],
     pathex=['..'],
     binaries=[],
     datas=[],
