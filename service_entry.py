@@ -3,6 +3,7 @@
 import sys
 
 from service_runtime import load_runtime_config, prepare_runtime_paths
+from config.status import UNCONFIGURED, get_configuration_status
 
 
 SERVICE_NAME = "ERPNextBiometricPushService"
@@ -16,6 +17,7 @@ import win32service
 import win32serviceutil
 
 erpnext_sync = None
+service_unconfigured = False
 
 
 def load_sync_runtime():
@@ -63,6 +65,15 @@ class BiometricAttendanceSyncService(win32serviceutil.ServiceFramework):
         win32event.SetEvent(self.hWaitStop)
 
     def SvcDoRun(self):
+        global service_unconfigured
+        configuration_status = get_configuration_status()
+        if configuration_status.state == UNCONFIGURED:
+            service_unconfigured = True
+            log_service_info("Product is not configured. Complete first-run setup.")
+            self.isrunning = True
+            self.main()
+            return
+        service_unconfigured = False
         sync_module = load_sync_runtime()
         log_service_info("ERPNext Biometric Push Service starting")
         try:
@@ -78,7 +89,10 @@ class BiometricAttendanceSyncService(win32serviceutil.ServiceFramework):
         log_service_info("Service loop started")
         while self.isrunning:
             try:
-                load_sync_runtime().main()
+                if service_unconfigured:
+                    log_service_info("Product is not configured. Complete first-run setup.")
+                else:
+                    load_sync_runtime().main()
             except Exception:
                 if erpnext_sync is not None:
                     erpnext_sync.error_logger.exception("Unexpected service cycle exception")

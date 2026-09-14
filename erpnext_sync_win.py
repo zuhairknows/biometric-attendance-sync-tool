@@ -43,6 +43,10 @@ class PythonCornerExample(SMWinservice):
 
     def start(self):
         log_service_info("ERPNext Biometric Push Service starting")
+        if getattr(erpnext_sync.config, "CONFIG_SOURCE", "") == "defaults":
+            log_service_info("Product is not configured. Complete first-run setup.")
+            self.isrunning = True
+            return
         try:
             erpnext_sync.validate_runtime_config()
         except Exception as e:
@@ -59,7 +63,10 @@ class PythonCornerExample(SMWinservice):
         log_service_info("Service loop started")
         while self.isrunning:
             try:
-                erpnext_sync.main()
+                if getattr(erpnext_sync.config, "CONFIG_SOURCE", "") == "defaults":
+                    log_service_info("Product is not configured. Complete first-run setup.")
+                else:
+                    erpnext_sync.main()
             except Exception:
                 erpnext_sync.error_logger.exception("Unexpected service cycle exception")
                 log_service_error("Unexpected service cycle exception")

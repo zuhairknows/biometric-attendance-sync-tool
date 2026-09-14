@@ -101,6 +101,17 @@ class WindowsServiceTests(unittest.TestCase):
 
         self.assertFalse(service.isrunning)
 
+    def test_unconfigured_source_service_starts_idle(self):
+        service_module, sync, _win32event = load_service_module(self.logs_directory)
+        sync.config.CONFIG_SOURCE = "defaults"
+        sync.validate_runtime_config = mock.Mock()
+
+        service = service_module.PythonCornerExample([])
+        service.start()
+
+        sync.validate_runtime_config.assert_not_called()
+        self.assertTrue(service.isrunning)
+
 
 if __name__ == "__main__":
     unittest.main()

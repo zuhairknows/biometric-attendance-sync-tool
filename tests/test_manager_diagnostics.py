@@ -77,6 +77,7 @@ class ManagerDiagnosticsTests(unittest.TestCase):
             ERPNEXT_URL="https://erp.example.test",
             ERPNEXT_API_KEY="key",
             ERPNEXT_API_SECRET="secret",
+            ERPNEXT_VERIFY_SSL=True,
             ERPNEXT_REQUEST_TIMEOUT=12,
             devices=[{"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4370, "password": 0}],
         )
@@ -110,13 +111,14 @@ class ManagerDiagnosticsTests(unittest.TestCase):
             "https://erp.example.test/api/method/frappe.auth.get_logged_user",
             headers={"Authorization": "token key:secret", "Accept": "application/json"},
             timeout=12,
+            verify=True,
         )
 
     def test_erpnext_authentication_failure(self):
         result = diagnostics.test_erpnext_connection(self.config, request_func=mock.Mock(return_value=FakeResponse(401)))
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.message, "ERPNext authentication failed.")
+        self.assertEqual(result.message, "Authentication failed. Check API credentials.")
 
     def test_erpnext_unreachable(self):
         request_func = mock.Mock(side_effect=diagnostics.requests.exceptions.ConnectionError())
@@ -124,7 +126,15 @@ class ManagerDiagnosticsTests(unittest.TestCase):
         result = diagnostics.test_erpnext_connection(self.config, request_func=request_func)
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.message, "ERPNext unreachable.")
+        self.assertEqual(result.message, "ERPNext server could not be reached.")
+
+    def test_erpnext_ssl_failure(self):
+        request_func = mock.Mock(side_effect=diagnostics.requests.exceptions.SSLError())
+
+        result = diagnostics.test_erpnext_connection(self.config, request_func=request_func)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.message, "SSL certificate validation failed.")
 
     def test_device_test_success(self):
         result = diagnostics.test_devices(self.config, FakeSyncModule(self.config), FakeZK)
@@ -132,6 +142,17 @@ class ManagerDiagnosticsTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.details, ["DEVICE_01 (192.0.2.10:4370) - Connected"])
         self.assertTrue(FakeZK.connections[0].disconnected)
+
+    def test_device_test_skips_disabled_devices(self):
+        self.config.devices = [
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10", "port": 4370, "password": 0, "enabled": False}
+        ]
+
+        result = diagnostics.test_devices(self.config, FakeSyncModule(self.config), FakeZK)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.details, ["DEVICE_01 (192.0.2.10:4370) - Disabled"])
+        self.assertEqual(FakeZK.connections, [])
 
     def test_device_test_failure(self):
         FakeZK.should_fail = True

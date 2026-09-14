@@ -57,27 +57,32 @@ def test_erpnext_connection(config_module=None, request_func=None):
     logger = _get_logger(config_module)
     base_url = str(getattr(config_module, "ERPNEXT_URL", "")).rstrip("/")
     timeout = getattr(config_module, "ERPNEXT_REQUEST_TIMEOUT", getattr(config_module, "REQUEST_TIMEOUT", 30))
+    verify_ssl = getattr(config_module, "ERPNEXT_VERIFY_SSL", True)
     url = base_url + "/api/method/frappe.auth.get_logged_user"
     headers = {
         "Authorization": "token " + str(getattr(config_module, "ERPNEXT_API_KEY", "")) + ":" + str(getattr(config_module, "ERPNEXT_API_SECRET", "")),
         "Accept": "application/json",
     }
+    ssl_error = getattr(requests.exceptions, "SSLError", type("_NeverSSLError", (Exception,), {}))
     try:
-        response = request_func("GET", url, headers=headers, timeout=timeout)
+        response = request_func("GET", url, headers=headers, timeout=timeout, verify=verify_ssl)
     except requests.exceptions.Timeout:
         logger.exception("ERPNext connection timed out")
-        return DiagnosticResult(False, "error", "ERPNext unreachable.")
+        return DiagnosticResult(False, "error", "ERPNext server could not be reached.")
+    except ssl_error:
+        logger.exception("ERPNext SSL validation failed")
+        return DiagnosticResult(False, "error", "SSL certificate validation failed.")
     except requests.exceptions.ConnectionError:
         logger.exception("ERPNext connection failed")
-        return DiagnosticResult(False, "error", "ERPNext unreachable.")
+        return DiagnosticResult(False, "error", "ERPNext server could not be reached.")
     except Exception:
         logger.exception("Unexpected ERPNext diagnostic failure")
         return DiagnosticResult(False, "error", "ERPNext test failed.")
 
     if response.status_code == 200:
-        return DiagnosticResult(True, "ok", "ERPNext connected successfully.")
+        return DiagnosticResult(True, "ok", "Connection successful.")
     if response.status_code in (401, 403):
-        return DiagnosticResult(False, "error", "ERPNext authentication failed.")
+        return DiagnosticResult(False, "error", "Authentication failed. Check API credentials.")
     return DiagnosticResult(False, "error", "ERPNext returned HTTP " + str(response.status_code) + ".")
 
 
@@ -96,6 +101,9 @@ def test_devices(config_module=None, sync_module=None, zk_class=None):
         conn = None
         try:
             device = sync_module.normalize_device_config(raw_device)
+            if not device.get("enabled", True):
+                results.append(device["device_id"] + " (" + str(device["ip"]) + ":" + str(device["port"]) + ") - Disabled")
+                continue
             zk = zk_class(device["ip"], port=device["port"], timeout=10, password=device["password"])
             conn = zk.connect()
             if hasattr(conn, "get_serialnumber"):

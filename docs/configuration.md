@@ -1,6 +1,7 @@
 # Commercial Configuration
 
 M3.1 adds a versioned JSON configuration layer while keeping existing `local_config.py` deployments working.
+M3.2 adds first-run setup so a fresh installation can create this file without editing JSON by hand.
 
 ## Precedence
 
@@ -11,6 +12,32 @@ The runtime loads configuration in this order:
 3. Safe application defaults
 
 JSON configuration is the commercial customer-facing format. `local_config.py` remains supported for existing production installations and source/development usage.
+
+## First-Run Detection
+
+The product reports one of these states:
+
+- `UNCONFIGURED`: no commercial `config.json` and no valid legacy `local_config.py`
+- `CONFIGURED`: valid commercial `config.json`
+- `LEGACY_CONFIGURED`: valid legacy `local_config.py` and no commercial `config.json`
+- `INVALID`: a configuration file exists but cannot be loaded or validated
+
+Safe application defaults never count as a configured installation.
+
+## Fresh Installation Flow
+
+On a fresh commercial installation, the Manager opens in `Not Configured` state and launches the first-run setup wizard. Synchronization stays disabled until setup completes and a valid `config.json` is written.
+
+The setup wizard pages are:
+
+1. Welcome
+2. ERPNext Connection
+3. Attendance Devices
+4. Synchronization
+5. Review
+6. Validate & Finish
+
+Finish validates the complete configuration, writes a temporary JSON file, validates that file, and then atomically replaces `config.json`.
 
 ## ProgramData Layout
 
@@ -100,6 +127,18 @@ Existing `local_config.py` settings continue to map directly to the sync engine:
 - `device_punch_values_OUT`
 
 The commercial loader presents JSON configuration as the same legacy-shaped runtime object so the current sync behavior stays stable.
+
+Valid legacy installations continue operating and are not forced through first-run setup. M3.2 does not auto-migrate legacy configuration.
+
+## Unconfigured Service Behavior
+
+If the Windows service is installed before setup is complete, it stays idle and logs:
+
+```text
+Product is not configured. Complete first-run setup.
+```
+
+It does not connect to ERPNext, connect to devices, or create attendance synchronization work while unconfigured.
 
 ## Secrets
 

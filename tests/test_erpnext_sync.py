@@ -1,6 +1,7 @@
 import datetime
 import importlib
 import logging
+import os
 import shutil
 import sys
 import types
@@ -70,7 +71,7 @@ class FakeZK:
         return FakeConnection(FakeZK.attendances)
 
 
-def load_sync_module(logs_directory, import_start_date=None, request_timeout=30):
+def load_sync_module(logs_directory, import_start_date=None, request_timeout=30, include_logs_directory=True):
     for module_name in ["erpnext_sync", "local_config", "requests", "pickledb", "zk"]:
         sys.modules.pop(module_name, None)
     for logger_name in ["error_logger", "info_logger"]:
@@ -85,7 +86,8 @@ def load_sync_module(logs_directory, import_start_date=None, request_timeout=30)
     config.ERPNEXT_URL = "https://erp.example.test"
     config.ERPNEXT_VERSION = 15
     config.PULL_FREQUENCY = 60
-    config.LOGS_DIRECTORY = str(logs_directory)
+    if include_logs_directory:
+        config.LOGS_DIRECTORY = str(logs_directory)
     config.IMPORT_START_DATE = import_start_date
     config.REQUEST_TIMEOUT = request_timeout
     config.devices = []
@@ -506,6 +508,28 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         sync.main()
 
         self.assertEqual(processed_device_ids, ["DEVICE_02"])
+
+    def test_minimal_legacy_config_without_logs_directory_imports_runtime(self):
+        programdata = self.logs_directory.parent / (self._testMethodName + "_programdata")
+        if programdata.exists():
+            shutil.rmtree(programdata)
+
+        try:
+            with mock.patch.dict(os.environ, {"BIOMETRIC_SYNC_PROGRAMDATA": str(programdata)}, clear=True):
+                sync = load_sync_module(self.logs_directory, include_logs_directory=False)
+
+            sync.config.devices = [{"device_id": "DEVICE_01", "ip": "192.0.2.10"}]
+            self.assertEqual(sync.config.CONFIG_SOURCE, "legacy")
+            self.assertEqual(sync.config.LOGS_DIRECTORY, str(programdata.resolve() / "logs"))
+            self.assertTrue(sync.validate_runtime_config())
+        finally:
+            for logger_name in logging.root.manager.loggerDict:
+                logger = logging.getLogger(logger_name)
+                for handler in list(logger.handlers):
+                    handler.close()
+                    logger.removeHandler(handler)
+            if programdata.exists():
+                shutil.rmtree(programdata)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,8 @@ Configuration precedence is:
 
 Existing `local_config.py` deployments remain supported. See [Commercial Configuration](docs/configuration.md) for the JSON schema and compatibility notes.
 
+Fresh commercial installations open the Manager in `Not Configured` state and guide the administrator through the first-run setup wizard. The service stays idle until setup writes a valid configuration.
+
 For legacy/source setup, create a real `local_config.py` from `local_config.py.template`.
 
 For source/development usage, keep `local_config.py` in the repository folder.

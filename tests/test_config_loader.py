@@ -106,13 +106,19 @@ class CommercialConfigLoaderTests(unittest.TestCase):
     def test_missing_config_falls_back_to_local_config(self):
         legacy = types.ModuleType("local_config")
         legacy.ERPNEXT_URL = "https://legacy.example.test"
+        legacy.ERPNEXT_API_KEY = "key"
+        legacy.ERPNEXT_API_SECRET = "secret"
         legacy.PULL_FREQUENCY = 15
+        legacy.devices = [{"device_id": "DEVICE_01", "ip": "192.0.2.10"}]
         sys.modules["local_config"] = legacy
 
         config = load_config(paths_module=self.paths)
 
-        self.assertIs(config, legacy)
         self.assertEqual(config.CONFIG_SOURCE, "legacy")
+        self.assertEqual(config.ERPNEXT_URL, "https://legacy.example.test")
+        self.assertEqual(config.LOGS_DIRECTORY, str(self.test_dir / "logs"))
+        self.assertEqual(config.STATE_FILE_PATH, str(self.test_dir / "state" / "state.json"))
+        self.assertEqual(config.RETRY_DIRECTORY, str(self.test_dir / "logs"))
 
     def test_defaults_work_when_no_configuration_source_exists(self):
         config = load_config(paths_module=self.paths)

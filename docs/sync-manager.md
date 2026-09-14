@@ -16,6 +16,7 @@ The manager is not the synchronization engine. The existing `erpnext_sync.py` an
 - Show the last successful sync from `status.json`.
 - Show each device's last pull and last push timestamps.
 - Open the logs folder and configuration folder.
+- Launch first-run setup when no valid commercial or legacy configuration exists.
 
 ## Runtime Modes
 
@@ -113,6 +114,8 @@ C:\ProgramData\BiometricAttendanceSync\logs
 ```
 
 The JSON file has precedence. The Python file is retained for legacy compatibility.
+
+On a fresh installation, the Manager shows `Not Configured` and opens the first-run setup wizard. Existing valid legacy installations show `Legacy Configuration` and are not automatically migrated.
 
 Development mode continues to use the repo-local `local_config.py` and logs unless environment overrides are set.
 

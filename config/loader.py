@@ -10,6 +10,7 @@ from .schema import (
     ConfigurationError,
     build_default_runtime_config,
     merge_with_defaults,
+    normalize_legacy_runtime_config,
     to_legacy_runtime_config,
     validate_json_config,
 )
@@ -20,7 +21,7 @@ def load_config(config_path=None, allow_legacy=True, paths_module=paths):
     if config_path.is_file():
         return load_json_config(config_path, paths_module=paths_module)
     if allow_legacy:
-        legacy_config = load_legacy_config()
+        legacy_config = load_legacy_config(paths_module=paths_module)
         if legacy_config is not None:
             return legacy_config
     return build_default_runtime_config(paths_module=paths_module)
@@ -40,15 +41,20 @@ def load_json_config(config_path, paths_module=paths):
     return to_legacy_runtime_config(merged_config, paths_module=paths_module, source="json")
 
 
-def load_legacy_config():
+def load_legacy_config(paths_module=paths):
+    if paths_module is not paths:
+        legacy_config = sys.modules.get("local_config")
+        if legacy_config is None:
+            return None
+        return normalize_legacy_runtime_config(legacy_config, paths_module=paths_module)
+
     try:
         legacy_config = importlib.import_module("local_config")
     except ModuleNotFoundError as exc:
         if exc.name == "local_config":
             return None
         raise
-    legacy_config.CONFIG_SOURCE = getattr(legacy_config, "CONFIG_SOURCE", "legacy")
-    return legacy_config
+    return normalize_legacy_runtime_config(legacy_config, paths_module=paths_module)
 
 
 def forget_cached_legacy_config():

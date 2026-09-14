@@ -1,10 +1,17 @@
 
 from config.loader import load_config
+from config.schema import (
+    normalize_runtime_device_config,
+    validate_device_id as validate_runtime_device_id,
+    validate_password as validate_runtime_password,
+    validate_port as validate_runtime_port,
+    validate_runtime_config as validate_normalized_runtime_config,
+    validate_unique_device_ids as validate_runtime_unique_device_ids,
+)
 import requests
 import datetime
 import json
 import os
-import re
 import sys
 import time
 import logging
@@ -31,8 +38,6 @@ ERPNEXT_VERSION = getattr(config, 'ERPNEXT_VERSION', 14)
 ERPNEXT_REQUEST_TIMEOUT = getattr(config, 'ERPNEXT_REQUEST_TIMEOUT', getattr(config, 'REQUEST_TIMEOUT', 30))
 DEFAULT_ZK_PORT = 4370
 DEFAULT_ZK_PASSWORD = 0
-PLACEHOLDER_CREDENTIALS = {'YOUR_API_KEY', 'YOUR_API_SECRET', 'YOUR_REAL_API_KEY', 'YOUR_REAL_API_SECRET'}
-DEVICE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]+$')
 
 # possible area of further developemt
     # Real-time events - setup getting events pushed from the machine rather then polling.
@@ -51,6 +56,9 @@ def main():
     then calling the relevent functions to pull data and push to EPRNext.
 
     """
+    if getattr(config, 'CONFIG_SOURCE', '') == 'defaults':
+        info_logger.info("Product is not configured. Complete first-run setup.")
+        return
     try:
         last_lift_off_timestamp = _safe_convert_date(status.get('lift_off_timestamp'), "%Y-%m-%d %H:%M:%S.%f")
         if (last_lift_off_timestamp and last_lift_off_timestamp < datetime.datetime.now() - datetime.timedelta(minutes=config.PULL_FREQUENCY)) or not last_lift_off_timestamp:
@@ -249,50 +257,9 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
 def is_duplicate_employee_checkin_response(status_code, message):
     return status_code == 417 and DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE in message
 
-def is_placeholder_credential(value):
-    return str(value).strip() in PLACEHOLDER_CREDENTIALS
-
 def validate_runtime_config(config_module=None):
     config_module = config_module or config
-    errors = []
-
-    for key in ['ERPNEXT_URL', 'ERPNEXT_API_KEY', 'ERPNEXT_API_SECRET', 'LOGS_DIRECTORY']:
-        if not str(getattr(config_module, key, '')).strip():
-            errors.append(key+' is required.')
-
-    erpnext_url = str(getattr(config_module, 'ERPNEXT_URL', '')).strip()
-    if erpnext_url and not erpnext_url.startswith(('http://', 'https://')):
-        errors.append('ERPNEXT_URL must start with http:// or https://.')
-
-    for key in ['ERPNEXT_API_KEY', 'ERPNEXT_API_SECRET']:
-        if is_placeholder_credential(getattr(config_module, key, '')):
-            errors.append(key+' must be set to the real local credential.')
-
-    try:
-        pull_frequency = int(getattr(config_module, 'PULL_FREQUENCY', 0))
-        if pull_frequency <= 0:
-            errors.append('PULL_FREQUENCY must be greater than 0.')
-    except (TypeError, ValueError):
-        errors.append('PULL_FREQUENCY must be a positive integer.')
-
-    devices = getattr(config_module, 'devices', None)
-    if not isinstance(devices, list) or not devices:
-        errors.append('devices must be a non-empty list.')
-    else:
-        try:
-            validate_unique_device_ids(devices)
-        except ValueError as e:
-            errors.append(str(e))
-        for index, device in enumerate(devices):
-            try:
-                normalize_device_config(device)
-            except ValueError as e:
-                errors.append('devices['+str(index)+']: '+str(e))
-
-    if errors:
-        raise ValueError('Invalid configuration:\n- ' + '\n- '.join(errors))
-
-    return True
+    return validate_normalized_runtime_config(config_module)
 
 def update_shift_last_sync_timestamp(shift_type_device_mapping):
     """
@@ -385,50 +352,17 @@ def get_dump_file_name_and_directory(device_id, device_ip=None):
     return os.path.join(retry_directory, device_id + '_last_fetch_dump.json')
 
 def normalize_device_config(device):
-    device_id = device.get('device_id')
-    ip = device.get('ip') or device.get('host')
-    if not device_id:
-        raise ValueError('Device configuration is missing required device_id.')
-    validate_device_id(device_id)
-    if not ip:
-        raise ValueError('Device configuration for device_id '+str(device_id)+' is missing required ip or host.')
-
-    normalized_device = dict(device)
-    normalized_device['device_id'] = str(device_id)
-    normalized_device['ip'] = ip
-    normalized_device['port'] = validate_port(device.get('port', DEFAULT_ZK_PORT))
-    normalized_device['password'] = validate_password(device.get('password', DEFAULT_ZK_PASSWORD))
-    normalized_device['enabled'] = bool(device.get('enabled', True))
-    normalized_device['punch_direction'] = device.get('punch_direction')
-    normalized_device['clear_from_device_on_fetch'] = bool(device.get('clear_from_device_on_fetch', False))
+    normalized_device = normalize_runtime_device_config(device)
+    device_id = normalized_device['device_id']
     if normalized_device['clear_from_device_on_fetch']:
         info_logger.warning('Device '+str(device_id)+' has clear_from_device_on_fetch enabled. This can delete attendance records from the biometric device.')
-    normalized_device['latitude'] = device.get('latitude')
-    normalized_device['longitude'] = device.get('longitude')
     return normalized_device
 
 def validate_device_id(device_id):
-    device_id = str(device_id)
-    if not DEVICE_ID_PATTERN.match(device_id):
-        raise ValueError('Device ID '+device_id+' is invalid. Use only letters, numbers, underscore, and hyphen.')
-    return device_id
+    return validate_runtime_device_id(device_id)
 
 def validate_unique_device_ids(devices):
-    seen_device_ids = set()
-    duplicate_device_ids = []
-    for device in devices:
-        device_id = device.get('device_id')
-        if not device_id:
-            continue
-        try:
-            device_id = validate_device_id(device_id)
-        except ValueError:
-            continue
-        if device_id in seen_device_ids:
-            duplicate_device_ids.append(device_id)
-        seen_device_ids.add(device_id)
-    if duplicate_device_ids:
-        raise ValueError('Duplicate device_id values found: '+', '.join(sorted(set(duplicate_device_ids))))
+    return validate_runtime_unique_device_ids(devices)
 
 def redact_device_config(device):
     redacted_device = dict(device)
@@ -437,19 +371,10 @@ def redact_device_config(device):
     return redacted_device
 
 def validate_port(port):
-    try:
-        port = int(port)
-    except (TypeError, ValueError):
-        raise ValueError('Device port must be an integer between 1 and 65535.')
-    if port < 1 or port > 65535:
-        raise ValueError('Device port must be between 1 and 65535.')
-    return port
+    return validate_runtime_port(port)
 
 def validate_password(password):
-    try:
-        return int(password)
-    except (TypeError, ValueError):
-        raise ValueError('Device password must be an integer. Use 0 when the device has no connection password.')
+    return validate_runtime_password(password)
 
 def normalize_attendance_logs(attendance_logs):
     return sorted(attendance_logs, key=lambda row: (

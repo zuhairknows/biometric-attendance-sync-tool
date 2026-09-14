@@ -150,6 +150,8 @@ The manager resolves the service runtime in this order:
 
 Packaged service modes use ProgramData for config and logs. Development mode keeps the repo-local paths unless environment overrides are set.
 
+If no valid commercial or legacy configuration exists, the service remains safely idle and logs `Product is not configured. Complete first-run setup.` It does not attempt ERPNext or device connections until setup succeeds.
+
 Current environment overrides:
 
 ```text

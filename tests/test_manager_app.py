@@ -310,6 +310,7 @@ app_module = importlib.import_module("manager.app")
 from manager.diagnostics import DiagnosticResult
 from manager.health import DeviceHealth
 from manager.service_controller import ServiceStatus
+from config.status import ConfigurationStatus, INVALID, LEGACY_CONFIGURED, UNCONFIGURED
 
 
 class FakeController:
@@ -536,6 +537,65 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         try:
             self.assertTrue(window.sync_button.isEnabled())
             self.assertEqual(window.sync_button.toolTip(), "")
+        finally:
+            window.close()
+
+    def test_first_run_wizard_appears_when_unconfigured(self):
+        class FirstRunWindow(app_module.SyncManagerWindow):
+            shown = False
+
+            def _load_sync_module_safely(self):
+                self.config_module = None
+                self.sync_module = None
+
+            def show_setup_wizard(self):
+                self.shown = True
+
+        status = ConfigurationStatus(UNCONFIGURED, "defaults", "Product is not configured. Complete first-run setup.")
+        with mock.patch.object(app_module, "get_configuration_status", return_value=status):
+            window = FirstRunWindow(controller=FakeController(), auto_launch_setup=True)
+        try:
+            self.assertTrue(window.shown)
+            self.assertEqual(window.configuration_state.text(), "Not Configured")
+            self.assertFalse(window.sync_button.isEnabled())
+        finally:
+            window.close()
+
+    def test_wizard_does_not_appear_automatically_for_legacy_config(self):
+        class LegacyWindow(app_module.SyncManagerWindow):
+            shown = False
+            logs_directory = ".test-logs"
+
+            def _load_sync_module_safely(self):
+                self.config_module = types.SimpleNamespace(LOGS_DIRECTORY=self.logs_directory)
+                self.sync_module = types.SimpleNamespace(config=self.config_module)
+
+            def show_setup_wizard(self):
+                self.shown = True
+
+        status = ConfigurationStatus(LEGACY_CONFIGURED, "legacy", "Legacy Configuration")
+        with mock.patch.object(app_module, "get_configuration_status", return_value=status):
+            window = LegacyWindow(controller=FakeController(), auto_launch_setup=True)
+        try:
+            self.assertFalse(window.shown)
+            self.assertEqual(window.configuration_source.text(), "Legacy Configuration")
+        finally:
+            window.close()
+
+    def test_manager_does_not_show_configured_state_with_unusable_runtime(self):
+        class InvalidRuntimeWindow(app_module.SyncManagerWindow):
+            def _load_sync_module_safely(self):
+                self.config_module = None
+                self.sync_module = None
+                self._append_message("Configuration could not be loaded. The manager can still control the Windows service.")
+
+        status = ConfigurationStatus(INVALID, "legacy", "Invalid legacy configuration", ["- ERPNEXT_API_SECRET is required."])
+        with mock.patch.object(app_module, "get_configuration_status", return_value=status):
+            window = InvalidRuntimeWindow(controller=FakeController(), auto_launch_setup=True)
+        try:
+            self.assertEqual(window.configuration_state.text(), "Invalid")
+            self.assertNotEqual(window.configuration_state.text(), "Configured")
+            self.assertIn("Configuration could not be loaded.", window.messages.lines[-1])
         finally:
             window.close()
 

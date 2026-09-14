@@ -108,6 +108,17 @@ class ServiceEntryDispatchTests(unittest.TestCase):
         service_entry.run_service_dispatch(["Biometric-Attendance-Sync-Service.exe", "remove"])
 
         service_entry.win32serviceutil.HandleCommandLine.assert_called_once_with(service_entry.BiometricAttendanceSyncService)
+
+    def test_unconfigured_service_remains_idle(self):
+        service_entry = load_service_entry_with_fakes()
+        status = types.SimpleNamespace(state="UNCONFIGURED")
+        with mock.patch.object(service_entry, "get_configuration_status", return_value=status):
+            service = service_entry.BiometricAttendanceSyncService([])
+            service.SvcDoRun()
+
+        sys.modules["service_runtime"].load_runtime_config.assert_not_called()
+        sys.modules["erpnext_sync"].main.assert_not_called()
+        service_entry.servicemanager.LogInfoMsg.assert_any_call("Product is not configured. Complete first-run setup.")
         service_entry.servicemanager.StartServiceCtrlDispatcher.assert_not_called()
 
 

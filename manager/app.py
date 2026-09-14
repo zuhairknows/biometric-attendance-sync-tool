@@ -5,6 +5,7 @@ import traceback
 
 from PyQt5 import QtCore, QtWidgets
 
+from config.status import CONFIGURED, INVALID, LEGACY_CONFIGURED, UNCONFIGURED, get_configuration_status
 from . import diagnostics
 from .health import get_health_snapshot
 from .paths import get_config_folder, get_logs_folder, open_folder
@@ -33,9 +34,11 @@ class Worker(QtCore.QObject):
 
 
 class SyncManagerWindow(QtWidgets.QMainWindow):
-    def __init__(self, controller=None):
+    def __init__(self, controller=None, auto_launch_setup=False):
         super().__init__()
         self.controller = controller or ServiceController()
+        self.auto_launch_setup = auto_launch_setup
+        self.configuration_status = None
         self.active_jobs = []
         self.sync_running = False
         self.device_connection_status = {}
@@ -46,6 +49,8 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.resize(760, 680)
         self._build_ui()
         self.refresh()
+        if self.auto_launch_setup:
+            self._maybe_show_first_run_setup()
 
     def _build_ui(self):
         central = QtWidgets.QWidget()
@@ -70,10 +75,13 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.service_startup = self._value_label()
         self.service_recovery = self._value_label()
         self.last_success = self._value_label()
+        self.configuration_state = self._value_label()
+        self.configuration_source = self._value_label()
         self.messages = QtWidgets.QTextEdit()
         self.messages.setReadOnly(True)
         self.messages.setMinimumHeight(120)
 
+        root.addWidget(self._configuration_group())
         root.addWidget(self._service_group())
         root.addWidget(self._erpnext_group())
         root.addWidget(self._devices_group())
@@ -90,6 +98,18 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             QLabel[state="error"] { color: #b3261e; font-weight: 700; }
             QLabel[state="unknown"] { color: #6b7280; font-weight: 700; }
         """)
+
+    def _configuration_group(self):
+        group = QtWidgets.QGroupBox("Configuration")
+        layout = QtWidgets.QGridLayout(group)
+        layout.addWidget(QtWidgets.QLabel("State:"), 0, 0)
+        layout.addWidget(self.configuration_state, 0, 1)
+        layout.addWidget(QtWidgets.QLabel("Source:"), 1, 0)
+        layout.addWidget(self.configuration_source, 1, 1)
+        self.setup_button = QtWidgets.QPushButton("First-Run Setup")
+        self.setup_button.clicked.connect(self.show_setup_wizard)
+        layout.addWidget(self.setup_button, 0, 2, 2, 1)
+        return group
 
     def _service_group(self):
         group = QtWidgets.QGroupBox("Service")
@@ -177,6 +197,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         return group
 
     def refresh(self):
+        self._refresh_configuration_status()
         self._load_sync_module_safely()
         status = self.controller.get_status()
         self.last_service_status = status
@@ -198,6 +219,11 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self._apply_button_policy(status)
 
     def _load_sync_module_safely(self):
+        if self.configuration_status and self.configuration_status.state == UNCONFIGURED:
+            self.sync_module = None
+            self.config_module = None
+            self._append_message("Product is not configured. Complete first-run setup.")
+            return
         try:
             config_folder = get_config_folder()
             if config_folder.exists() and str(config_folder) not in sys.path:
@@ -210,6 +236,39 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             self.sync_module = None
             self.config_module = None
             self._append_message("Configuration could not be loaded. The manager can still control the Windows service.")
+
+    def _refresh_configuration_status(self):
+        self.configuration_status = get_configuration_status()
+        state = self.configuration_status.state
+        if state == CONFIGURED:
+            label = "Configured"
+            style = "ok"
+        elif state == LEGACY_CONFIGURED:
+            label = "Configured"
+            style = "warning"
+        elif state == INVALID:
+            label = "Invalid"
+            style = "error"
+        else:
+            label = "Not Configured"
+            style = "warning"
+        self._set_state(self.configuration_state, label, style)
+        self._set_state(self.configuration_source, self.configuration_status.message, style)
+
+    def _maybe_show_first_run_setup(self):
+        if self.configuration_status and self.configuration_status.state == UNCONFIGURED:
+            self.show_setup_wizard()
+
+    def show_setup_wizard(self):
+        try:
+            from .setup.wizard import SetupWizard
+            wizard = SetupWizard(self)
+            if wizard.exec_() == QtWidgets.QDialog.Accepted:
+                self._append_message("Setup completed successfully.")
+                self.refresh()
+        except Exception:
+            APP_LOGGER.exception("Could not open first-run setup wizard")
+            self._append_message("Could not open first-run setup wizard. Check manager.log.")
 
     def _populate_devices(self, devices):
         self.device_table.setRowCount(len(devices))
@@ -239,6 +298,9 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self._run_worker(callback, lambda result: self._handle_diagnostic_result(result, button))
 
     def _run_sync_now(self):
+        if self.configuration_status and not self.configuration_status.configured:
+            self._append_message("Complete first-run setup before running sync.")
+            return
         if self.last_service_status and self.last_service_status.state == "Running":
             self._append_message("Stop the Windows service before running a manual sync.")
             return
@@ -419,15 +481,19 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         installed = bool(status.installed)
         running = status.state == "Running"
         stopped = status.state == "Stopped"
-        self.start_button.setEnabled(installed and not running)
+        configured = True if self.configuration_status is None else self.configuration_status.configured
+        self.start_button.setEnabled(configured and installed and not running)
         self.stop_button.setEnabled(installed and not stopped)
         self.restart_button.setEnabled(installed)
         self.install_button.setEnabled(not installed)
         self.uninstall_button.setEnabled(installed)
         self.delayed_auto_button.setEnabled(installed)
         self.recovery_button.setEnabled(installed)
-        self.sync_button.setEnabled((not running) and (not self.sync_running))
-        self._set_tooltip(self.sync_button, "Stop the Windows service before running a manual sync." if running else "")
+        self.sync_button.setEnabled(configured and (not running) and (not self.sync_running))
+        if not configured:
+            self._set_tooltip(self.sync_button, "Complete first-run setup before running sync.")
+        else:
+            self._set_tooltip(self.sync_button, "Stop the Windows service before running a manual sync." if running else "")
 
     def _set_tooltip(self, widget, message):
         if hasattr(widget, "setToolTip"):
@@ -436,7 +502,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    window = SyncManagerWindow()
+    window = SyncManagerWindow(auto_launch_setup=True)
     window.show()
     sys.exit(app.exec_())
 
