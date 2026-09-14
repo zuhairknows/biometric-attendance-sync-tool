@@ -109,7 +109,15 @@ def load_sync_module(logs_directory, import_start_date=None, request_timeout=30,
     zk_module.const = types.SimpleNamespace()
     sys.modules["zk"] = zk_module
 
-    return importlib.import_module("erpnext_sync")
+    programdata = Path(os.environ.get("BIOMETRIC_SYNC_PROGRAMDATA") or (Path(logs_directory).parent / "programdata"))
+    config_dir = Path(logs_directory).parent / "legacy-config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    env = {
+        "BIOMETRIC_SYNC_PROGRAMDATA": str(programdata),
+        "BIOMETRIC_SYNC_CONFIG_DIR": str(config_dir),
+    }
+    with mock.patch.dict(os.environ, env):
+        return importlib.import_module("erpnext_sync")
 
 
 class ERPNextSyncPhaseOneTests(unittest.TestCase):

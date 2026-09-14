@@ -599,6 +599,18 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_invalid_status_does_not_attempt_runtime_import(self):
+        status = ConfigurationStatus(INVALID, "json", "Invalid configuration", ["- Referenced secret is missing."])
+        with mock.patch.object(app_module, "get_configuration_status", return_value=status):
+            window = app_module.SyncManagerWindow(controller=FakeController(), auto_launch_setup=True)
+        try:
+            self.assertEqual(window.configuration_state.text(), "Invalid")
+            self.assertIsNone(window.sync_module)
+            self.assertFalse(window.sync_button.isEnabled())
+            self.assertIn("Configuration is invalid.", "\n".join(window.messages.lines))
+        finally:
+            window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

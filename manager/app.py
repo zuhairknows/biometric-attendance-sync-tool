@@ -224,6 +224,13 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             self.config_module = None
             self._append_message("Product is not configured. Complete first-run setup.")
             return
+        if self.configuration_status and self.configuration_status.state == INVALID:
+            self.sync_module = None
+            self.config_module = None
+            self._append_message("Configuration is invalid. Complete setup or repair protected secrets.")
+            for detail in self.configuration_status.details:
+                self._append_message(detail)
+            return
         try:
             config_folder = get_config_folder()
             if config_folder.exists() and str(config_folder) not in sys.path:

@@ -9,6 +9,8 @@ class ERPNextSetup:
     url: str = ""
     api_key: str = ""
     api_secret: str = ""
+    has_existing_api_key: bool = False
+    has_existing_api_secret: bool = False
     verify_ssl: bool = True
     request_timeout_seconds: int = 30
 
@@ -20,7 +22,8 @@ class DeviceSetup:
     ip: str = ""
     port: int = 4370
     enabled: bool = True
-    password: int = 0
+    password: object = 0
+    has_existing_password: bool = False
     clear_from_device_on_fetch: bool = False
 
 

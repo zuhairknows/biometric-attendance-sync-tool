@@ -14,7 +14,7 @@ class SetupWizard(QtWidgets.QWizard):
     def __init__(self, parent=None, controller=None):
         super().__init__(parent)
         self.controller = controller or SetupController()
-        self.setup_config = SetupConfiguration(devices=[DeviceSetup()])
+        self.setup_config = self.controller.load_existing_setup_config()
         self.setWindowTitle("Biometric Attendance Sync Setup")
         self.setWizardStyle(QtWidgets.QWizard.ModernStyle)
         self.addPage(WelcomePage())
@@ -53,12 +53,17 @@ class ERPNextPage(QtWidgets.QWizardPage):
         self.url = QtWidgets.QLineEdit()
         self.api_key = QtWidgets.QLineEdit()
         self.api_secret = QtWidgets.QLineEdit()
+        self.api_key_hint = QtWidgets.QLabel("Leave blank to keep the existing credential." if wizard.setup_config.erpnext.has_existing_api_key else "")
+        self.api_secret_hint = QtWidgets.QLabel("Leave blank to keep the existing credential." if wizard.setup_config.erpnext.has_existing_api_secret else "")
+        self.url.setText(wizard.setup_config.erpnext.url)
+        self.api_key.setText(wizard.setup_config.erpnext.api_key)
+        self.api_secret.setText(wizard.setup_config.erpnext.api_secret)
         self.api_secret.setEchoMode(QtWidgets.QLineEdit.Password)
         self.verify_ssl = QtWidgets.QCheckBox("Verify SSL")
-        self.verify_ssl.setChecked(True)
+        self.verify_ssl.setChecked(wizard.setup_config.erpnext.verify_ssl)
         self.timeout = QtWidgets.QSpinBox()
         self.timeout.setRange(1, 600)
-        self.timeout.setValue(30)
+        self.timeout.setValue(wizard.setup_config.erpnext.request_timeout_seconds)
         self.test_button = QtWidgets.QPushButton("Test Connection")
         self.test_result = QtWidgets.QLabel("")
         self.test_button.clicked.connect(self.test_connection)
@@ -66,7 +71,11 @@ class ERPNextPage(QtWidgets.QWizardPage):
         form = QtWidgets.QFormLayout(self)
         form.addRow("ERPNext URL", self.url)
         form.addRow("API Key / API User", self.api_key)
+        if wizard.setup_config.erpnext.has_existing_api_key:
+            form.addRow("", self.api_key_hint)
         form.addRow("API Secret", self.api_secret)
+        if wizard.setup_config.erpnext.has_existing_api_secret:
+            form.addRow("", self.api_secret_hint)
         form.addRow("", self.verify_ssl)
         form.addRow("Request Timeout", self.timeout)
         form.addRow(self.test_button, self.test_result)
@@ -76,6 +85,8 @@ class ERPNextPage(QtWidgets.QWizardPage):
             url=self.url.text(),
             api_key=self.api_key.text(),
             api_secret=self.api_secret.text(),
+            has_existing_api_key=self.wizard_ref.setup_config.erpnext.has_existing_api_key,
+            has_existing_api_secret=self.wizard_ref.setup_config.erpnext.has_existing_api_secret,
             verify_ssl=self.verify_ssl.isChecked(),
             request_timeout_seconds=self.timeout.value(),
         )
@@ -120,13 +131,16 @@ class DevicesPage(QtWidgets.QWizardPage):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.table)
+        if any(device.has_existing_password for device in self.wizard_ref.setup_config.devices):
+            layout.addWidget(QtWidgets.QLabel("Leave blank to keep the existing device password."))
         layout.addLayout(buttons)
-        self.add_device(DeviceSetup())
+        for device in self.wizard_ref.setup_config.devices:
+            self.add_device(device)
 
     def add_device(self, device):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        values = [device.name, device.device_id, device.ip, str(device.port), device.enabled, str(device.password)]
+        values = [device.name, device.device_id, device.ip, str(device.port), device.enabled, "" if device.password in (None, "") else str(device.password)]
         for column, value in enumerate(values):
             if column == 4:
                 widget = QtWidgets.QCheckBox()
@@ -146,16 +160,23 @@ class DevicesPage(QtWidgets.QWizardPage):
 
     def to_models(self):
         devices = []
+        existing_by_id = {
+            device.device_id: device
+            for device in self.wizard_ref.setup_config.devices
+        }
         for row in range(self.table.rowCount()):
             password_widget = self.table.cellWidget(row, 5)
             enabled_widget = self.table.cellWidget(row, 4)
+            device_id = self._item_text(row, 1)
+            existing_device = existing_by_id.get(device_id)
             devices.append(DeviceSetup(
                 name=self._item_text(row, 0),
-                device_id=self._item_text(row, 1),
+                device_id=device_id,
                 ip=self._item_text(row, 2),
                 port=int(self._item_text(row, 3) or "4370"),
                 enabled=enabled_widget.isChecked() if enabled_widget else True,
-                password=int(password_widget.text() or "0") if password_widget else 0,
+                password=password_widget.text() if password_widget else "",
+                has_existing_password=bool(existing_device and existing_device.has_existing_password),
             ))
         return devices
 
@@ -190,7 +211,9 @@ class SyncPage(QtWidgets.QWizardPage):
         self.start_date.setCalendarPopup(True)
         self.frequency = QtWidgets.QSpinBox()
         self.frequency.setRange(1, 1440)
-        self.frequency.setValue(60)
+        self.frequency.setValue(wizard.setup_config.sync.pull_frequency_minutes)
+        if wizard.setup_config.sync.import_start_date:
+            self.start_date.setDate(QtCore.QDate.fromString(wizard.setup_config.sync.import_start_date, "yyyy-MM-dd"))
         form = QtWidgets.QFormLayout(self)
         form.addRow("Attendance Import Start Date", self.start_date)
         form.addRow(QtWidgets.QLabel("Attendance records before this date will not be imported."))

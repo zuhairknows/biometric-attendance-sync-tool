@@ -11,6 +11,18 @@ import runtime_paths
 from config import paths as config_paths
 from config.loader import load_config
 from config.schema import ConfigurationError
+from config.secrets import SecretStore
+
+
+class FakeProtector:
+    def protect(self, plaintext):
+        return ("protected:" + plaintext[::-1]).encode("utf-8")
+
+    def unprotect(self, ciphertext):
+        text = ciphertext.decode("utf-8")
+        if not text.startswith("protected:"):
+            raise ValueError("bad ciphertext")
+        return text[len("protected:"):][::-1]
 
 
 class FakePaths:
@@ -102,6 +114,61 @@ class CommercialConfigLoaderTests(unittest.TestCase):
         self.assertEqual(config.STATE_FILE_PATH, str(self.test_dir / "state" / "state.json"))
         self.assertEqual(config.RETRY_DIRECTORY, str(self.test_dir / "retry"))
         self.assertEqual(config.SECRETS_DIRECTORY, str(self.test_dir / "secrets"))
+
+    def test_protected_json_refs_resolve_to_runtime_values(self):
+        store = SecretStore(self.paths.get_secrets_dir(), protector=FakeProtector())
+        store.set_secret("erpnext/api_key", "key")
+        store.set_secret("erpnext/api_secret", "secret")
+        store.set_secret("devices/DEVICE_01/password", "1234")
+        config = valid_json_config()
+        config["erpnext"].pop("api_key")
+        config["erpnext"].pop("api_secret")
+        config["erpnext"]["api_key_ref"] = "erpnext/api_key"
+        config["erpnext"]["api_secret_ref"] = "erpnext/api_secret"
+        config["devices"][0]["password_ref"] = "devices/DEVICE_01/password"
+        self.write_config(config)
+
+        loaded = load_config(paths_module=self.paths, secret_store=store)
+
+        self.assertEqual(loaded.ERPNEXT_API_KEY, "key")
+        self.assertEqual(loaded.ERPNEXT_API_SECRET, "secret")
+        self.assertEqual(loaded.devices[0]["password"], "1234")
+        self.assertTrue(loaded.CONFIG_USES_PROTECTED_SECRETS)
+
+    def test_missing_protected_secret_ref_prevents_runtime_load(self):
+        store = SecretStore(self.paths.get_secrets_dir(), protector=FakeProtector())
+        config = valid_json_config()
+        config["erpnext"].pop("api_secret")
+        config["erpnext"]["api_secret_ref"] = "erpnext/api_secret"
+        self.write_config(config)
+
+        with self.assertRaisesRegex(Exception, "Referenced secret is missing"):
+            load_config(paths_module=self.paths, secret_store=store)
+
+    def test_corrupt_protected_secret_ref_prevents_runtime_load(self):
+        store = SecretStore(self.paths.get_secrets_dir(), protector=FakeProtector())
+        store.set_secret("erpnext/api_key", "key")
+        store.set_secret("erpnext/api_secret", "secret")
+        secret_path = self.paths.get_secrets_dir() / "erpnext" / "api_secret.secret"
+        secret_path.write_bytes(b"BAS1\nnot-encrypted")
+        config = valid_json_config()
+        config["erpnext"].pop("api_key")
+        config["erpnext"].pop("api_secret")
+        config["erpnext"]["api_key_ref"] = "erpnext/api_key"
+        config["erpnext"]["api_secret_ref"] = "erpnext/api_secret"
+        self.write_config(config)
+
+        with self.assertRaisesRegex(Exception, "Could not decrypt|bad ciphertext"):
+            load_config(paths_module=self.paths, secret_store=store)
+
+    def test_secret_ref_path_traversal_is_rejected(self):
+        config = valid_json_config()
+        config["erpnext"].pop("api_secret")
+        config["erpnext"]["api_secret_ref"] = "../api_secret"
+        self.write_config(config)
+
+        with self.assertRaisesRegex(ConfigurationError, "api_secret_ref"):
+            load_config(paths_module=self.paths)
 
     def test_missing_config_falls_back_to_local_config(self):
         legacy = types.ModuleType("local_config")

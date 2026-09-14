@@ -25,7 +25,7 @@ Configuration precedence is:
 2. legacy `local_config.py`
 3. safe application defaults
 
-Existing `local_config.py` deployments remain supported. See [Commercial Configuration](docs/configuration.md) for the JSON schema and compatibility notes.
+Existing `local_config.py` deployments remain supported. See [Commercial Configuration](docs/configuration.md) for the JSON schema, protected secret refs, and compatibility notes.
 
 Fresh commercial installations open the Manager in `Not Configured` state and guide the administrator through the first-run setup wizard. The service stays idle until setup writes a valid configuration.
 
@@ -49,6 +49,8 @@ C:\ProgramData\BiometricAttendanceSync\
     retry\
     secrets\
 ```
+
+Commercial setup stores ERPNext API credentials and device connection passwords as Windows DPAPI machine-scope protected secrets under `secrets\`. `config.json` contains refs such as `api_key_ref`, `api_secret_ref`, and `password_ref`, not plaintext credential values. Older M3.2 plaintext JSON still loads, and resaving through the Manager converts it to protected refs.
 
 Current environment overrides:
 

@@ -9,11 +9,13 @@ from unittest import mock
 
 from config.loader import load_config
 from config.schema import validate_runtime_config
+from config.secrets import SecretStore
 from config.status import CONFIGURED, INVALID, LEGACY_CONFIGURED, UNCONFIGURED, get_configuration_status, is_configured
 from manager.setup.controller import SetupController
 from manager.setup.model import DeviceSetup, ERPNextSetup, SetupConfiguration, SyncSetup
 from manager.setup.validation import safe_review_summary
 from tests.test_config_loader import valid_json_config
+from tests.test_config_loader import FakeProtector
 
 
 class FakePaths:
@@ -190,6 +192,42 @@ class ConfigurationStatusTests(unittest.TestCase):
         self.assertEqual(status.state, INVALID)
         self.assertEqual(status.source, "json")
 
+    def test_protected_commercial_config_is_configured_when_secrets_load(self):
+        store = SecretStore(self.paths.get_secrets_dir(), protector=FakeProtector())
+        store.set_secret("erpnext/api_key", "key")
+        store.set_secret("erpnext/api_secret", "secret")
+        config = valid_json_config()
+        config["erpnext"].pop("api_key")
+        config["erpnext"].pop("api_secret")
+        config["erpnext"]["api_key_ref"] = "erpnext/api_key"
+        config["erpnext"]["api_secret_ref"] = "erpnext/api_secret"
+        self.paths.get_config_path().write_text(json.dumps(config), encoding="utf-8")
+
+        with mock.patch("config.schema._default_secret_store", return_value=store):
+            status = get_configuration_status(paths_module=self.paths)
+
+        self.assertEqual(status.state, CONFIGURED)
+
+    def test_missing_secret_ref_makes_commercial_config_invalid_without_legacy_fallback(self):
+        legacy = types.ModuleType("local_config")
+        legacy.ERPNEXT_URL = "https://legacy.example.test"
+        legacy.ERPNEXT_API_KEY = "key"
+        legacy.ERPNEXT_API_SECRET = "secret"
+        legacy.PULL_FREQUENCY = 60
+        legacy.devices = [{"device_id": "DEVICE_01", "ip": "192.0.2.10"}]
+        sys.modules["local_config"] = legacy
+        store = SecretStore(self.paths.get_secrets_dir(), protector=FakeProtector())
+        config = valid_json_config()
+        config["erpnext"].pop("api_secret")
+        config["erpnext"]["api_secret_ref"] = "erpnext/api_secret"
+        self.paths.get_config_path().write_text(json.dumps(config), encoding="utf-8")
+
+        with mock.patch("config.schema._default_secret_store", return_value=store):
+            status = get_configuration_status(paths_module=self.paths)
+
+        self.assertEqual(status.state, INVALID)
+        self.assertEqual(status.source, "json")
+
 
 class SetupControllerTests(unittest.TestCase):
     def setUp(self):
@@ -198,7 +236,8 @@ class SetupControllerTests(unittest.TestCase):
             shutil.rmtree(self.test_dir)
         self.test_dir.mkdir(parents=True)
         self.paths = FakePaths(self.test_dir)
-        self.controller = SetupController(paths_module=self.paths)
+        self.secret_store = SecretStore(self.paths.get_secrets_dir(), protector=FakeProtector())
+        self.controller = SetupController(paths_module=self.paths, secret_store=self.secret_store)
 
     def tearDown(self):
         if self.test_dir.exists():
@@ -263,6 +302,70 @@ class SetupControllerTests(unittest.TestCase):
         self.assertNotIn("SUPER_SECRET_VALUE", message)
         self.assertNotIn("1234", message)
 
+    def test_fresh_install_blank_api_key_is_invalid(self):
+        setup = valid_setup_config()
+        setup.erpnext.api_key = ""
+
+        with self.assertRaisesRegex(ValueError, "erpnext.api_key"):
+            self.controller.validate_erpnext(setup)
+
+    def test_fresh_install_blank_api_secret_is_invalid(self):
+        setup = valid_setup_config()
+        setup.erpnext.api_secret = ""
+
+        with self.assertRaisesRegex(ValueError, "erpnext.api_secret"):
+            self.controller.validate_erpnext(setup)
+
+    def test_existing_plaintext_api_key_blank_edit_is_valid(self):
+        existing = valid_json_config()
+        self.paths.get_config_path().write_text(json.dumps(existing), encoding="utf-8")
+        setup = self.controller.load_existing_setup_config()
+        setup.erpnext.api_secret = "replacement-secret"
+
+        self.controller.validate_erpnext(setup)
+
+        self.assertEqual(setup.erpnext.api_key, "")
+        self.assertTrue(setup.erpnext.has_existing_api_key)
+
+    def test_existing_plaintext_api_secret_blank_edit_is_valid(self):
+        existing = valid_json_config()
+        self.paths.get_config_path().write_text(json.dumps(existing), encoding="utf-8")
+        setup = self.controller.load_existing_setup_config()
+        setup.erpnext.api_key = "replacement-key"
+
+        self.controller.validate_erpnext(setup)
+
+        self.assertEqual(setup.erpnext.api_secret, "")
+        self.assertTrue(setup.erpnext.has_existing_api_secret)
+
+    def test_existing_protected_api_key_ref_blank_edit_is_valid(self):
+        self.controller.write_config_atomic(valid_setup_config())
+        setup = self.controller.load_existing_setup_config()
+        setup.erpnext.api_secret = "replacement-secret"
+
+        self.controller.validate_erpnext(setup)
+
+        self.assertEqual(setup.erpnext.api_key, "")
+        self.assertTrue(setup.erpnext.has_existing_api_key)
+
+    def test_existing_protected_api_secret_ref_blank_edit_is_valid(self):
+        self.controller.write_config_atomic(valid_setup_config())
+        setup = self.controller.load_existing_setup_config()
+        setup.erpnext.api_key = "replacement-key"
+
+        self.controller.validate_erpnext(setup)
+
+        self.assertEqual(setup.erpnext.api_secret, "")
+        self.assertTrue(setup.erpnext.has_existing_api_secret)
+
+    def test_missing_existing_credential_with_blank_field_is_invalid(self):
+        setup = valid_setup_config()
+        setup.erpnext.api_key = ""
+        setup.erpnext.has_existing_api_key = False
+
+        with self.assertRaisesRegex(ValueError, "erpnext.api_key"):
+            self.controller.validate_erpnext(setup)
+
     def test_failed_validation_does_not_overwrite_existing_config(self):
         existing = {"schema_version": 1, "existing": True}
         self.paths.get_config_path().write_text(json.dumps(existing), encoding="utf-8")
@@ -281,9 +384,148 @@ class SetupControllerTests(unittest.TestCase):
         self.assertEqual(saved["schema_version"], 1)
         self.assertEqual(saved["erpnext"]["url"], "https://erp.example.test")
         self.assertEqual(len(saved["devices"]), 2)
+        self.assertIn("api_key_ref", saved["erpnext"])
+        self.assertIn("api_secret_ref", saved["erpnext"])
+        self.assertNotIn("api_key", saved["erpnext"])
+        self.assertNotIn("api_secret", saved["erpnext"])
+
+    def test_wizard_save_does_not_store_plaintext_secrets_in_config_or_secret_files(self):
+        target = self.controller.write_config_atomic(valid_setup_config())
+
+        config_text = target.read_text(encoding="utf-8")
+        secret_text = "\n".join(path.read_text(encoding="latin-1") for path in self.paths.get_secrets_dir().rglob("*.secret"))
+        self.assertNotIn('"key"', config_text)
+        self.assertNotIn('"secret"', config_text)
+        self.assertNotIn('"password": 1234', config_text)
+        self.assertNotIn("key", secret_text)
+        self.assertNotIn("secret", secret_text)
+        self.assertNotIn("1234", secret_text)
+
+    def test_wizard_saved_refs_load_as_runtime_configuration(self):
+        self.controller.write_config_atomic(valid_setup_config())
+
+        runtime_config = load_config(paths_module=self.paths, secret_store=self.secret_store)
+
+        self.assertEqual(runtime_config.ERPNEXT_API_KEY, "key")
+        self.assertEqual(runtime_config.ERPNEXT_API_SECRET, "secret")
+        self.assertEqual(runtime_config.devices[0]["password"], "1234")
+        self.assertTrue(validate_runtime_config(runtime_config))
+
+    def test_blank_edit_keeps_existing_protected_secret(self):
+        self.controller.write_config_atomic(valid_setup_config())
+        setup = valid_setup_config()
+        setup.erpnext.api_key = ""
+        setup.erpnext.api_secret = ""
+        setup.devices[0].password = ""
+
+        self.controller.write_config_atomic(setup)
+        runtime_config = load_config(paths_module=self.paths, secret_store=self.secret_store)
+
+        self.assertEqual(runtime_config.ERPNEXT_API_KEY, "key")
+        self.assertEqual(runtime_config.ERPNEXT_API_SECRET, "secret")
+        self.assertEqual(runtime_config.devices[0]["password"], "1234")
+
+    def test_new_secret_value_replaces_existing_protected_secret(self):
+        self.controller.write_config_atomic(valid_setup_config())
+        setup = valid_setup_config()
+        setup.erpnext.api_secret = "new-secret"
+        setup.devices[0].password = 4321
+
+        self.controller.write_config_atomic(setup)
+        runtime_config = load_config(paths_module=self.paths, secret_store=self.secret_store)
+
+        self.assertEqual(runtime_config.ERPNEXT_API_SECRET, "new-secret")
+        self.assertEqual(runtime_config.devices[0]["password"], "4321")
+
+    def test_resaving_plaintext_commercial_config_converts_to_secret_refs(self):
+        self.paths.get_config_path().write_text(json.dumps(valid_json_config()), encoding="utf-8")
+
+        self.controller.write_config_atomic(valid_setup_config())
+        saved = json.loads(self.paths.get_config_path().read_text(encoding="utf-8"))
+
+        self.assertIn("api_key_ref", saved["erpnext"])
+        self.assertIn("api_secret_ref", saved["erpnext"])
+        self.assertNotIn("api_key", saved["erpnext"])
+        self.assertNotIn("api_secret", saved["erpnext"])
+
+    def test_blank_edit_resaves_plaintext_commercial_config_as_protected_refs(self):
+        existing = valid_json_config()
+        existing["devices"][0]["password"] = 1234
+        self.paths.get_config_path().write_text(json.dumps(existing), encoding="utf-8")
+        setup = self.controller.load_existing_setup_config()
+
+        self.controller.validate_erpnext(setup)
+
+        self.controller.write_config_atomic(setup)
+        saved = json.loads(self.paths.get_config_path().read_text(encoding="utf-8"))
+        runtime_config = load_config(paths_module=self.paths, secret_store=self.secret_store)
+
+        self.assertEqual(saved["erpnext"]["api_key_ref"], "erpnext/api_key")
+        self.assertEqual(saved["erpnext"]["api_secret_ref"], "erpnext/api_secret")
+        self.assertEqual(saved["devices"][0]["password_ref"], "devices/DEVICE_01/password")
+        self.assertEqual(runtime_config.ERPNEXT_API_KEY, "key")
+        self.assertEqual(runtime_config.ERPNEXT_API_SECRET, "secret")
+        self.assertEqual(runtime_config.devices[0]["password"], "1234")
+
+    def test_existing_protected_device_password_blank_edit_is_preserved(self):
+        self.controller.write_config_atomic(valid_setup_config())
+        setup = self.controller.load_existing_setup_config()
+
+        self.controller.write_config_atomic(setup)
+        runtime_config = load_config(paths_module=self.paths, secret_store=self.secret_store)
+
+        self.assertEqual(setup.devices[0].password, "")
+        self.assertTrue(setup.devices[0].has_existing_password)
+        self.assertEqual(runtime_config.devices[0]["password"], "1234")
+
+    def test_loaded_existing_setup_does_not_expose_plaintext_secrets(self):
+        existing = valid_json_config()
+        existing["devices"][0]["password"] = 1234
+        self.paths.get_config_path().write_text(json.dumps(existing), encoding="utf-8")
+
+        setup = self.controller.load_existing_setup_config()
+
+        self.assertEqual(setup.erpnext.api_key, "")
+        self.assertEqual(setup.erpnext.api_secret, "")
+        self.assertEqual(setup.devices[0].password, "")
+        self.assertTrue(setup.erpnext.has_existing_api_key)
+        self.assertTrue(setup.erpnext.has_existing_api_secret)
+        self.assertTrue(setup.devices[0].has_existing_password)
+
+    def test_password_zero_remains_valid_without_protected_secret(self):
+        self.controller.write_config_atomic(valid_setup_config())
+        saved = json.loads(self.paths.get_config_path().read_text(encoding="utf-8"))
+        zero_password_device = next(device for device in saved["devices"] if device["device_id"] == "DEVICE_02")
+
+        self.assertNotIn("password_ref", zero_password_device)
+        self.assertFalse((self.paths.get_secrets_dir() / "devices" / "DEVICE_02" / "password.secret").exists())
+
+    def test_failed_save_preserves_existing_config_and_secrets(self):
+        self.controller.write_config_atomic(valid_setup_config())
+        old_config = self.paths.get_config_path().read_text(encoding="utf-8")
+        old_secret = self.secret_store.get_secret("erpnext/api_secret")
+        setup = valid_setup_config()
+        setup.erpnext.api_secret = "new-secret"
+
+        with mock.patch.object(self.controller, "_replace_config_file", side_effect=OSError("replace failed")):
+            with self.assertRaises(OSError):
+                self.controller.write_config_atomic(setup)
+
+        self.assertEqual(self.paths.get_config_path().read_text(encoding="utf-8"), old_config)
+        self.assertEqual(self.secret_store.get_secret("erpnext/api_secret"), old_secret)
+
+    def test_failed_secret_write_preserves_original_plaintext_config(self):
+        original = valid_json_config()
+        self.paths.get_config_path().write_text(json.dumps(original), encoding="utf-8")
+
+        with mock.patch.object(self.secret_store, "set_secret", side_effect=OSError("secret write failed")):
+            with self.assertRaises(OSError):
+                self.controller.write_config_atomic(self.controller.load_existing_setup_config())
+
+        self.assertEqual(json.loads(self.paths.get_config_path().read_text(encoding="utf-8")), original)
 
     def test_atomic_config_replacement_uses_replace(self):
-        with mock.patch("manager.setup.controller.os.replace") as replace:
+        with mock.patch.object(self.controller, "_replace_config_file") as replace:
             self.controller.write_config_atomic(valid_setup_config())
 
         replace.assert_called_once()

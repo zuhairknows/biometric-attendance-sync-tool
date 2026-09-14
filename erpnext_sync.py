@@ -19,7 +19,15 @@ from logging.handlers import RotatingFileHandler
 from pickledb import PickleDB
 from zk import ZK, const
 
-config = load_config()
+try:
+    from service_runtime import get_loaded_runtime_config
+except Exception:
+    get_loaded_runtime_config = None
+
+
+config = get_loaded_runtime_config() if get_loaded_runtime_config else None
+if config is None:
+    config = load_config()
 
 EMPLOYEE_NOT_FOUND_ERROR_MESSAGE = "No Employee found for the given employee field value"
 EMPLOYEE_INACTIVE_ERROR_MESSAGE = "Transactions cannot be created for an Inactive Employee"

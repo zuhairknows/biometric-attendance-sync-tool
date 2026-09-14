@@ -9,7 +9,7 @@ The manager is not the synchronization engine. The existing `erpnext_sync.py` an
 - Show Windows service status and startup mode.
 - Show Windows service recovery summary when available.
 - Install, uninstall, start, stop, and restart `ERPNextBiometricPushService`.
-- Validate the current runtime configuration using `erpnext_sync.validate_runtime_config()`.
+- Validate the current runtime configuration using the same normalized loader and validation path as the sync service.
 - Test ERPNext authentication with a harmless authenticated endpoint.
 - Test each configured biometric device connection without changing device data.
 - Run exactly one manual sync cycle with `erpnext_sync.main()`.
@@ -79,7 +79,7 @@ Uninstall does not delete:
 
 ## Diagnostics
 
-Configuration validation reuses the sync engine's runtime validation. Secrets are not shown in the manager UI.
+Configuration validation reuses the sync engine's normalized runtime validation. Commercial JSON secrets are resolved from protected secret refs before validation. Secrets are not shown in the manager UI.
 
 ERPNext testing calls:
 
@@ -116,6 +116,8 @@ C:\ProgramData\BiometricAttendanceSync\logs
 The JSON file has precedence. The Python file is retained for legacy compatibility.
 
 On a fresh installation, the Manager shows `Not Configured` and opens the first-run setup wizard. Existing valid legacy installations show `Legacy Configuration` and are not automatically migrated.
+
+When saving commercial setup, the Manager writes `api_key_ref`, `api_secret_ref`, and device `password_ref` values to `config.json`; the actual credential values are stored below `C:\ProgramData\BiometricAttendanceSync\secrets`. Blank secret fields during an edit keep the existing protected secret. Entering a new value replaces that secret.
 
 Development mode continues to use the repo-local `local_config.py` and logs unless environment overrides are set.
 
@@ -157,13 +159,13 @@ The sync logs are written and read as UTF-8. If Arabic shift names look garbled 
 
 If the service is not installed, use **Install Service** from an Administrator-launched manager window.
 
-If ERPNext shows authentication failure, check the API key and API secret in `local_config.py`.
+If ERPNext shows authentication failure, use the Manager setup flow to update the API key and API secret. For legacy deployments, check `local_config.py`.
 
 If ERPNext is unreachable, check the ERPNext URL, internet connectivity, DNS, and firewall rules.
 
 If a device connection fails, check the device IP address, port, network cable or Wi-Fi, device power, and biometric-device communication password.
 
-If the manager opens but configuration cannot be loaded, fix `local_config.py` and use **Refresh**.
+If the manager shows `Invalid`, repair the commercial `config.json` and protected secrets or rerun setup, then use **Refresh**. A broken commercial config does not fall back to legacy `local_config.py`.
 
 ## Launch Locally
 

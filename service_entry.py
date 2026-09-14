@@ -3,7 +3,7 @@
 import sys
 
 from service_runtime import load_runtime_config, prepare_runtime_paths
-from config.status import UNCONFIGURED, get_configuration_status
+from config.status import INVALID, UNCONFIGURED, get_configuration_status
 
 
 SERVICE_NAME = "ERPNextBiometricPushService"
@@ -18,6 +18,7 @@ import win32serviceutil
 
 erpnext_sync = None
 service_unconfigured = False
+service_invalid_configuration = False
 
 
 def load_sync_runtime():
@@ -65,15 +66,24 @@ class BiometricAttendanceSyncService(win32serviceutil.ServiceFramework):
         win32event.SetEvent(self.hWaitStop)
 
     def SvcDoRun(self):
-        global service_unconfigured
+        global service_invalid_configuration, service_unconfigured
         configuration_status = get_configuration_status()
         if configuration_status.state == UNCONFIGURED:
             service_unconfigured = True
+            service_invalid_configuration = False
             log_service_info("Product is not configured. Complete first-run setup.")
             self.isrunning = True
             self.main()
             return
+        if configuration_status.state == INVALID:
+            service_unconfigured = False
+            service_invalid_configuration = True
+            log_service_error("Configuration is invalid. Complete setup or repair protected secrets.")
+            self.isrunning = True
+            self.main()
+            return
         service_unconfigured = False
+        service_invalid_configuration = False
         sync_module = load_sync_runtime()
         log_service_info("ERPNext Biometric Push Service starting")
         try:
@@ -91,6 +101,8 @@ class BiometricAttendanceSyncService(win32serviceutil.ServiceFramework):
             try:
                 if service_unconfigured:
                     log_service_info("Product is not configured. Complete first-run setup.")
+                elif service_invalid_configuration:
+                    log_service_error("Configuration is invalid. Complete setup or repair protected secrets.")
                 else:
                     load_sync_runtime().main()
             except Exception:

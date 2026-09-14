@@ -11,6 +11,11 @@ a = Analysis(
     ],
     hiddenimports=[
         'erpnext_sync',
+        'config.loader',
+        'config.paths',
+        'config.schema',
+        'config.secrets',
+        'config.status',
         'servicemanager',
         'win32event',
         'win32service',

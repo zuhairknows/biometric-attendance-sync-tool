@@ -16,10 +16,10 @@ from .schema import (
 )
 
 
-def load_config(config_path=None, allow_legacy=True, paths_module=paths):
+def load_config(config_path=None, allow_legacy=True, paths_module=paths, secret_store=None):
     config_path = Path(config_path) if config_path is not None else paths_module.get_config_path()
     if config_path.is_file():
-        return load_json_config(config_path, paths_module=paths_module)
+        return load_json_config(config_path, paths_module=paths_module, secret_store=secret_store)
     if allow_legacy:
         legacy_config = load_legacy_config(paths_module=paths_module)
         if legacy_config is not None:
@@ -27,7 +27,7 @@ def load_config(config_path=None, allow_legacy=True, paths_module=paths):
     return build_default_runtime_config(paths_module=paths_module)
 
 
-def load_json_config(config_path, paths_module=paths):
+def load_json_config(config_path, paths_module=paths, secret_store=None):
     try:
         with Path(config_path).open("r", encoding="utf-8") as handle:
             raw_config = json.load(handle)
@@ -38,7 +38,12 @@ def load_json_config(config_path, paths_module=paths):
 
     validate_json_config(raw_config)
     merged_config = merge_with_defaults(raw_config)
-    return to_legacy_runtime_config(merged_config, paths_module=paths_module, source="json")
+    return to_legacy_runtime_config(
+        merged_config,
+        paths_module=paths_module,
+        source="json",
+        secret_store=secret_store,
+    )
 
 
 def load_legacy_config(paths_module=paths):

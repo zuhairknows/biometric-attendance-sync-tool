@@ -45,6 +45,8 @@ dist\Biometric-Attendance-Sync-Service\Biometric-Attendance-Sync-Service.exe
 
 The service spec includes pywin32 service modules, including `win32timezone`, plus the sync engine dependencies `requests`, `zk`, and `pickledb`.
 
+Commercial secret protection uses Windows DPAPI through the standard Windows API, so no extra Python package is required for the secret store.
+
 ## Runtime Layout
 
 The installer places program files under:
@@ -81,6 +83,14 @@ C:\ProgramData\BiometricAttendanceSync\config\local_config.py
 ```
 
 Do not bundle `config.json` with real credentials or `local_config.py` into the executable or distribution folder. They contain customer-specific configuration.
+
+Commercial `config.json` stores secret refs such as `erpnext/api_key`, `erpnext/api_secret`, and `devices/DEVICE_01/password`. The encrypted secret files live below:
+
+```text
+C:\ProgramData\BiometricAttendanceSync\secrets\
+```
+
+Secrets use Windows DPAPI machine scope so the Manager running as the logged-in administrator can write them and the service running as LocalSystem can read them on the same PC. This is machine-local protection, not protection from a fully privileged same-machine administrator.
 
 If packaged `local_config.py` uses a relative `LOGS_DIRECTORY`, the service runtime resolves it to:
 
@@ -151,6 +161,8 @@ The manager resolves the service runtime in this order:
 Packaged service modes use ProgramData for config and logs. Development mode keeps the repo-local paths unless environment overrides are set.
 
 If no valid commercial or legacy configuration exists, the service remains safely idle and logs `Product is not configured. Complete first-run setup.` It does not attempt ERPNext or device connections until setup succeeds.
+
+If commercial configuration exists but protected secrets are missing, corrupt, or cannot be decrypted, the service also remains idle and logs `Configuration is invalid. Complete setup or repair protected secrets.`
 
 Current environment overrides:
 

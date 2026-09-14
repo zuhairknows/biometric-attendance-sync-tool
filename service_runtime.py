@@ -7,6 +7,8 @@ from pathlib import Path
 import runtime_paths
 from config.loader import load_config
 
+_runtime_config = None
+
 
 def is_frozen_runtime():
     return bool(getattr(sys, "frozen", False))
@@ -42,9 +44,15 @@ def prepare_runtime_paths():
 
 
 def load_runtime_config():
+    global _runtime_config
     config = load_config()
     if is_frozen_runtime():
         logs_directory = Path(str(getattr(config, "LOGS_DIRECTORY", "logs")))
         if not logs_directory.is_absolute():
             config.LOGS_DIRECTORY = str(get_programdata_root() / "logs")
+    _runtime_config = config
     return config
+
+
+def get_loaded_runtime_config():
+    return _runtime_config

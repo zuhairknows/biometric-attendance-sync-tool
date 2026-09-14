@@ -3,6 +3,7 @@
 import copy
 
 from config.schema import ConfigurationError, validate_json_config
+from config.secrets import device_password_secret_id, erpnext_api_key_secret_id, erpnext_api_secret_secret_id
 
 
 SECRET_MASK = "********"
@@ -25,7 +26,7 @@ def build_config_dict(setup_config):
                 "ip": device.ip.strip(),
                 "port": int(device.port),
                 "enabled": bool(device.enabled),
-                "password": int(device.password),
+                "password": _normalize_device_password(device.password),
                 "clear_from_device_on_fetch": bool(device.clear_from_device_on_fetch),
             }
             for device in setup_config.devices
@@ -43,6 +44,7 @@ def build_config_dict(setup_config):
 
 def validate_setup_config(setup_config):
     config_dict = build_config_dict(setup_config)
+    _apply_existing_secret_refs_for_validation(config_dict, setup_config)
     validate_json_config(config_dict)
     return config_dict
 
@@ -85,3 +87,28 @@ def _mask_identifier(value):
     if len(value) <= 4:
         return SECRET_MASK if value else ""
     return value[:2] + "..." + value[-2:]
+
+
+def _normalize_device_password(value):
+    if value in (None, ""):
+        return ""
+    return int(value)
+
+
+def _apply_existing_secret_refs_for_validation(config_dict, setup_config):
+    erpnext = config_dict["erpnext"]
+    if not erpnext["api_key"] and setup_config.erpnext.has_existing_api_key:
+        erpnext.pop("api_key")
+        erpnext["api_key_ref"] = erpnext_api_key_secret_id()
+    if not erpnext["api_secret"] and setup_config.erpnext.has_existing_api_secret:
+        erpnext.pop("api_secret")
+        erpnext["api_secret_ref"] = erpnext_api_secret_secret_id()
+
+    setup_devices = {device.device_id.strip(): device for device in setup_config.devices}
+    for device in config_dict["devices"]:
+        setup_device = setup_devices.get(device["device_id"])
+        if setup_device is None:
+            continue
+        if device.get("password") == "" and setup_device.has_existing_password:
+            device.pop("password", None)
+            device["password_ref"] = device_password_secret_id(device["device_id"])

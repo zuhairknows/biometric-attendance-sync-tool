@@ -17,6 +17,9 @@ SENSITIVE_KEYS = {
     "api_secret",
     "api_token",
     "password",
+    "api_key_ref",
+    "api_secret_ref",
+    "password_ref",
     "secret",
     "secret_ref",
 }
@@ -177,7 +180,7 @@ def merge_with_defaults(config_data):
     return merged
 
 
-def to_legacy_runtime_config(config_data, paths_module=None, source="json"):
+def to_legacy_runtime_config(config_data, paths_module=None, source="json", secret_store=None):
     if paths_module is None:
         from . import paths as paths_module
 
@@ -188,9 +191,23 @@ def to_legacy_runtime_config(config_data, paths_module=None, source="json"):
     runtime = SimpleNamespace()
     runtime.SCHEMA_VERSION = config_data["schema_version"]
     runtime.CONFIG_SOURCE = source
+    runtime.CONFIG_USES_PROTECTED_SECRETS = bool(erpnext.get("api_key_ref") or erpnext.get("api_secret_ref"))
+    runtime.CONFIG_USES_PLAINTEXT_SECRETS = bool(erpnext.get("api_key") or erpnext.get("api_secret"))
     runtime.ERPNEXT_URL = str(erpnext.get("url") or "").rstrip("/")
-    runtime.ERPNEXT_API_KEY = str(erpnext.get("api_key") or erpnext.get("api_user") or "")
-    runtime.ERPNEXT_API_SECRET = str(erpnext.get("api_secret") or "")
+    runtime.ERPNEXT_API_KEY = _resolve_secret_value(
+        erpnext,
+        "api_key",
+        "api_key_ref",
+        secret_store,
+        paths_module,
+    ) or str(erpnext.get("api_user") or "")
+    runtime.ERPNEXT_API_SECRET = _resolve_secret_value(
+        erpnext,
+        "api_secret",
+        "api_secret_ref",
+        secret_store,
+        paths_module,
+    )
     runtime.ERPNEXT_VERIFY_SSL = erpnext.get("verify_ssl", True)
     runtime.ERPNEXT_VERSION = int(erpnext.get("version", 15))
     runtime.ERPNEXT_REQUEST_TIMEOUT = int(erpnext.get("request_timeout_seconds", 30))
@@ -203,7 +220,7 @@ def to_legacy_runtime_config(config_data, paths_module=None, source="json"):
     runtime.STATE_FILE_PATH = str(paths_module.get_state_path())
     runtime.RETRY_DIRECTORY = str(paths_module.get_retry_dir())
     runtime.SECRETS_DIRECTORY = str(paths_module.get_secrets_dir())
-    runtime.devices = deepcopy(config_data.get("devices", []))
+    runtime.devices = _resolve_device_secrets(config_data.get("devices", []), secret_store, paths_module)
     runtime.shift_type_device_mapping = deepcopy(config_data.get("shift_type_device_mapping", []))
     runtime.allowed_exceptions = deepcopy(config_data.get("allowed_exceptions", [1, 2, 3]))
     runtime.device_punch_values_IN = deepcopy(config_data.get("device_punch_values_IN", [0, 4]))
@@ -291,10 +308,8 @@ def _validate_erpnext(erpnext, errors):
     if not isinstance(erpnext.get("verify_ssl", True), bool):
         errors.append("erpnext.verify_ssl must be true or false.")
 
-    if not str(erpnext.get("api_key") or erpnext.get("api_user") or "").strip():
-        errors.append("erpnext.api_key is required.")
-    if not str(erpnext.get("api_secret") or "").strip():
-        errors.append("erpnext.api_secret is required.")
+    _validate_secret_or_ref(erpnext, "api_key", "api_key_ref", "erpnext.api_key", errors, fallback_key="api_user")
+    _validate_secret_or_ref(erpnext, "api_secret", "api_secret_ref", "erpnext.api_secret", errors)
 
     _validate_positive_int(
         erpnext.get("request_timeout_seconds", 30),
@@ -329,6 +344,14 @@ def _validate_devices(devices, errors):
             errors.append(prefix + ".enabled must be true or false.")
         if not isinstance(device.get("clear_from_device_on_fetch", False), bool):
             errors.append(prefix + ".clear_from_device_on_fetch must be true or false.")
+        password_ref = device.get("password_ref")
+        if password_ref not in (None, ""):
+            try:
+                from .secrets import validate_secret_id
+
+                validate_secret_id(password_ref)
+            except Exception:
+                errors.append(prefix + ".password_ref is invalid.")
 
 
 def _validate_sync(sync, errors):
@@ -360,6 +383,47 @@ def _validate_port(value, label, errors):
         return
     if port < 1 or port > 65535:
         errors.append(label + " must be between 1 and 65535.")
+
+
+def _validate_secret_or_ref(section, value_key, ref_key, label, errors, fallback_key=None):
+    value = section.get(value_key)
+    ref = section.get(ref_key)
+    fallback_value = section.get(fallback_key) if fallback_key else None
+    if str(value or fallback_value or "").strip():
+        return
+    if str(ref or "").strip():
+        try:
+            from .secrets import validate_secret_id
+
+            validate_secret_id(ref)
+        except Exception:
+            errors.append(label + "_ref is invalid.")
+        return
+    errors.append(label + " is required.")
+
+
+def _resolve_secret_value(section, value_key, ref_key, secret_store, paths_module):
+    ref = section.get(ref_key)
+    if str(ref or "").strip():
+        store = secret_store or _default_secret_store(paths_module)
+        return store.get_secret(ref)
+    return str(section.get(value_key) or "")
+
+
+def _resolve_device_secrets(devices, secret_store, paths_module):
+    resolved_devices = deepcopy(devices)
+    for device in resolved_devices:
+        ref = device.get("password_ref")
+        if str(ref or "").strip():
+            store = secret_store or _default_secret_store(paths_module)
+            device["password"] = store.get_secret(ref)
+    return resolved_devices
+
+
+def _default_secret_store(paths_module):
+    from .secrets import create_secret_store
+
+    return create_secret_store(paths_module=paths_module)
 
 
 def _to_legacy_import_start_date(value):
