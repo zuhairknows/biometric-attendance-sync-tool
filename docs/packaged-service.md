@@ -19,6 +19,8 @@ C:\ProgramData\BiometricAttendanceSync\
     state\
     retry\
     secrets\
+    backups\
+    diagnostics\
 ```
 
 The manager controls `ERPNextBiometricPushService`. The packaged service executable runs the existing `erpnext_sync.py` logic. Sync engine behavior remains unchanged.
@@ -68,6 +70,8 @@ logs\
 state\
 retry\
 secrets\
+backups\
+diagnostics\
 ```
 
 Commercial JSON configuration is loaded first from:
@@ -91,6 +95,8 @@ C:\ProgramData\BiometricAttendanceSync\secrets\
 ```
 
 Secrets use Windows DPAPI machine scope so the Manager running as the logged-in administrator can write them and the service running as LocalSystem can read them on the same PC. This is machine-local protection, not protection from a fully privileged same-machine administrator.
+
+Manager configuration backups include `config.json` and protected secret blobs from this ProgramData tree, but do not include logs, state, retry dumps, or plaintext secret values. DPAPI-protected secret files should be considered same-machine backups; credentials may need to be re-entered after restoring to a different Windows PC.
 
 If packaged `local_config.py` uses a relative `LOGS_DIRECTORY`, the service runtime resolves it to:
 
@@ -163,6 +169,8 @@ Packaged service modes use ProgramData for config and logs. Development mode kee
 If no valid commercial or legacy configuration exists, the service remains safely idle and logs `Product is not configured. Complete first-run setup.` It does not attempt ERPNext or device connections until setup succeeds.
 
 If commercial configuration exists but protected secrets are missing, corrupt, or cannot be decrypted, the service also remains idle and logs `Configuration is invalid. Complete setup or repair protected secrets.`
+
+When the Manager saves or restores commercial configuration while the service is running, it prompts the operator to restart the service. The packaged service reads configuration during startup, so a restart is required for immediate use of the new settings.
 
 Current environment overrides:
 

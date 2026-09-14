@@ -37,8 +37,14 @@ class FakePaths:
     def get_secrets_dir(self):
         return self.root / "secrets"
 
+    def get_backups_dir(self):
+        return self.root / "backups"
+
+    def get_diagnostics_dir(self):
+        return self.root / "diagnostics"
+
     def ensure_runtime_directories(self):
-        for folder in [self.root, self.get_logs_dir(), self.get_state_path().parent, self.get_retry_dir(), self.get_secrets_dir()]:
+        for folder in [self.root, self.get_logs_dir(), self.get_state_path().parent, self.get_retry_dir(), self.get_secrets_dir(), self.get_backups_dir(), self.get_diagnostics_dir()]:
             folder.mkdir(parents=True, exist_ok=True)
 
 
@@ -499,6 +505,16 @@ class SetupControllerTests(unittest.TestCase):
 
         self.assertNotIn("password_ref", zero_password_device)
         self.assertFalse((self.paths.get_secrets_dir() / "devices" / "DEVICE_02" / "password.secret").exists())
+
+    def test_removed_device_password_secret_is_deleted_after_successful_save(self):
+        self.controller.write_config_atomic(valid_setup_config())
+        self.assertTrue((self.paths.get_secrets_dir() / "devices" / "DEVICE_01" / "password.secret").exists())
+
+        setup = valid_setup_config()
+        setup.devices = [setup.devices[1]]
+        self.controller.write_config_atomic(setup)
+
+        self.assertFalse((self.paths.get_secrets_dir() / "devices" / "DEVICE_01" / "password.secret").exists())
 
     def test_failed_save_preserves_existing_config_and_secrets(self):
         self.controller.write_config_atomic(valid_setup_config())

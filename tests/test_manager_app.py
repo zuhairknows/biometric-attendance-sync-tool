@@ -286,7 +286,7 @@ def install_fake_pyqt():
     qtwidgets.QTableWidget = FakeTable
     qtwidgets.QTableWidgetItem = FakeTableItem
     qtwidgets.QAbstractItemView = types.SimpleNamespace(NoEditTriggers=1, SelectRows=2)
-    qtwidgets.QMessageBox = types.SimpleNamespace(Yes=1, question=lambda *args, **kwargs: 1)
+    qtwidgets.QMessageBox = types.SimpleNamespace(Yes=1, No=0, question=lambda *args, **kwargs: 1)
 
     pyqt = types.ModuleType("PyQt5")
     pyqt.QtCore = qtcore
@@ -309,8 +309,8 @@ install_fake_pyqt()
 app_module = importlib.import_module("manager.app")
 from manager.diagnostics import DiagnosticResult
 from manager.health import DeviceHealth
-from manager.service_controller import ServiceStatus
-from config.status import ConfigurationStatus, INVALID, LEGACY_CONFIGURED, UNCONFIGURED
+from manager.service_controller import ActionResult, ServiceStatus
+from config.status import CONFIGURED, ConfigurationStatus, INVALID, LEGACY_CONFIGURED, UNCONFIGURED
 
 
 class FakeController:
@@ -319,6 +319,16 @@ class FakeController:
 
     def get_status(self):
         return self.status
+
+
+class RestartController(FakeController):
+    def __init__(self, status=None):
+        super().__init__(status)
+        self.restart_calls = 0
+
+    def restart_service(self):
+        self.restart_calls += 1
+        return ActionResult(True, "Service restarted.")
 
 
 class TestableSyncManagerWindow(app_module.SyncManagerWindow):
@@ -341,6 +351,12 @@ class TestableSyncManagerWindow(app_module.SyncManagerWindow):
         ])
         self.refresh_label.setText("Last refreshed: test")
         self._apply_button_policy(status)
+
+
+class StatusAwareWindow(app_module.SyncManagerWindow):
+    def _load_sync_module_safely(self):
+        self.config_module = types.SimpleNamespace(LOGS_DIRECTORY=".test-logs")
+        self.sync_module = types.SimpleNamespace(config=self.config_module)
 
 
 class ManagerAppWorkerLifecycleTests(unittest.TestCase):
@@ -609,6 +625,73 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
             self.assertFalse(window.sync_button.isEnabled())
             self.assertIn("Configuration is invalid.", "\n".join(window.messages.lines))
         finally:
+            window.close()
+
+    def test_setup_button_text_matches_configuration_state(self):
+        cases = [
+            (UNCONFIGURED, "Start Setup"),
+            (CONFIGURED, "Edit Configuration"),
+            (INVALID, "Repair Configuration"),
+        ]
+        for state, button_text in cases:
+            status = ConfigurationStatus(state, "json", state)
+            with self.subTest(state=state), mock.patch.object(app_module, "get_configuration_status", return_value=status), mock.patch.object(app_module.config_admin, "get_configuration_summary", return_value={}):
+                window = StatusAwareWindow(controller=FakeController())
+            try:
+                self.assertEqual(window.setup_button.text(), button_text)
+            finally:
+                window.close()
+
+    def test_configuration_summary_labels_are_populated_without_secrets(self):
+        status = ConfigurationStatus(CONFIGURED, "json", "Configured")
+        summary = {
+            "erpnext_url": "https://erp.example.test",
+            "verify_ssl": True,
+            "enabled_devices": 1,
+            "total_devices": 2,
+            "sync_interval_minutes": 60,
+            "import_start_date": "2026-09-13",
+            "schema_version": 1,
+            "last_updated_at": "2026-09-14T12:00:00+00:00",
+            "credentials_configured": True,
+        }
+        with mock.patch.object(app_module, "get_configuration_status", return_value=status), mock.patch.object(app_module.config_admin, "get_configuration_summary", return_value=summary):
+            window = StatusAwareWindow(controller=FakeController())
+        try:
+            self.assertEqual(window.configuration_erpnext_url.text(), "https://erp.example.test")
+            self.assertEqual(window.configuration_ssl.text(), "Enabled")
+            self.assertEqual(window.configuration_devices.text(), "1 enabled / 2 total")
+            self.assertEqual(window.configuration_credentials.text(), "Configured")
+            rendered = "\n".join(window.messages.lines) + window.configuration_credentials.text()
+            self.assertNotIn("secret", rendered.lower())
+        finally:
+            window.close()
+
+    def test_saving_configuration_prompts_restart_when_service_is_running(self):
+        controller = RestartController(ServiceStatus(installed=True, state="Running", startup="Automatic"))
+        window = TestableSyncManagerWindow(controller=controller)
+        try:
+            window.last_service_status = controller.get_status()
+            window._maybe_prompt_restart_after_config_save()
+
+            self.assertEqual(controller.restart_calls, 1)
+            self.assertIn("Service restarted successfully.", window.messages.lines[-1])
+        finally:
+            window.close()
+
+    def test_saving_configuration_without_restart_keeps_operator_informed(self):
+        controller = RestartController(ServiceStatus(installed=True, state="Running", startup="Automatic"))
+        window = TestableSyncManagerWindow(controller=controller)
+        original_question = app_module.QtWidgets.QMessageBox.question
+        app_module.QtWidgets.QMessageBox.question = lambda *args, **kwargs: app_module.QtWidgets.QMessageBox.No
+        try:
+            window.last_service_status = controller.get_status()
+            window._maybe_prompt_restart_after_config_save()
+
+            self.assertEqual(controller.restart_calls, 0)
+            self.assertIn("Restart skipped.", window.messages.lines[-1])
+        finally:
+            app_module.QtWidgets.QMessageBox.question = original_question
             window.close()
 
 

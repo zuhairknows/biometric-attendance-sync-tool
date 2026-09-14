@@ -48,9 +48,13 @@ C:\ProgramData\BiometricAttendanceSync\
     state\
     retry\
     secrets\
+    backups\
+    diagnostics\
 ```
 
 Commercial setup stores ERPNext API credentials and device connection passwords as Windows DPAPI machine-scope protected secrets under `secrets\`. `config.json` contains refs such as `api_key_ref`, `api_secret_ref`, and `password_ref`, not plaintext credential values. Older M3.2 plaintext JSON still loads, and resaving through the Manager converts it to protected refs.
+
+The Manager can create and restore configuration backups under `backups\`, reset the commercial configuration, and export a sanitized diagnostics report under `diagnostics\`. Backups include `config.json` and protected secret files, but not logs, retry dumps, or plaintext secret values. DPAPI-protected secrets are intended for restore on the same Windows machine; a backup restored on a different machine may need credentials re-entered through the Manager.
 
 Current environment overrides:
 
@@ -162,7 +166,7 @@ Packaged executable:
 Biometric-Attendance-Sync-Manager.exe
 ```
 
-The Manager can show service health, validate configuration, test ERPNext, test biometric devices, run one manual sync cycle, and open runtime folders. It does not change the Windows service name.
+The Manager can show service health, validate configuration, test ERPNext, test biometric devices, run one manual sync cycle, edit or repair commercial setup, back up and restore configuration, reset commercial configuration, export sanitized diagnostics, and open runtime folders. It does not change the Windows service name.
 
 See [Sync Manager](docs/sync-manager.md).
 

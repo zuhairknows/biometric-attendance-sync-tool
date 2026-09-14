@@ -6,9 +6,10 @@ import traceback
 from PyQt5 import QtCore, QtWidgets
 
 from config.status import CONFIGURED, INVALID, LEGACY_CONFIGURED, UNCONFIGURED, get_configuration_status
+from . import config_admin
 from . import diagnostics
 from .health import get_health_snapshot
-from .paths import get_config_folder, get_logs_folder, open_folder
+from .paths import get_app_data_folder, get_config_folder, get_logs_folder, get_programdata_backups_folder, open_folder
 from .service_controller import ServiceController
 
 
@@ -77,6 +78,14 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.last_success = self._value_label()
         self.configuration_state = self._value_label()
         self.configuration_source = self._value_label()
+        self.configuration_erpnext_url = self._value_label()
+        self.configuration_ssl = self._value_label()
+        self.configuration_devices = self._value_label()
+        self.configuration_interval = self._value_label()
+        self.configuration_import_start = self._value_label()
+        self.configuration_schema = self._value_label()
+        self.configuration_updated = self._value_label()
+        self.configuration_credentials = self._value_label()
         self.messages = QtWidgets.QTextEdit()
         self.messages.setReadOnly(True)
         self.messages.setMinimumHeight(120)
@@ -106,7 +115,23 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.configuration_state, 0, 1)
         layout.addWidget(QtWidgets.QLabel("Source:"), 1, 0)
         layout.addWidget(self.configuration_source, 1, 1)
-        self.setup_button = QtWidgets.QPushButton("First-Run Setup")
+        layout.addWidget(QtWidgets.QLabel("ERPNext URL:"), 2, 0)
+        layout.addWidget(self.configuration_erpnext_url, 2, 1)
+        layout.addWidget(QtWidgets.QLabel("SSL Verification:"), 3, 0)
+        layout.addWidget(self.configuration_ssl, 3, 1)
+        layout.addWidget(QtWidgets.QLabel("Devices:"), 4, 0)
+        layout.addWidget(self.configuration_devices, 4, 1)
+        layout.addWidget(QtWidgets.QLabel("Synchronization Interval:"), 5, 0)
+        layout.addWidget(self.configuration_interval, 5, 1)
+        layout.addWidget(QtWidgets.QLabel("Attendance Import Start Date:"), 6, 0)
+        layout.addWidget(self.configuration_import_start, 6, 1)
+        layout.addWidget(QtWidgets.QLabel("Schema Version:"), 7, 0)
+        layout.addWidget(self.configuration_schema, 7, 1)
+        layout.addWidget(QtWidgets.QLabel("Last Configuration Update:"), 8, 0)
+        layout.addWidget(self.configuration_updated, 8, 1)
+        layout.addWidget(QtWidgets.QLabel("ERPNext Credentials:"), 9, 0)
+        layout.addWidget(self.configuration_credentials, 9, 1)
+        self.setup_button = QtWidgets.QPushButton("Start Setup")
         self.setup_button.clicked.connect(self.show_setup_wizard)
         layout.addWidget(self.setup_button, 0, 2, 2, 1)
         return group
@@ -182,11 +207,23 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.validate_button = QtWidgets.QPushButton("Validate Configuration")
         self.logs_button = QtWidgets.QPushButton("Open Logs")
         self.config_button = QtWidgets.QPushButton("Open Config Folder")
+        self.appdata_button = QtWidgets.QPushButton("Open Application Data")
+        self.backup_button = QtWidgets.QPushButton("Back Up Configuration")
+        self.restore_button = QtWidgets.QPushButton("Restore Configuration")
+        self.reset_button = QtWidgets.QPushButton("Reset Configuration")
+        self.diagnostics_button = QtWidgets.QPushButton("Export Diagnostics")
+        self.backup_folder_button = QtWidgets.QPushButton("Open Backup Folder")
         self.sync_button.clicked.connect(self._run_sync_now)
         self.validate_button.clicked.connect(lambda: self._run_diagnostic("Validating configuration...", diagnostics.validate_configuration, self.validate_button))
         self.logs_button.clicked.connect(lambda: self._safe_open_folder(get_logs_folder(self.config_module)))
         self.config_button.clicked.connect(lambda: self._safe_open_folder(get_config_folder()))
-        for button in [self.sync_button, self.validate_button, self.logs_button, self.config_button]:
+        self.appdata_button.clicked.connect(lambda: self._safe_open_folder(get_app_data_folder()))
+        self.backup_button.clicked.connect(self._backup_configuration)
+        self.restore_button.clicked.connect(self._restore_configuration)
+        self.reset_button.clicked.connect(self._reset_configuration)
+        self.diagnostics_button.clicked.connect(self._export_diagnostics)
+        self.backup_folder_button.clicked.connect(lambda: self._safe_open_folder(get_programdata_backups_folder()))
+        for button in [self.sync_button, self.validate_button, self.logs_button, self.config_button, self.appdata_button, self.backup_button, self.restore_button, self.reset_button, self.diagnostics_button, self.backup_folder_button]:
             layout.addWidget(button)
         return group
 
@@ -216,6 +253,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             self._append_message("Warnings:\n" + "\n".join("- " + warning for warning in health.warnings))
         elif self.sync_module:
             self._append_message("Health refreshed.")
+        self._populate_configuration_summary(status)
         self._apply_button_policy(status)
 
     def _load_sync_module_safely(self):
@@ -261,6 +299,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             style = "warning"
         self._set_state(self.configuration_state, label, style)
         self._set_state(self.configuration_source, self.configuration_status.message, style)
+        self.setup_button.setText(self._setup_button_text(state))
 
     def _maybe_show_first_run_setup(self):
         if self.configuration_status and self.configuration_status.state == UNCONFIGURED:
@@ -272,6 +311,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             wizard = SetupWizard(self)
             if wizard.exec_() == QtWidgets.QDialog.Accepted:
                 self._append_message("Setup completed successfully.")
+                self._maybe_prompt_restart_after_config_save()
                 self.refresh()
         except Exception:
             APP_LOGGER.exception("Could not open first-run setup wizard")
@@ -400,6 +440,71 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         except Exception:
             self._append_message("Could not open folder: " + str(folder))
 
+    def _backup_configuration(self):
+        try:
+            path = config_admin.create_configuration_backup()
+            self._append_message("Configuration backup created: " + str(path))
+        except Exception as exc:
+            self._append_message("Could not back up configuration. " + str(exc))
+
+    def _restore_configuration(self):
+        try:
+            file_dialog = getattr(QtWidgets, "QFileDialog", None)
+            if file_dialog is None:
+                self._append_message("Restore requires selecting a backup file.")
+                return
+            path, _selected_filter = file_dialog.getOpenFileName(self, "Restore Configuration", str(get_programdata_backups_folder()), "Zip files (*.zip)")
+            if not path:
+                return
+            config_admin.restore_configuration_backup(path)
+            self._append_message("Configuration restored successfully.")
+            self._maybe_prompt_restart_after_config_save()
+            self.refresh()
+        except Exception as exc:
+            self._append_message("Could not restore configuration. " + str(exc))
+
+    def _reset_configuration(self):
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Reset Configuration",
+            "This will remove the commercial configuration and protected credentials.\n\nThe synchronization service will stop and the product will return to Not Configured state.\n\nContinue?",
+        )
+        if answer != QtWidgets.QMessageBox.Yes:
+            return
+        try:
+            backup_path = config_admin.reset_commercial_configuration(service_controller=self.controller)
+            message = "Configuration reset successfully."
+            if backup_path:
+                message += " Backup created: " + str(backup_path)
+            self._append_message(message)
+            self.refresh()
+        except Exception as exc:
+            self._append_message("Could not reset configuration. " + str(exc))
+
+    def _export_diagnostics(self):
+        try:
+            path = config_admin.export_diagnostics_report(service_status=self.last_service_status)
+            self._append_message("Diagnostics exported: " + str(path))
+        except Exception as exc:
+            self._append_message("Could not export diagnostics. " + str(exc))
+
+    def _maybe_prompt_restart_after_config_save(self):
+        if not self.last_service_status or self.last_service_status.state != "Running":
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Restart Service",
+            "Configuration saved successfully.\n\nRestart the synchronization service now to apply changes?",
+        )
+        if answer != QtWidgets.QMessageBox.Yes:
+            self._append_message("Restart skipped. Restart the service later to apply changes.")
+            return
+        result = self.controller.restart_service()
+        if result.success:
+            self._append_message("Service restarted successfully.")
+        else:
+            self._append_message("Configuration was saved, but the Windows service could not be restarted. Review the service status and logs.")
+
     def _set_busy(self, busy):
         if busy:
             for button in self._service_action_buttons():
@@ -497,10 +602,37 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.delayed_auto_button.setEnabled(installed)
         self.recovery_button.setEnabled(installed)
         self.sync_button.setEnabled(configured and (not running) and (not self.sync_running))
+        commercial_json = bool(self.configuration_status and self.configuration_status.source == "json")
+        unconfigured = bool(self.configuration_status and self.configuration_status.state == UNCONFIGURED)
+        legacy = bool(self.configuration_status and self.configuration_status.state == LEGACY_CONFIGURED)
+        self.backup_button.setEnabled(commercial_json)
+        self.restore_button.setEnabled(True)
+        self.reset_button.setEnabled(commercial_json or unconfigured)
+        if legacy:
+            self.reset_button.setEnabled(False)
         if not configured:
             self._set_tooltip(self.sync_button, "Complete first-run setup before running sync.")
         else:
             self._set_tooltip(self.sync_button, "Stop the Windows service before running a manual sync." if running else "")
+
+    def _populate_configuration_summary(self, service_status):
+        summary = config_admin.get_configuration_summary(status=self.configuration_status, service_status=service_status)
+        self.configuration_erpnext_url.setText(str(summary.get("erpnext_url") or "Unknown"))
+        self.configuration_ssl.setText(_format_bool(summary.get("verify_ssl")))
+        self.configuration_devices.setText(str(summary.get("enabled_devices", 0)) + " enabled / " + str(summary.get("total_devices", 0)) + " total")
+        interval = summary.get("sync_interval_minutes")
+        self.configuration_interval.setText((str(interval) + " minutes") if interval not in ("", None) else "Unknown")
+        self.configuration_import_start.setText(str(summary.get("import_start_date") or "Unknown"))
+        self.configuration_schema.setText(str(summary.get("schema_version") or "Unknown"))
+        self.configuration_updated.setText(str(summary.get("last_updated_at") or "Unknown"))
+        self.configuration_credentials.setText("Configured" if summary.get("credentials_configured") else "Not Configured")
+
+    def _setup_button_text(self, state):
+        if state == CONFIGURED:
+            return "Edit Configuration"
+        if state == INVALID:
+            return "Repair Configuration"
+        return "Start Setup"
 
     def _set_tooltip(self, widget, message):
         if hasattr(widget, "setToolTip"):
@@ -516,3 +648,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def _format_bool(value):
+    if value is True:
+        return "Enabled"
+    if value is False:
+        return "Disabled"
+    return "Unknown"

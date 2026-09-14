@@ -20,6 +20,7 @@ Use this checklist before and after a controlled Windows service or installer in
 - [ ] Manager installed at `C:\Program Files\Biometric Attendance Sync\Biometric-Attendance-Sync-Manager.exe`
 - [ ] Service installed at `C:\Program Files\Biometric Attendance Sync\service\Biometric-Attendance-Sync-Service.exe`
 - [ ] ProgramData config/log/state/retry folders created under `C:\ProgramData\BiometricAttendanceSync`
+- [ ] ProgramData secrets/backups/diagnostics folders created under `C:\ProgramData\BiometricAttendanceSync`
 - [ ] Real `local_config.py` preserved if already present
 - [ ] Only `local_config.py.template` installed when config is missing
 - [ ] Apps & Features entry appears
@@ -78,6 +79,7 @@ Use this checklist before and after a controlled Windows service or installer in
 - [ ] Confirm service shows `Running`
 - [ ] Confirm Startup shows `Automatic (Delayed Start)` if configured
 - [ ] Confirm Recovery shows restart behavior if configured
+- [ ] Confirm configuration state, source, ERPNext URL, SSL, device count, interval, import start date, schema, update timestamp, and credential-present summary are visible without secret values
 - [ ] Confirm Last Successful Sync is current
 - [ ] Confirm device pull/push timestamps are current
 - [ ] Click **Test ERPNext** and confirm `Connected`
@@ -97,6 +99,16 @@ Use this checklist before and after a controlled Windows service or installer in
 - [ ] Confirm service remains `Running`
 - [ ] Re-open Manager
 - [ ] Confirm actual service state is detected correctly
+- [ ] Click **Back Up Configuration** and confirm a zip appears under `C:\ProgramData\BiometricAttendanceSync\backups`
+- [ ] Inspect backup contents and confirm it excludes logs, retry dumps, and plaintext credential values
+- [ ] Click **Export Diagnostics** and confirm a JSON report appears under `C:\ProgramData\BiometricAttendanceSync\diagnostics`
+- [ ] Inspect diagnostics and confirm API keys, API secrets, device passwords, secret blobs, logs, and retry payloads are absent
+- [ ] Edit configuration with secret fields left blank and confirm the existing protected credentials still work
+- [ ] Edit one credential or device password and confirm the review page reports replacement without showing the value
+- [ ] Save while service is running and confirm the Manager prompts for service restart
+- [ ] Restore a known-good same-machine backup and confirm runtime validation still passes
+- [ ] Attempt restore of an invalid backup in a test environment and confirm the previous configuration remains active
+- [ ] Reset configuration in a test environment and confirm service stops, commercial config/secrets are removed, and logs/retry/state/backups/diagnostics are preserved
 
 Do not uninstall the production service during first validation unless it is necessary for recovery.
 
@@ -108,6 +120,9 @@ Do not uninstall the production service during first validation unless it is nec
 - [ ] Logs are written under `C:\ProgramData\BiometricAttendanceSync\logs`
 - [ ] State is written under `C:\ProgramData\BiometricAttendanceSync\state`
 - [ ] Retry files are written under `C:\ProgramData\BiometricAttendanceSync\retry`
+- [ ] Protected secret files are written under `C:\ProgramData\BiometricAttendanceSync\secrets`
+- [ ] Configuration backups are written under `C:\ProgramData\BiometricAttendanceSync\backups`
+- [ ] Diagnostics exports are written under `C:\ProgramData\BiometricAttendanceSync\diagnostics`
 - [ ] `local_config.py` is external and not bundled into the executable
 - [ ] Manager opens ProgramData logs/config folders in packaged mode
 

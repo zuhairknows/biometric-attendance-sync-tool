@@ -292,6 +292,8 @@ class CommercialConfigPathTests(unittest.TestCase):
             self.assertFalse((programdata / "state").exists())
             self.assertFalse((programdata / "retry").exists())
             self.assertFalse((programdata / "secrets").exists())
+            self.assertFalse((programdata / "backups").exists())
+            self.assertFalse((programdata / "diagnostics").exists())
 
             created = config_paths.ensure_runtime_directories()
 
@@ -299,6 +301,8 @@ class CommercialConfigPathTests(unittest.TestCase):
             self.assertTrue(created["state"].is_dir())
             self.assertTrue(created["retry"].is_dir())
             self.assertTrue(created["secrets"].is_dir())
+            self.assertTrue(created["backups"].is_dir())
+            self.assertTrue(created["diagnostics"].is_dir())
 
 
 if __name__ == "__main__":

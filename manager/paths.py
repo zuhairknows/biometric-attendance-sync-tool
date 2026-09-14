@@ -61,6 +61,18 @@ def get_programdata_secrets_folder():
     return config_paths.get_secrets_dir()
 
 
+def get_programdata_backups_folder():
+    return config_paths.get_backups_dir()
+
+
+def get_programdata_diagnostics_folder():
+    return config_paths.get_diagnostics_dir()
+
+
+def get_app_data_folder():
+    return config_paths.get_active_app_data_dir()
+
+
 def uses_packaged_service_runtime():
     return resolve_service_runtime().is_packaged
 

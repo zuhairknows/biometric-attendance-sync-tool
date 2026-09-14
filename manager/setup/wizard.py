@@ -6,6 +6,7 @@ writes live in manager.setup.controller so they can be tested without a desktop.
 
 from PyQt5 import QtCore, QtWidgets
 
+from config.status import INVALID
 from .controller import SetupController
 from .model import DeviceSetup, ERPNextSetup, SetupConfiguration, SyncSetup
 
@@ -15,7 +16,7 @@ class SetupWizard(QtWidgets.QWizard):
         super().__init__(parent)
         self.controller = controller or SetupController()
         self.setup_config = self.controller.load_existing_setup_config()
-        self.setWindowTitle("Biometric Attendance Sync Setup")
+        self.setWindowTitle(self._window_title())
         self.setWizardStyle(QtWidgets.QWizard.ModernStyle)
         self.addPage(WelcomePage())
         self.erp_page = ERPNextPage(self)
@@ -28,6 +29,14 @@ class SetupWizard(QtWidgets.QWizard):
         self.addPage(self.sync_page)
         self.addPage(self.review_page)
         self.addPage(self.finish_page)
+
+    def _window_title(self):
+        status = getattr(self.parent(), "configuration_status", None) if hasattr(self, "parent") else None
+        if status is not None and status.state == INVALID:
+            return "Repair Configuration"
+        if self.controller.paths.get_config_path().is_file():
+            return "Edit Configuration"
+        return "Biometric Attendance Sync Setup"
 
     def collect_pages(self):
         self.setup_config.erpnext = self.erp_page.to_model()
@@ -111,8 +120,8 @@ class DevicesPage(QtWidgets.QWizardPage):
         super().__init__()
         self.wizard_ref = wizard
         self.setTitle("Attendance Devices")
-        self.table = QtWidgets.QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Name", "Device ID", "IP / Hostname", "Port", "Enabled", "Password"])
+        self.table = QtWidgets.QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(["Name", "Device ID", "IP / Hostname", "Port", "Enabled", "Password", "Clear After Fetch"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.add_button = QtWidgets.QPushButton("Add Device")
         self.remove_button = QtWidgets.QPushButton("Remove Device")
@@ -140,9 +149,9 @@ class DevicesPage(QtWidgets.QWizardPage):
     def add_device(self, device):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        values = [device.name, device.device_id, device.ip, str(device.port), device.enabled, "" if device.password in (None, "") else str(device.password)]
+        values = [device.name, device.device_id, device.ip, str(device.port), device.enabled, "" if device.password in (None, "") else str(device.password), device.clear_from_device_on_fetch]
         for column, value in enumerate(values):
-            if column == 4:
+            if column in (4, 6):
                 widget = QtWidgets.QCheckBox()
                 widget.setChecked(bool(value))
                 self.table.setCellWidget(row, column, widget)
@@ -156,7 +165,14 @@ class DevicesPage(QtWidgets.QWizardPage):
     def remove_selected_device(self):
         row = self.table.currentRow()
         if row >= 0:
-            self.table.removeRow(row)
+            device_id = self._item_text(row, 1) or "this device"
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "Remove Device",
+                "Remove device " + device_id + " from the configuration?",
+            )
+            if answer == QtWidgets.QMessageBox.Yes:
+                self.table.removeRow(row)
 
     def to_models(self):
         devices = []
@@ -167,6 +183,7 @@ class DevicesPage(QtWidgets.QWizardPage):
         for row in range(self.table.rowCount()):
             password_widget = self.table.cellWidget(row, 5)
             enabled_widget = self.table.cellWidget(row, 4)
+            clear_widget = self.table.cellWidget(row, 6)
             device_id = self._item_text(row, 1)
             existing_device = existing_by_id.get(device_id)
             devices.append(DeviceSetup(
@@ -177,6 +194,7 @@ class DevicesPage(QtWidgets.QWizardPage):
                 enabled=enabled_widget.isChecked() if enabled_widget else True,
                 password=password_widget.text() if password_widget else "",
                 has_existing_password=bool(existing_device and existing_device.has_existing_password),
+                clear_from_device_on_fetch=clear_widget.isChecked() if clear_widget else False,
             ))
         return devices
 
@@ -258,6 +276,10 @@ class ReviewPage(QtWidgets.QWizardPage):
                 + ":"
                 + str(device["port"])
             )
+        if summary.get("changes"):
+            lines.append("")
+            lines.append("Changes:")
+            lines.extend("- " + change for change in summary["changes"])
         self.summary.setPlainText("\n".join(lines))
 
 

@@ -17,6 +17,9 @@ The manager is not the synchronization engine. The existing `erpnext_sync.py` an
 - Show each device's last pull and last push timestamps.
 - Open the logs folder and configuration folder.
 - Launch first-run setup when no valid commercial or legacy configuration exists.
+- Edit or repair commercial configuration without exposing stored secrets.
+- Back up, restore, and reset commercial configuration.
+- Export a sanitized diagnostics report for support review.
 
 ## Runtime Modes
 
@@ -118,6 +121,30 @@ The JSON file has precedence. The Python file is retained for legacy compatibili
 On a fresh installation, the Manager shows `Not Configured` and opens the first-run setup wizard. Existing valid legacy installations show `Legacy Configuration` and are not automatically migrated.
 
 When saving commercial setup, the Manager writes `api_key_ref`, `api_secret_ref`, and device `password_ref` values to `config.json`; the actual credential values are stored below `C:\ProgramData\BiometricAttendanceSync\secrets`. Blank secret fields during an edit keep the existing protected secret. Entering a new value replaces that secret.
+
+The setup button text reflects the current state:
+
+- `Start Setup`: no valid configuration exists.
+- `Edit Configuration`: valid commercial JSON exists.
+- `Repair Configuration`: commercial configuration exists but cannot be loaded or validated.
+
+Valid legacy installations show `Legacy Configuration` and are not reset or rewritten by the commercial setup controls.
+
+The configuration panel shows a sanitized summary: ERPNext URL, SSL setting, enabled and total devices, sync interval, import start date, schema version, last update timestamp, and whether ERPNext credentials are present. It does not display API keys, API secrets, or device passwords.
+
+## Configuration Management
+
+**Back Up Configuration** writes a zip backup under `C:\ProgramData\BiometricAttendanceSync\backups`. It includes `config.json`, metadata, and protected secret files only. It excludes logs, status files, retry dumps, and plaintext credential values.
+
+**Restore Configuration** prompts for a Manager-created backup zip, validates the archive paths, restores commercial JSON and protected secrets, then validates the restored runtime configuration. If validation fails, the previous commercial config and secrets are restored.
+
+**Reset Configuration** stops the service if it is running, creates a backup when commercial JSON exists, removes `config.json`, and clears commercial protected secrets. Logs, retry files, state files, backups, diagnostics, and legacy `local_config.py` are preserved.
+
+**Export Diagnostics** writes a sanitized JSON report under `C:\ProgramData\BiometricAttendanceSync\diagnostics`. It includes status, source, safe config summary, device IDs and addresses, and paths. It never includes secret values, encrypted secret blobs, logs, or retry payloads.
+
+When setup or restore changes configuration while the Windows service is running, the Manager asks whether to restart the service. Restarting applies the new config immediately. Skipping restart leaves the saved config ready for the next service restart.
+
+DPAPI-protected secret backups are intended for the same Windows machine. If a backup is restored on another PC and secrets cannot decrypt, use **Repair Configuration** to re-enter the credentials and device passwords.
 
 Development mode continues to use the repo-local `local_config.py` and logs unless environment overrides are set.
 

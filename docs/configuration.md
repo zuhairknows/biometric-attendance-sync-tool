@@ -3,6 +3,7 @@
 M3.1 adds a versioned JSON configuration layer while keeping existing `local_config.py` deployments working.
 M3.2 adds first-run setup so a fresh installation can create this file without editing JSON by hand.
 M3.3 stores commercial credentials as protected machine-local secrets and keeps only secret references in JSON.
+M3.4 adds Manager-backed edit, backup, restore, reset, and sanitized diagnostics operations for commercial configuration.
 
 ## Precedence
 
@@ -40,6 +41,10 @@ The setup wizard pages are:
 
 Finish validates the complete configuration, writes protected secret files, writes a temporary JSON file, validates that file through the commercial loader, and then atomically replaces `config.json`. If the save fails, the previous config and protected secret files are restored.
 
+On an existing commercial installation, the same wizard opens as **Edit Configuration**. Secret fields are intentionally blank; leaving them blank keeps the existing protected secret, while entering a new value replaces it. If the current commercial configuration is invalid, the Manager opens the wizard as **Repair Configuration** so the operator can correct missing or broken values.
+
+The review page lists safe changes before saving, such as URL changes, synchronization interval changes, added or removed devices, enabled or disabled devices, and whether a credential will be replaced. It never displays credential or device-password values.
+
 ## ProgramData Layout
 
 Mutable customer-specific data belongs under:
@@ -52,6 +57,8 @@ C:\ProgramData\BiometricAttendanceSync\
     logs\
     retry\
     secrets\
+    backups\
+    diagnostics\
 ```
 
 Program Files or the repository folder should not be the primary location for customer configuration, logs, state, retry data, or credentials in commercial deployments.
@@ -157,3 +164,17 @@ C:\ProgramData\BiometricAttendanceSync\secrets\
 The secret store uses Windows DPAPI with machine scope so the interactive Manager can write secrets and the LocalSystem Windows service can read them on the same machine. This protects credentials at rest from casual file inspection, but any sufficiently privileged account on the same machine can still access or decrypt them. File ACL hardening should preserve Manager write access and LocalSystem read access.
 
 The runtime still exposes normalized values as `ERPNEXT_API_KEY`, `ERPNEXT_API_SECRET`, and device `password` fields after the loader resolves refs. The sync engine does not call DPAPI directly.
+
+## Manager Configuration Operations
+
+**Back Up Configuration** creates a zip file under `C:\ProgramData\BiometricAttendanceSync\backups`. The backup contains `config.json`, metadata, and the protected secret blobs below `secrets\`. It does not include logs, status files, retry dumps, or plaintext secret values.
+
+**Restore Configuration** accepts only the backup shape created by the Manager. Paths inside the zip are validated before anything is written. Restore replaces the commercial `config.json` and commercial secret blobs, validates the restored configuration through the normal commercial loader, and rolls back to the previous files if validation fails.
+
+**Reset Configuration** stops the service when it is running, creates a backup when a commercial `config.json` exists, removes the commercial JSON file, and clears commercial protected secrets. It preserves logs, retry files, state files, backups, diagnostics, and legacy `local_config.py`.
+
+**Export Diagnostics** writes a sanitized JSON report under `diagnostics\`. It includes configuration state, source, schema version, ERPNext URL, SSL setting, device IDs and addresses, paths, and service state. It does not include API keys, API secrets, device passwords, protected secret file contents, logs, or retry payloads.
+
+After setup, restore, or repair saves configuration while the Windows service is running, the Manager asks whether to restart the service so the new runtime configuration is loaded. Choosing not to restart leaves the saved config on disk; the running service continues with its existing in-memory config until restarted.
+
+DPAPI-protected secrets are machine-local. A backup restored on the same Windows machine should keep secrets usable. A backup moved to another machine can restore the JSON and encrypted blobs, but the protected secrets may not decrypt there; re-enter credentials in the Manager if that happens.

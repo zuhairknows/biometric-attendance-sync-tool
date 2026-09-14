@@ -40,6 +40,14 @@ def get_secrets_dir():
     return get_active_app_data_dir() / "secrets"
 
 
+def get_backups_dir():
+    return get_active_app_data_dir() / "backups"
+
+
+def get_diagnostics_dir():
+    return get_active_app_data_dir() / "diagnostics"
+
+
 def get_legacy_config_dir():
     override = runtime_paths.get_config_dir_override()
     if override:
@@ -61,4 +69,6 @@ def ensure_runtime_directories():
         "state": ensure_directory(get_state_dir()),
         "retry": ensure_directory(get_retry_dir()),
         "secrets": ensure_directory(get_secrets_dir()),
+        "backups": ensure_directory(get_backups_dir()),
+        "diagnostics": ensure_directory(get_diagnostics_dir()),
     }

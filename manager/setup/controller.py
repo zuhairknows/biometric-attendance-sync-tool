@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ from config.secrets import (
     erpnext_api_secret_secret_id,
 )
 from manager import diagnostics
+from manager.config_admin import build_change_summary
 
 from .model import DeviceSetup, ERPNextSetup, SetupConfiguration, SyncSetup
 from .validation import build_config_dict, safe_review_summary, validate_setup_config
@@ -47,7 +49,9 @@ class SetupController:
         return validate_setup_config(draft)
 
     def review_summary(self, setup_config):
-        return safe_review_summary(setup_config)
+        summary = safe_review_summary(setup_config)
+        summary["changes"] = build_change_summary(setup_config, paths_module=self.paths)
+        return summary
 
     def load_existing_setup_config(self):
         existing = self._read_existing_config()
@@ -130,6 +134,7 @@ class SetupController:
 
     def _runtime_from_setup(self, setup_config):
         config_dict = build_config_dict(setup_config)
+        self._apply_existing_secrets_for_runtime(config_dict)
         return SimpleNamespace(
             ERPNEXT_URL=config_dict["erpnext"]["url"],
             ERPNEXT_API_KEY=config_dict["erpnext"]["api_key"],
@@ -156,6 +161,7 @@ class SetupController:
     def _protect_config_secrets(self, config_dict):
         existing = self._read_existing_config()
         protected = json.loads(json.dumps(config_dict))
+        protected["last_updated_at"] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
         store = self._secret_store()
 
         erpnext = protected["erpnext"]
@@ -265,6 +271,32 @@ class SetupController:
 
     def _replace_config_file(self, temp_path, target):
         os.replace(str(temp_path), str(target))
+
+    def _apply_existing_secrets_for_runtime(self, config_dict):
+        existing = self._read_existing_config()
+        store = self._secret_store()
+        erpnext = config_dict["erpnext"]
+        existing_erpnext = existing.get("erpnext", {}) if isinstance(existing.get("erpnext"), dict) else {}
+        if not str(erpnext.get("api_key") or "").strip():
+            erpnext["api_key"] = self._existing_secret_value(existing_erpnext, "api_key", "api_key_ref", store)
+        if not str(erpnext.get("api_secret") or "").strip():
+            erpnext["api_secret"] = self._existing_secret_value(existing_erpnext, "api_secret", "api_secret_ref", store)
+
+        existing_devices = {
+            str(device.get("device_id") or ""): device
+            for device in existing.get("devices", []) if isinstance(device, dict)
+        }
+        for device in config_dict["devices"]:
+            if device.get("password") != "":
+                continue
+            existing_device = existing_devices.get(str(device.get("device_id") or ""), {})
+            password = self._existing_secret_value(existing_device, "password", "password_ref", store)
+            device["password"] = int(password or 0)
+
+    def _existing_secret_value(self, section, value_key, ref_key, store):
+        if ref_key in section and section.get(ref_key):
+            return store.get_secret(section[ref_key])
+        return section.get(value_key, "")
 
 
 def _device_has_existing_password(device):
