@@ -6,6 +6,7 @@ writes live in manager.setup.controller so they can be tested without a desktop.
 
 from PyQt5 import QtCore, QtWidgets
 
+from .. import device_import
 from config.status import INVALID
 from .controller import SetupController
 from .model import DeviceSetup, ERPNextSetup, SetupConfiguration, SyncSetup
@@ -141,17 +142,26 @@ class DevicesPage(QtWidgets.QWizardPage):
         self.edit_button = QtWidgets.QPushButton("Edit Device")
         self.remove_button = QtWidgets.QPushButton("Remove Device")
         self.test_button = QtWidgets.QPushButton("Test Selected Device")
+        self.import_button = QtWidgets.QPushButton("Import Devices")
+        self.export_button = QtWidgets.QPushButton("Export Devices")
+        self.template_button = QtWidgets.QPushButton("Save Template")
         self.result = QtWidgets.QLabel("")
         self.add_button.clicked.connect(self.add_device_dialog)
         self.edit_button.clicked.connect(self.edit_selected_device)
         self.remove_button.clicked.connect(self.remove_selected_device)
         self.test_button.clicked.connect(self.test_selected_device)
+        self.import_button.clicked.connect(self.import_devices)
+        self.export_button.clicked.connect(self.export_devices)
+        self.template_button.clicked.connect(self.save_template)
 
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.add_button)
         buttons.addWidget(self.edit_button)
         buttons.addWidget(self.remove_button)
         buttons.addWidget(self.test_button)
+        buttons.addWidget(self.import_button)
+        buttons.addWidget(self.export_button)
+        buttons.addWidget(self.template_button)
         buttons.addStretch(1)
         buttons.addWidget(self.result)
 
@@ -257,9 +267,68 @@ class DevicesPage(QtWidgets.QWizardPage):
             self.wizard_ref.setup_config.device_test_states[device_id] = "Failed"
             self.table.setItem(row, 7, QtWidgets.QTableWidgetItem("Failed"))
 
+    def import_devices(self):
+        file_dialog = getattr(QtWidgets, "QFileDialog", None)
+        if file_dialog is None:
+            self.result.setText("Import requires selecting a CSV file.")
+            return
+        path, _selected_filter = file_dialog.getOpenFileName(self, "Import Devices", "", "CSV files (*.csv)")
+        if not path:
+            return
+        try:
+            preview = device_import.parse_csv_file(path, existing_device_ids=self._current_device_ids())
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Import Devices", str(exc))
+            return
+        dialog = DeviceImportPreviewDialog(preview, self)
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        if not preview.can_apply:
+            QtWidgets.QMessageBox.warning(self, "Import Devices", "Fix import errors before importing devices.")
+            return
+        for row in preview.valid_rows:
+            self.add_device(row.to_device_setup())
+        self.result.setText("Imported: " + str(len(preview.valid_rows)) + " Skipped: 0 Errors: 0")
+
+    def export_devices(self):
+        file_dialog = getattr(QtWidgets, "QFileDialog", None)
+        if file_dialog is None:
+            self.result.setText("Export requires selecting a destination file.")
+            return
+        default_name = "Biometric-Devices-" + QtCore.QDate.currentDate().toString("yyyyMMdd") + ".csv"
+        path, _selected_filter = file_dialog.getSaveFileName(self, "Export Devices", default_name, "CSV files (*.csv)")
+        if not path:
+            return
+        try:
+            self._write_text_file(path, device_import.export_devices_csv(self.to_models()))
+            self.result.setText("Devices exported.")
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Export Devices", "Could not export devices. " + str(exc))
+
+    def save_template(self):
+        file_dialog = getattr(QtWidgets, "QFileDialog", None)
+        if file_dialog is None:
+            self.result.setText("Template export requires selecting a destination file.")
+            return
+        path, _selected_filter = file_dialog.getSaveFileName(self, "Save Device Import Template", "Biometric-Device-Import-Template.csv", "CSV files (*.csv)")
+        if not path:
+            return
+        try:
+            self._write_text_file(path, device_import.template_csv())
+            self.result.setText("Template saved.")
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Save Template", "Could not save template. " + str(exc))
+
     def _item_text(self, row, column):
         item = self.table.item(row, column)
         return item.text() if item else ""
+
+    def _current_device_ids(self):
+        return [self._item_text(row, 1) for row in range(self.table.rowCount())]
+
+    def _write_text_file(self, path, contents):
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(contents)
 
     def _model_from_row(self, row):
         password_widget = self.table.cellWidget(row, 5)
@@ -335,6 +404,61 @@ class DeviceDialog(QtWidgets.QDialog):
             enabled=self.enabled.isChecked(),
             password=self.password.text(),
             clear_from_device_on_fetch=self.clear_after_fetch.isChecked(),
+        )
+
+
+class DeviceImportPreviewDialog(QtWidgets.QDialog):
+    def __init__(self, preview, parent=None):
+        super().__init__(parent)
+        self.preview = preview
+        self.setWindowTitle("Import Devices Preview")
+        self.table = QtWidgets.QTableWidget(0, 8)
+        self.table.setHorizontalHeaderLabels(["Row", "Device Name", "Host/IP", "Port", "Device ID", "Enabled", "Status", "Message"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self._populate_rows()
+        self.summary = QtWidgets.QLabel(self._summary_text())
+        self.summary.setWordWrap(True)
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        ok_button = buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        if ok_button is not None:
+            ok_button.setText("Import")
+            ok_button.setEnabled(preview.can_apply)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(self.table)
+        layout.addWidget(self.summary)
+        layout.addWidget(buttons)
+
+    def _populate_rows(self):
+        self.table.setRowCount(len(self.preview.rows))
+        for table_row, row in enumerate(self.preview.rows):
+            values = [
+                row.row_number,
+                row.name,
+                row.host,
+                row.port,
+                row.device_id,
+                "Yes" if row.enabled is True else "No" if row.enabled is False else row.enabled,
+                row.status,
+                row.message,
+            ]
+            for column, value in enumerate(values):
+                self.table.setItem(table_row, column, QtWidgets.QTableWidgetItem(str(value)))
+        self.table.resizeColumnsToContents()
+
+    def _summary_text(self):
+        return (
+            "Valid: "
+            + str(len(self.preview.valid_rows))
+            + " | Conflicts: "
+            + str(self.preview.conflict_count)
+            + " | Errors: "
+            + str(self.preview.invalid_count)
         )
 
 
