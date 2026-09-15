@@ -33,11 +33,46 @@ class WindowsInstallerDefinitionTests(unittest.TestCase):
             self.assertIn("{commonappdata}\\BiometricAttendanceSync\\" + folder, self.installer_text)
 
     def test_installer_preserves_real_config_and_programdata(self):
-        self.assertIn("local_config.py.template", self.installer_text)
-        self.assertIn("onlyifdoesntexist", self.installer_text)
-        self.assertIn("uninsneveruninstall", self.installer_text)
-        self.assertNotIn('DestName: "local_config.py"', self.installer_text)
-        self.assertNotIn("{commonappdata}\\FPF\\BiometricSync\"; Flags: delete", self.installer_text)
+        # Commercial configuration must live outside Program Files so upgrades
+        # replace application binaries without replacing customer configuration.
+        self.assertIn(
+            "{commonappdata}\\BiometricAttendanceSync",
+            self.installer_text,
+        )
+
+        # The commercial Manager owns config.json. The installer must never
+        # bundle, create, or overwrite a real customer configuration file.
+        self.assertIn(
+            "{commonappdata}\\BiometricAttendanceSync\\config.json",
+            self.installer_text,
+        )
+        self.assertNotIn('DestName: "config.json"', self.installer_text)
+        self.assertNotIn('Source: "..\\config.json"', self.installer_text)
+
+        # The previous Python template is no longer part of the fresh-install
+        # customer workflow.
+        self.assertNotIn(
+            "local_config.py.template",
+            self.installer_text,
+        )
+
+        # Legacy local_config.py remains detectable only for upgrade/backward
+        # compatibility. It must not be installed as a real customer config.
+        self.assertIn(
+            "{commonappdata}\\BiometricAttendanceSync\\config\\local_config.py",
+            self.installer_text,
+        )
+        self.assertNotIn(
+            'DestName: "local_config.py"',
+            self.installer_text,
+        )
+
+        # Never delete the old customer ProgramData tree during installation or
+        # upgrade. Legacy migration is handled by runtime compatibility logic.
+        self.assertNotIn(
+            "{commonappdata}\\FPF\\BiometricSync\"; Flags: delete",
+            self.installer_text,
+        )
 
     def test_installer_generates_service_commands(self):
         self.assertIn("Biometric-Attendance-Sync-Service.exe", self.installer_text)
@@ -66,17 +101,63 @@ class WindowsInstallerDefinitionTests(unittest.TestCase):
         self.assertIn("build\\service.spec", self.build_script)
         self.assertIn("build\\manager.spec", self.build_script)
         self.assertIn("PRODUCT_VERSION", self.build_script)
-        self.assertIn('$releaseRoot = Join-Path $repoRoot "release"', self.build_script)
-        self.assertIn('$installerOut = Join-Path $releaseRoot "installer"', self.build_script)
-        self.assertIn("Biometric Attendance Sync", self.build_script)
-        self.assertIn("dist\\Biometric-Attendance-Sync-Manager", self.build_script)
-        self.assertIn("dist\\Biometric-Attendance-Sync-Service", self.build_script)
-        self.assertIn("Biometric-Attendance-Sync-Manager.exe", self.build_script)
-        self.assertIn("Biometric-Attendance-Sync-Service.exe", self.build_script)
-        self.assertIn("installer\\Biometric-Attendance-Sync.iss", self.build_script)
-        self.assertIn('Remove-WorkspacePath (Join-Path $repoRoot "dist\\FPF-Biometric-Sync-Manager")', self.build_script)
-        self.assertIn('Remove-WorkspacePath (Join-Path $repoRoot "dist\\FPF-Biometric-Sync-Service")', self.build_script)
-        self.assertNotIn("installer\\FPF-Biometric-Sync.iss", self.build_script)
+
+        self.assertIn(
+            '$releaseRoot = Join-Path $repoRoot "release"',
+            self.build_script,
+        )
+        self.assertIn(
+            '$installerBuildDir = Join-Path $releaseRoot "installer"',
+            self.build_script,
+        )
+
+        self.assertIn("Remove-WorkspacePath", self.build_script)
+        self.assertIn(
+            "dist\\Biometric-Attendance-Sync-Service",
+            self.build_script,
+        )
+        self.assertIn(
+            "dist\\Biometric-Attendance-Sync-Manager",
+            self.build_script,
+        )
+        self.assertIn(
+            "dist\\FPF-Biometric-Sync-Service",
+            self.build_script,
+        )
+        self.assertIn(
+            "dist\\FPF-Biometric-Sync-Manager",
+            self.build_script,
+        )
+
+        self.assertIn("Resolve-InnoCompiler", self.build_script)
+        self.assertIn(
+            "build\\tools\\innosetup\\package\\tools\\ISCC.exe",
+            self.build_script,
+        )
+
+        self.assertIn(
+            "Biometric-Attendance-Sync-Manager.exe",
+            self.build_script,
+        )
+        self.assertIn(
+            "Biometric-Attendance-Sync-Service.exe",
+            self.build_script,
+        )
+
+        self.assertIn(
+            "installer\\Biometric-Attendance-Sync.iss",
+            self.build_script,
+        )
+
+        self.assertIn(
+            "unittest discover -s tests -v",
+            self.build_script,
+        )
+
+        self.assertIn("SHA256SUMS.txt", self.build_script)
+        self.assertIn("RELEASE_NOTES.md", self.build_script)
+        self.assertIn("Get-FileHash", self.build_script)
+        self.assertIn("RELEASE BUILD SUCCESSFUL", self.build_script)
 
     def test_product_version_is_consistent(self):
         self.assertEqual(version.PRODUCT_VERSION, "0.1.0")
