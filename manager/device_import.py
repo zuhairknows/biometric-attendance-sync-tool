@@ -158,7 +158,7 @@ def template_csv(include_example=False):
     writer = csv.writer(output, lineterminator="\n")
     writer.writerow(TEMPLATE_HEADERS)
     if include_example:
-        writer.writerow(["Main Entrance", "10.0.0.20", "4370", "DEVICE_01", "Yes"])
+        writer.writerow(["Main Entrance", "192.0.2.20", "4370", "DEVICE_01", "Yes"])
     return output.getvalue()
 
 

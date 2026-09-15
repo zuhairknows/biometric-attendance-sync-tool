@@ -7,9 +7,35 @@ writes live in manager.setup.controller so they can be tested without a desktop.
 from PyQt5 import QtCore, QtWidgets
 
 from .. import device_import
+from ..device_management import (
+    CONNECTED,
+    DISABLED,
+    NOT_TESTED,
+    UNAVAILABLE,
+    bulk_test_summary,
+    display_connectivity_status,
+    format_device_timestamp,
+    friendly_device_failure_message,
+    validate_device_form_values,
+)
 from config.status import INVALID
 from .controller import SetupController
 from .model import DeviceSetup, ERPNextSetup, SetupConfiguration, SyncSetup
+
+
+class WizardWorker(QtCore.QObject):
+    finished = QtCore.pyqtSignal(object)
+
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+
+    @QtCore.pyqtSlot()
+    def run(self):
+        try:
+            self.finished.emit(self.callback())
+        except Exception as exc:
+            self.finished.emit(exc)
 
 
 class SetupWizard(QtWidgets.QWizard):
@@ -131,17 +157,49 @@ class ERPNextPage(QtWidgets.QWizardPage):
 
 
 class DevicesPage(QtWidgets.QWizardPage):
+    COL_NAME = 0
+    COL_ID = 1
+    COL_HOST = 2
+    COL_PORT = 3
+    COL_ENABLED = 4
+    COL_STATUS = 5
+    COL_LAST_PULL = 6
+    COL_LAST_PUSH = 7
+    COL_PASSWORD = 8
+    COL_CLEAR = 9
+
     def __init__(self, wizard):
         super().__init__()
         self.wizard_ref = wizard
         self.setTitle("Attendance Devices")
-        self.table = QtWidgets.QTableWidget(0, 8)
-        self.table.setHorizontalHeaderLabels(["Name", "Device ID", "IP / Hostname", "Port", "Enabled", "Password", "Clear After Fetch", "Test Status"])
+        self.device_test_running = False
+        self.active_jobs = []
+        self.health_by_device = self._load_device_health()
+        self.table = QtWidgets.QTableWidget(0, 10)
+        self.table.setHorizontalHeaderLabels([
+            "Device Name",
+            "Device ID",
+            "Host / IP",
+            "Port",
+            "Enabled",
+            "Connectivity Status",
+            "Last Pull",
+            "Last Push",
+            "Password",
+            "Clear After Fetch",
+        ])
         self.table.horizontalHeader().setStretchLastSection(True)
+        if hasattr(self.table, "setSelectionBehavior"):
+            self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        if hasattr(self.table, "setSortingEnabled"):
+            self.table.setSortingEnabled(True)
+        if hasattr(self.table, "hideColumn"):
+            self.table.hideColumn(self.COL_PASSWORD)
         self.add_button = QtWidgets.QPushButton("Add Device")
         self.edit_button = QtWidgets.QPushButton("Edit Device")
         self.remove_button = QtWidgets.QPushButton("Remove Device")
-        self.test_button = QtWidgets.QPushButton("Test Selected Device")
+        self.test_button = QtWidgets.QPushButton("Test Selected")
+        self.test_all_button = QtWidgets.QPushButton("Test All Enabled")
         self.import_button = QtWidgets.QPushButton("Import Devices")
         self.export_button = QtWidgets.QPushButton("Export Devices")
         self.template_button = QtWidgets.QPushButton("Save Template")
@@ -150,15 +208,19 @@ class DevicesPage(QtWidgets.QWizardPage):
         self.edit_button.clicked.connect(self.edit_selected_device)
         self.remove_button.clicked.connect(self.remove_selected_device)
         self.test_button.clicked.connect(self.test_selected_device)
+        self.test_all_button.clicked.connect(self.test_all_enabled_devices)
         self.import_button.clicked.connect(self.import_devices)
         self.export_button.clicked.connect(self.export_devices)
         self.template_button.clicked.connect(self.save_template)
+        if hasattr(self.table, "itemSelectionChanged"):
+            self.table.itemSelectionChanged.connect(self._update_action_state)
 
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.add_button)
         buttons.addWidget(self.edit_button)
         buttons.addWidget(self.remove_button)
         buttons.addWidget(self.test_button)
+        buttons.addWidget(self.test_all_button)
         buttons.addWidget(self.import_button)
         buttons.addWidget(self.export_button)
         buttons.addWidget(self.template_button)
@@ -172,26 +234,45 @@ class DevicesPage(QtWidgets.QWizardPage):
         layout.addLayout(buttons)
         for device in self.wizard_ref.setup_config.devices:
             self.add_device(device)
+        self._update_action_state()
 
     def add_device(self, device):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        test_state = self.wizard_ref.setup_config.device_test_states.get(device.device_id, "Not tested")
-        values = [device.name, device.device_id, device.ip, str(device.port), device.enabled, "" if device.password in (None, "") else str(device.password), device.clear_from_device_on_fetch, test_state]
+        test_state = display_connectivity_status(
+            device.enabled,
+            self.wizard_ref.setup_config.device_test_states.get(device.device_id, NOT_TESTED),
+        )
+        health = self.health_by_device.get(device.device_id)
+        values = [
+            device.name,
+            device.device_id,
+            device.ip,
+            str(device.port),
+            device.enabled,
+            test_state,
+            format_device_timestamp(getattr(health, "last_pull", "")),
+            format_device_timestamp(getattr(health, "last_push", "")),
+            "" if device.password in (None, "") else str(device.password),
+            device.clear_from_device_on_fetch,
+        ]
         for column, value in enumerate(values):
-            if column in (4, 6):
+            if column in (self.COL_ENABLED, self.COL_CLEAR):
                 widget = QtWidgets.QCheckBox()
                 widget.setChecked(bool(value))
+                if column == self.COL_ENABLED and hasattr(widget, "stateChanged"):
+                    widget.stateChanged.connect(lambda _state=None, row=row: self._enabled_changed(row))
                 self.table.setCellWidget(row, column, widget)
-            elif column == 5:
+            elif column == self.COL_PASSWORD:
                 widget = QtWidgets.QLineEdit(value)
                 widget.setEchoMode(QtWidgets.QLineEdit.Password)
                 self.table.setCellWidget(row, column, widget)
             else:
                 self.table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
+        self._update_action_state()
 
     def add_device_dialog(self):
-        dialog = DeviceDialog(DeviceSetup(), self)
+        dialog = DeviceDialog(DeviceSetup(), self, existing_device_ids=self._current_device_ids())
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             self.add_device(dialog.to_model())
 
@@ -200,21 +281,40 @@ class DevicesPage(QtWidgets.QWizardPage):
         if row < 0:
             self.result.setText("Select a device to edit.")
             return
-        dialog = DeviceDialog(self._model_from_row(row), self)
+        current_id = self._item_text(row, self.COL_ID)
+        dialog = DeviceDialog(
+            self._model_from_row(row),
+            self,
+            existing_device_ids=self._current_device_ids(exclude_row=row),
+            original_device_id=current_id,
+        )
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             self._set_row_from_model(row, dialog.to_model())
 
     def remove_selected_device(self):
         row = self.table.currentRow()
         if row >= 0:
-            device_id = self._item_text(row, 1) or "this device"
+            device_id = self._item_text(row, self.COL_ID) or "this device"
+            name = self._item_text(row, self.COL_NAME) or "Unnamed device"
+            host = self._item_text(row, self.COL_HOST)
+            port = self._item_text(row, self.COL_PORT)
             answer = QtWidgets.QMessageBox.question(
                 self,
-                "Remove Device",
-                "Remove device " + device_id + " from the configuration?",
+                "Remove Biometric Device",
+                "Remove biometric device?\n\n"
+                + "Device: "
+                + name
+                + "\nDevice ID: "
+                + device_id
+                + "\nHost: "
+                + host
+                + ":"
+                + port
+                + "\n\nThis removes the device from synchronization configuration. It does not delete attendance records from ERPNext or from the biometric device.",
             )
             if answer == QtWidgets.QMessageBox.Yes:
                 self.table.removeRow(row)
+                self._update_action_state()
 
     def to_models(self):
         devices = []
@@ -223,16 +323,16 @@ class DevicesPage(QtWidgets.QWizardPage):
             for device in self.wizard_ref.setup_config.devices
         }
         for row in range(self.table.rowCount()):
-            password_widget = self.table.cellWidget(row, 5)
-            enabled_widget = self.table.cellWidget(row, 4)
-            clear_widget = self.table.cellWidget(row, 6)
-            device_id = self._item_text(row, 1)
+            password_widget = self.table.cellWidget(row, self.COL_PASSWORD)
+            enabled_widget = self.table.cellWidget(row, self.COL_ENABLED)
+            clear_widget = self.table.cellWidget(row, self.COL_CLEAR)
+            device_id = self._item_text(row, self.COL_ID)
             existing_device = existing_by_id.get(device_id)
             devices.append(DeviceSetup(
-                name=self._item_text(row, 0),
+                name=self._item_text(row, self.COL_NAME),
                 device_id=device_id,
-                ip=self._item_text(row, 2),
-                port=int(self._item_text(row, 3) or "4370"),
+                ip=self._item_text(row, self.COL_HOST),
+                port=int(self._item_text(row, self.COL_PORT) or "4370"),
                 enabled=enabled_widget.isChecked() if enabled_widget else True,
                 password=password_widget.text() if password_widget else "",
                 has_existing_password=bool(existing_device and existing_device.has_existing_password),
@@ -254,18 +354,45 @@ class DevicesPage(QtWidgets.QWizardPage):
         if row < 0:
             self.result.setText("Select a device to test.")
             return
-        device_id = self._item_text(row, 1)
-        try:
+        if self.device_test_running:
+            self.result.setText("A device test is already running.")
+            return
+        if not self._row_enabled(row):
+            self.result.setText("Disabled devices are skipped. Enable the device before testing it.")
+            self._set_row_status(row, DISABLED)
+            return
+        device_id = self._item_text(row, self.COL_ID)
+        self._set_testing_state(True, "Testing " + device_id + "...")
+        config = self.wizard_ref.collect_pages()
+
+        def run_test():
             import erpnext_sync as sync_module
-            result = self.wizard_ref.controller.test_device(self.wizard_ref.collect_pages(), device_id, sync_module)
-            self.result.setText(result.message)
-            state = "Connected" if result.ok else "Failed"
-            self.wizard_ref.setup_config.device_test_states[device_id] = state
-            self.table.setItem(row, 7, QtWidgets.QTableWidgetItem(state))
-        except Exception:
-            self.result.setText("Device test failed.")
-            self.wizard_ref.setup_config.device_test_states[device_id] = "Failed"
-            self.table.setItem(row, 7, QtWidgets.QTableWidgetItem("Failed"))
+            return self.wizard_ref.controller.test_device(config, device_id, sync_module)
+
+        self._run_worker(run_test, lambda result: self._finish_selected_device_test(device_id, result))
+
+    def test_all_enabled_devices(self):
+        if self.device_test_running:
+            self.result.setText("A device test is already running.")
+            return
+        enabled_count = 0
+        for row in range(self.table.rowCount()):
+            if self._row_enabled(row):
+                enabled_count += 1
+                self._set_row_status(row, NOT_TESTED)
+            else:
+                self._set_row_status(row, DISABLED)
+        if not enabled_count:
+            self.result.setText("No enabled devices to test.")
+            return
+        self._set_testing_state(True, "Testing enabled devices...")
+        config = self.wizard_ref.collect_pages()
+
+        def run_test():
+            import erpnext_sync as sync_module
+            return self.wizard_ref.controller.test_devices(config, sync_module)
+
+        self._run_worker(run_test, self._finish_all_device_tests)
 
     def import_devices(self):
         file_dialog = getattr(QtWidgets, "QFileDialog", None)
@@ -289,6 +416,7 @@ class DevicesPage(QtWidgets.QWizardPage):
         for row in preview.valid_rows:
             self.add_device(row.to_device_setup())
         self.result.setText("Imported: " + str(len(preview.valid_rows)) + " Skipped: 0 Errors: 0")
+        self._update_action_state()
 
     def export_devices(self):
         file_dialog = getattr(QtWidgets, "QFileDialog", None)
@@ -323,48 +451,177 @@ class DevicesPage(QtWidgets.QWizardPage):
         item = self.table.item(row, column)
         return item.text() if item else ""
 
-    def _current_device_ids(self):
-        return [self._item_text(row, 1) for row in range(self.table.rowCount())]
+    def _current_device_ids(self, exclude_row=None):
+        return [
+            self._item_text(row, self.COL_ID)
+            for row in range(self.table.rowCount())
+            if row != exclude_row
+        ]
 
     def _write_text_file(self, path, contents):
         with open(path, "w", encoding="utf-8", newline="") as handle:
             handle.write(contents)
 
     def _model_from_row(self, row):
-        password_widget = self.table.cellWidget(row, 5)
-        enabled_widget = self.table.cellWidget(row, 4)
-        clear_widget = self.table.cellWidget(row, 6)
+        password_widget = self.table.cellWidget(row, self.COL_PASSWORD)
+        enabled_widget = self.table.cellWidget(row, self.COL_ENABLED)
+        clear_widget = self.table.cellWidget(row, self.COL_CLEAR)
+        device_id = self._item_text(row, self.COL_ID)
+        existing = {
+            device.device_id: device
+            for device in self.wizard_ref.setup_config.devices
+        }.get(device_id)
         return DeviceSetup(
-            name=self._item_text(row, 0),
-            device_id=self._item_text(row, 1),
-            ip=self._item_text(row, 2),
-            port=int(self._item_text(row, 3) or "4370"),
+            name=self._item_text(row, self.COL_NAME),
+            device_id=device_id,
+            ip=self._item_text(row, self.COL_HOST),
+            port=int(self._item_text(row, self.COL_PORT) or "4370"),
             enabled=enabled_widget.isChecked() if enabled_widget else True,
             password=password_widget.text() if password_widget else "",
+            has_existing_password=bool(existing and existing.has_existing_password),
             clear_from_device_on_fetch=clear_widget.isChecked() if clear_widget else False,
         )
 
     def _set_row_from_model(self, row, device):
-        self.table.setItem(row, 0, QtWidgets.QTableWidgetItem(device.name))
-        self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(device.device_id))
-        self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(device.ip))
-        self.table.setItem(row, 3, QtWidgets.QTableWidgetItem(str(device.port)))
-        enabled_widget = self.table.cellWidget(row, 4)
+        self.table.setItem(row, self.COL_NAME, QtWidgets.QTableWidgetItem(device.name))
+        self.table.setItem(row, self.COL_ID, QtWidgets.QTableWidgetItem(device.device_id))
+        self.table.setItem(row, self.COL_HOST, QtWidgets.QTableWidgetItem(device.ip))
+        self.table.setItem(row, self.COL_PORT, QtWidgets.QTableWidgetItem(str(device.port)))
+        enabled_widget = self.table.cellWidget(row, self.COL_ENABLED)
         if enabled_widget:
             enabled_widget.setChecked(device.enabled)
-        password_widget = self.table.cellWidget(row, 5)
+        password_widget = self.table.cellWidget(row, self.COL_PASSWORD)
         if password_widget:
             password_widget.setText("" if device.password in (None, "") else str(device.password))
-        clear_widget = self.table.cellWidget(row, 6)
+        clear_widget = self.table.cellWidget(row, self.COL_CLEAR)
         if clear_widget:
             clear_widget.setChecked(device.clear_from_device_on_fetch)
-        self.table.setItem(row, 7, QtWidgets.QTableWidgetItem("Not tested"))
+        health = self.health_by_device.get(device.device_id)
+        self.table.setItem(row, self.COL_LAST_PULL, QtWidgets.QTableWidgetItem(format_device_timestamp(getattr(health, "last_pull", ""))))
+        self.table.setItem(row, self.COL_LAST_PUSH, QtWidgets.QTableWidgetItem(format_device_timestamp(getattr(health, "last_push", ""))))
+        self._set_row_status(row, display_connectivity_status(device.enabled, NOT_TESTED))
+        self._update_action_state()
+
+    def _load_device_health(self):
+        parent = self.wizard_ref.parent() if hasattr(self.wizard_ref, "parent") else None
+        snapshot = getattr(parent, "last_health_snapshot", None)
+        devices = getattr(snapshot, "devices", []) if snapshot is not None else []
+        return {
+            str(getattr(device, "device_id", "") or ""): device
+            for device in devices
+            if str(getattr(device, "device_id", "") or "")
+        }
+
+    def _row_enabled(self, row):
+        enabled_widget = self.table.cellWidget(row, self.COL_ENABLED)
+        return enabled_widget.isChecked() if enabled_widget else True
+
+    def _enabled_changed(self, row):
+        if row < self.table.rowCount():
+            self._set_row_status(row, display_connectivity_status(self._row_enabled(row), self._item_text(row, self.COL_STATUS)))
+        self._update_action_state()
+
+    def _selected_row(self):
+        row = self.table.currentRow()
+        return row if row is not None and row >= 0 else -1
+
+    def _update_action_state(self):
+        row = self._selected_row()
+        has_selection = row >= 0
+        self.edit_button.setEnabled(has_selection and not self.device_test_running)
+        self.remove_button.setEnabled(has_selection and not self.device_test_running)
+        self.test_button.setEnabled(has_selection and self._row_enabled(row) and not self.device_test_running)
+        self.test_all_button.setEnabled(not self.device_test_running)
+
+    def _set_row_status(self, row, status):
+        self.table.setItem(row, self.COL_STATUS, QtWidgets.QTableWidgetItem(status))
+
+    def _set_testing_state(self, running, message):
+        self.device_test_running = running
+        self.result.setText(message)
+        self._update_action_state()
+
+    def _run_worker(self, callback, finished_callback):
+        thread = QtCore.QThread(self)
+        worker = WizardWorker(callback)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(finished_callback)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: self._forget_job(thread, worker))
+        self.active_jobs.append((thread, worker))
+        thread.start()
+
+    def _forget_job(self, thread, worker):
+        self.active_jobs = [job for job in self.active_jobs if job != (thread, worker)]
+
+    def _finish_selected_device_test(self, device_id, result):
+        row = self._find_row_by_device_id(device_id)
+        if isinstance(result, Exception):
+            status = UNAVAILABLE
+            message = "Device is unavailable. Open Diagnostics or Logs for technical details."
+        else:
+            status = CONNECTED if result.ok else UNAVAILABLE
+            message = result.message if result.ok else friendly_device_failure_message(result)
+        self.wizard_ref.setup_config.device_test_states[device_id] = status
+        if row >= 0:
+            self._set_row_status(row, status)
+        self._set_testing_state(False, message)
+
+    def _finish_all_device_tests(self, result):
+        disabled_count = 0
+        statuses = []
+        for row in range(self.table.rowCount()):
+            if not self._row_enabled(row):
+                disabled_count += 1
+                self._set_row_status(row, DISABLED)
+                statuses.append(DISABLED)
+        if isinstance(result, Exception):
+            for row in range(self.table.rowCount()):
+                if self._row_enabled(row):
+                    device_id = self._item_text(row, self.COL_ID)
+                    self.wizard_ref.setup_config.device_test_states[device_id] = UNAVAILABLE
+                    self._set_row_status(row, UNAVAILABLE)
+                    statuses.append(UNAVAILABLE)
+            self._set_testing_state(False, bulk_test_summary(statuses) + ". Open Diagnostics or Logs for technical details.")
+            return
+        detail_text = str(getattr(result, "details", "") or getattr(result, "message", "") or "")
+        for row in range(self.table.rowCount()):
+            if not self._row_enabled(row):
+                continue
+            device_id = self._item_text(row, self.COL_ID)
+            status = self._status_from_bulk_details(device_id, detail_text, getattr(result, "ok", False))
+            self.wizard_ref.setup_config.device_test_states[device_id] = status
+            self._set_row_status(row, status)
+            statuses.append(status)
+        while statuses.count(DISABLED) < disabled_count:
+            statuses.append(DISABLED)
+        self._set_testing_state(False, bulk_test_summary(statuses))
+
+    def _status_from_bulk_details(self, device_id, details, overall_ok):
+        for line in details.splitlines():
+            if device_id in line:
+                if "Connected" in line:
+                    return CONNECTED
+                if "failed" in line.lower() or "unavailable" in line.lower() or "error" in line.lower():
+                    return UNAVAILABLE
+        return CONNECTED if overall_ok else UNAVAILABLE
+
+    def _find_row_by_device_id(self, device_id):
+        for row in range(self.table.rowCount()):
+            if self._item_text(row, self.COL_ID) == device_id:
+                return row
+        return -1
 
 
 class DeviceDialog(QtWidgets.QDialog):
-    def __init__(self, device, parent=None):
+    def __init__(self, device, parent=None, existing_device_ids=None, original_device_id=""):
         super().__init__(parent)
         self.setWindowTitle("Device")
+        self.existing_device_ids = existing_device_ids or []
+        self.original_device_id = original_device_id
         self.name = QtWidgets.QLineEdit(device.name)
         self.device_id = QtWidgets.QLineEdit(device.device_id)
         self.ip = QtWidgets.QLineEdit(device.ip)
@@ -375,6 +632,7 @@ class DeviceDialog(QtWidgets.QDialog):
         self.enabled.setChecked(bool(device.enabled))
         self.password = QtWidgets.QLineEdit("" if device.password in (None, "") else str(device.password))
         self.password.setEchoMode(QtWidgets.QLineEdit.Password)
+        self.password_hint = QtWidgets.QLabel("Leave blank to keep the existing device password." if device.has_existing_password else "")
         self.clear_after_fetch = QtWidgets.QCheckBox("Clear attendance after successful fetch")
         self.clear_after_fetch.setChecked(bool(device.clear_from_device_on_fetch))
 
@@ -385,6 +643,8 @@ class DeviceDialog(QtWidgets.QDialog):
         form.addRow("Port", self.port)
         form.addRow("", self.enabled)
         form.addRow("Device password", self.password)
+        if device.has_existing_password:
+            form.addRow("", self.password_hint)
         form.addRow("", self.clear_after_fetch)
 
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
@@ -405,6 +665,19 @@ class DeviceDialog(QtWidgets.QDialog):
             password=self.password.text(),
             clear_from_device_on_fetch=self.clear_after_fetch.isChecked(),
         )
+
+    def accept(self):
+        errors = validate_device_form_values(
+            self.name.text(),
+            self.device_id.text(),
+            self.ip.text(),
+            self.port.value(),
+            self.existing_device_ids,
+        )
+        if errors:
+            QtWidgets.QMessageBox.warning(self, "Device", "\n".join(errors))
+            return
+        super().accept()
 
 
 class DeviceImportPreviewDialog(QtWidgets.QDialog):

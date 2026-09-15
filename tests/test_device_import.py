@@ -29,7 +29,7 @@ class DeviceImportTests(unittest.TestCase):
         return device_import.parse_csv_text(text, existing_device_ids=existing)
 
     def test_valid_single_row_csv(self):
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,10.0.0.20,4370,DEVICE_03,Yes\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,192.0.2.20,4370,DEVICE_03,Yes\n")
 
         self.assertTrue(preview.can_apply)
         self.assertEqual(preview.valid_rows[0].device_id, "DEVICE_03")
@@ -37,7 +37,7 @@ class DeviceImportTests(unittest.TestCase):
     def test_valid_multi_row_csv(self):
         preview = self.parse(
             "Device Name,IP Address,Port,Device ID,Enabled\n"
-            "Main,10.0.0.20,4370,DEVICE_03,Yes\n"
+            "Main,192.0.2.20,4370,DEVICE_03,Yes\n"
             "Warehouse,device.example.test,4371,DEVICE_04,No\n"
         )
 
@@ -45,27 +45,27 @@ class DeviceImportTests(unittest.TestCase):
         self.assertFalse(preview.valid_rows[1].enabled)
 
     def test_utf8_bom_csv(self):
-        preview = self.parse("\ufeffDevice Name,IP Address,Port,Device ID,Enabled\nMain,10.0.0.20,4370,DEVICE_03,Yes\n")
+        preview = self.parse("\ufeffDevice Name,IP Address,Port,Device ID,Enabled\nMain,192.0.2.20,4370,DEVICE_03,Yes\n")
 
         self.assertTrue(preview.can_apply)
 
     def test_device_name_containing_comma(self):
-        preview = self.parse('Device Name,IP Address,Port,Device ID,Enabled\n"Main, Entrance",10.0.0.20,4370,DEVICE_03,Yes\n')
+        preview = self.parse('Device Name,IP Address,Port,Device ID,Enabled\n"Main, Entrance",192.0.2.20,4370,DEVICE_03,Yes\n')
 
         self.assertEqual(preview.valid_rows[0].name, "Main, Entrance")
 
     def test_missing_required_column(self):
         with self.assertRaisesRegex(device_import.DeviceImportError, "Device ID"):
-            self.parse("Device Name,IP Address,Port,Enabled\nMain,10.0.0.20,4370,Yes\n")
+            self.parse("Device Name,IP Address,Port,Enabled\nMain,192.0.2.20,4370,Yes\n")
 
     def test_missing_device_name(self):
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\n,10.0.0.20,4370,DEVICE_03,Yes\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\n,192.0.2.20,4370,DEVICE_03,Yes\n")
 
         self.assertEqual(preview.rows[0].status, device_import.INVALID)
         self.assertIn("Device Name is required", preview.rows[0].message)
 
     def test_missing_device_id(self):
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,10.0.0.20,4370,,Yes\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,192.0.2.20,4370,,Yes\n")
 
         self.assertEqual(preview.rows[0].status, device_import.INVALID)
         self.assertIn("Device ID is required", preview.rows[0].message)
@@ -77,32 +77,32 @@ class DeviceImportTests(unittest.TestCase):
         self.assertIn("Host/IP is required", preview.rows[0].message)
 
     def test_invalid_port_string(self):
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,10.0.0.20,abc,DEVICE_03,Yes\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,192.0.2.20,abc,DEVICE_03,Yes\n")
 
         self.assertIn("Port must be between 1 and 65535", preview.rows[0].message)
 
     def test_port_below_valid_range(self):
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,10.0.0.20,0,DEVICE_03,Yes\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,192.0.2.20,0,DEVICE_03,Yes\n")
 
         self.assertIn("Port must be between 1 and 65535", preview.rows[0].message)
 
     def test_port_above_valid_range(self):
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,10.0.0.20,65536,DEVICE_03,Yes\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,192.0.2.20,65536,DEVICE_03,Yes\n")
 
         self.assertIn("Port must be between 1 and 65535", preview.rows[0].message)
 
     def test_duplicate_device_id_within_import_file(self):
         preview = self.parse(
             "Device Name,IP Address,Port,Device ID,Enabled\n"
-            "Main,10.0.0.20,4370,DEVICE_03,Yes\n"
-            "Warehouse,10.0.0.21,4370,DEVICE_03,Yes\n"
+            "Main,192.0.2.20,4370,DEVICE_03,Yes\n"
+            "Warehouse,192.0.2.21,4370,DEVICE_03,Yes\n"
         )
 
         self.assertEqual(preview.rows[1].status, device_import.INVALID)
         self.assertIn("Duplicate Device ID", preview.rows[1].message)
 
     def test_conflict_with_existing_configured_device_id(self):
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,10.0.0.20,4370,DEVICE_01,Yes\n", existing={"DEVICE_01"})
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,192.0.2.20,4370,DEVICE_01,Yes\n", existing={"DEVICE_01"})
 
         self.assertEqual(preview.rows[0].status, device_import.CONFLICT)
         self.assertIn("already exists", preview.rows[0].message)
@@ -114,23 +114,23 @@ class DeviceImportTests(unittest.TestCase):
         self.assertEqual(parsed, [True, False, True, False, True, False])
 
     def test_invalid_enabled_value(self):
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,10.0.0.20,4370,DEVICE_03,Maybe\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,192.0.2.20,4370,DEVICE_03,Maybe\n")
 
         self.assertEqual(preview.rows[0].status, device_import.INVALID)
         self.assertIn("Enabled must be", preview.rows[0].message)
 
     def test_unexpected_column_does_not_alter_config(self):
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled,Notes\nMain,10.0.0.20,4370,DEVICE_03,Yes,Ignore me\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled,Notes\nMain,192.0.2.20,4370,DEVICE_03,Yes,Ignore me\n")
 
         device = preview.valid_rows[0].to_device_setup()
         self.assertFalse(hasattr(device, "notes"))
 
     def test_sensitive_unexpected_column_is_rejected(self):
         with self.assertRaisesRegex(device_import.DeviceImportError, "sensitive column"):
-            self.parse("Device Name,IP Address,Port,Device ID,Enabled,API Secret\nMain,10.0.0.20,4370,DEVICE_03,Yes,nope\n")
+            self.parse("Device Name,IP Address,Port,Device ID,Enabled,API Secret\nMain,192.0.2.20,4370,DEVICE_03,Yes,nope\n")
 
     def test_import_preview_contains_row_status_and_message(self):
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,10.0.0.20,4370,DEVICE_03,Yes\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nMain,192.0.2.20,4370,DEVICE_03,Yes\n")
 
         self.assertEqual(preview.rows[0].row_number, 2)
         self.assertEqual(preview.rows[0].status, device_import.VALID)
@@ -138,7 +138,7 @@ class DeviceImportTests(unittest.TestCase):
 
     def test_valid_rows_apply_through_existing_controller(self):
         setup = valid_setup_config()
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nNew,10.0.0.22,4370,DEVICE_03,Yes\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nNew,192.0.2.22,4370,DEVICE_03,Yes\n")
         setup.devices = device_import.apply_preview_to_devices(setup.devices, preview)
 
         self.controller.write_config_atomic(setup)
@@ -149,7 +149,7 @@ class DeviceImportTests(unittest.TestCase):
     def test_invalid_import_does_not_change_existing_configuration(self):
         self.controller.write_config_atomic(valid_setup_config())
         before = json.loads(self.paths.get_config_path().read_text(encoding="utf-8"))
-        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nBad,10.0.0.22,0,DEVICE_03,Yes\n")
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled\nBad,192.0.2.22,0,DEVICE_03,Yes\n")
 
         with self.assertRaises(device_import.DeviceImportError):
             setup = valid_setup_config()
