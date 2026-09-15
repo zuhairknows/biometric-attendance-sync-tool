@@ -1,4 +1,5 @@
 import importlib
+import json
 import logging
 import shutil
 import sys
@@ -119,6 +120,9 @@ class FakeWidget(FakeQObject):
 
     def toolTip(self):
         return getattr(self, "tooltip", "")
+
+    def setWordWrap(self, value):
+        self.word_wrap = value
 
     def close(self):
         pass
@@ -286,7 +290,7 @@ def install_fake_pyqt():
     qtwidgets.QTableWidget = FakeTable
     qtwidgets.QTableWidgetItem = FakeTableItem
     qtwidgets.QAbstractItemView = types.SimpleNamespace(NoEditTriggers=1, SelectRows=2)
-    qtwidgets.QMessageBox = types.SimpleNamespace(Yes=1, No=0, question=lambda *args, **kwargs: 1)
+    qtwidgets.QMessageBox = types.SimpleNamespace(Yes=1, No=0, question=lambda *args, **kwargs: 1, information=lambda *args, **kwargs: 1)
 
     pyqt = types.ModuleType("PyQt5")
     pyqt.QtCore = qtcore
@@ -308,9 +312,13 @@ def wait_until(condition, timeout=2.0):
 install_fake_pyqt()
 app_module = importlib.import_module("manager.app")
 from manager.diagnostics import DiagnosticResult
-from manager.health import DeviceHealth
+from manager.health import DeviceHealth, HealthSnapshot
 from manager.service_controller import ActionResult, ServiceStatus
 from config.status import CONFIGURED, ConfigurationStatus, INVALID, LEGACY_CONFIGURED, UNCONFIGURED
+
+
+def wait_for_refresh(window):
+    return wait_until(lambda: not getattr(window, "refresh_running", False) and len(getattr(window, "active_jobs", [])) == 0)
 
 
 class FakeController:
@@ -570,6 +578,7 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         status = ConfigurationStatus(UNCONFIGURED, "defaults", "Product is not configured. Complete first-run setup.")
         with mock.patch.object(app_module, "get_configuration_status", return_value=status):
             window = FirstRunWindow(controller=FakeController(), auto_launch_setup=True)
+            self.assertTrue(wait_for_refresh(window))
         try:
             self.assertTrue(window.shown)
             self.assertEqual(window.configuration_state.text(), "Not Configured")
@@ -592,6 +601,7 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         status = ConfigurationStatus(LEGACY_CONFIGURED, "legacy", "Legacy Configuration")
         with mock.patch.object(app_module, "get_configuration_status", return_value=status):
             window = LegacyWindow(controller=FakeController(), auto_launch_setup=True)
+            self.assertTrue(wait_for_refresh(window))
         try:
             self.assertFalse(window.shown)
             self.assertEqual(window.configuration_source.text(), "Legacy Configuration")
@@ -608,10 +618,11 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         status = ConfigurationStatus(INVALID, "legacy", "Invalid legacy configuration", ["- ERPNEXT_API_SECRET is required."])
         with mock.patch.object(app_module, "get_configuration_status", return_value=status):
             window = InvalidRuntimeWindow(controller=FakeController(), auto_launch_setup=True)
+            self.assertTrue(wait_for_refresh(window))
         try:
             self.assertEqual(window.configuration_state.text(), "Invalid")
             self.assertNotEqual(window.configuration_state.text(), "Configured")
-            self.assertIn("Configuration could not be loaded.", window.messages.lines[-1])
+            self.assertIn("Configuration is invalid.", "\n".join(window.messages.lines))
         finally:
             window.close()
 
@@ -619,6 +630,7 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         status = ConfigurationStatus(INVALID, "json", "Invalid configuration", ["- Referenced secret is missing."])
         with mock.patch.object(app_module, "get_configuration_status", return_value=status):
             window = app_module.SyncManagerWindow(controller=FakeController(), auto_launch_setup=True)
+            self.assertTrue(wait_for_refresh(window))
         try:
             self.assertEqual(window.configuration_state.text(), "Invalid")
             self.assertIsNone(window.sync_module)
@@ -637,6 +649,7 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
             status = ConfigurationStatus(state, "json", state)
             with self.subTest(state=state), mock.patch.object(app_module, "get_configuration_status", return_value=status), mock.patch.object(app_module.config_admin, "get_configuration_summary", return_value={}):
                 window = StatusAwareWindow(controller=FakeController())
+                self.assertTrue(wait_for_refresh(window))
             try:
                 self.assertEqual(window.setup_button.text(), button_text)
             finally:
@@ -657,6 +670,7 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         }
         with mock.patch.object(app_module, "get_configuration_status", return_value=status), mock.patch.object(app_module.config_admin, "get_configuration_summary", return_value=summary):
             window = StatusAwareWindow(controller=FakeController())
+            self.assertTrue(wait_for_refresh(window))
         try:
             self.assertEqual(window.configuration_erpnext_url.text(), "https://erp.example.test")
             self.assertEqual(window.configuration_ssl.text(), "Enabled")
@@ -692,6 +706,212 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
             self.assertIn("Restart skipped.", window.messages.lines[-1])
         finally:
             app_module.QtWidgets.QMessageBox.question = original_question
+            window.close()
+
+
+class DashboardPresentationTests(unittest.TestCase):
+    def configured_status(self):
+        return ConfigurationStatus(CONFIGURED, "json", "Configured")
+
+    def test_valid_configuration_and_running_service_has_no_error(self):
+        dashboard = app_module.build_dashboard_presentation(
+            self.configured_status(),
+            ServiceStatus(installed=True, state="Running", startup="Automatic", recovery="Restart configured"),
+            HealthSnapshot(),
+            {"enabled_devices": 0, "total_devices": 0},
+            app_module.ERP_NOT_TESTED,
+            "",
+            {},
+        )
+
+        self.assertEqual(dashboard.system_state, app_module.HEALTHY)
+
+    def test_invalid_configuration_is_error(self):
+        dashboard = app_module.build_dashboard_presentation(
+            ConfigurationStatus(INVALID, "json", "Invalid configuration"),
+            ServiceStatus(installed=True, state="Running"),
+            HealthSnapshot(),
+            {},
+            app_module.ERP_NOT_TESTED,
+            "",
+            {},
+        )
+
+        self.assertEqual(dashboard.system_state, app_module.ERROR)
+
+    def test_stopped_required_service_is_error(self):
+        dashboard = app_module.build_dashboard_presentation(
+            self.configured_status(),
+            ServiceStatus(installed=True, state="Stopped"),
+            HealthSnapshot(),
+            {},
+            app_module.ERP_NOT_TESTED,
+            "",
+            {},
+        )
+
+        self.assertEqual(dashboard.system_state, app_module.ERROR)
+
+    def test_service_status_unavailable_is_unknown_safe(self):
+        dashboard = app_module.build_dashboard_presentation(
+            self.configured_status(),
+            ServiceStatus(installed=False, state="Unknown"),
+            HealthSnapshot(),
+            {},
+            app_module.ERP_NOT_TESTED,
+            "",
+            {},
+        )
+
+        self.assertEqual(dashboard.system_state, app_module.UNKNOWN)
+
+    def test_erpnext_not_tested_connected_and_failed(self):
+        not_tested = app_module.build_erpnext_presentation(self.configured_status(), app_module.ERP_NOT_TESTED, "")
+        connected = app_module.build_erpnext_presentation(self.configured_status(), app_module.ERP_CONNECTED, "Connection successful.")
+        failed = app_module.build_erpnext_presentation(self.configured_status(), app_module.ERP_FAILED, "Authentication failed.")
+
+        self.assertEqual(not_tested.text, "Not tested")
+        self.assertEqual(connected.text, "Connected")
+        self.assertEqual(failed.text, "Connection failed")
+
+    def test_device_summary_counts_no_multiple_success_failed_and_untested(self):
+        health = HealthSnapshot(devices=[
+            DeviceHealth("DEVICE_01", "192.0.2.10", 4370),
+            DeviceHealth("DEVICE_02", "192.0.2.11", 4370),
+            DeviceHealth("DEVICE_03", "192.0.2.12", 4370),
+        ])
+
+        none_configured = app_module.build_device_dashboard_summary({"enabled_devices": 0, "total_devices": 0}, HealthSnapshot(), {})
+        mixed = app_module.build_device_dashboard_summary(
+            {"enabled_devices": 3, "total_devices": 3},
+            health,
+            {"DEVICE_01": "Connected", "DEVICE_02": "Failed"},
+        )
+        all_success = app_module.build_device_dashboard_summary(
+            {"enabled_devices": 3, "total_devices": 3},
+            health,
+            {"DEVICE_01": "Connected", "DEVICE_02": "Connected", "DEVICE_03": "Connected"},
+        )
+
+        self.assertEqual(none_configured.configured, 0)
+        self.assertEqual(mixed.enabled, 3)
+        self.assertEqual(mixed.reachable, 1)
+        self.assertEqual(mixed.unavailable, 1)
+        self.assertEqual(mixed.not_tested, 1)
+        self.assertEqual(all_success.reachable, 3)
+        self.assertEqual(all_success.unavailable, 0)
+
+    def test_mission_timestamp_display_and_missing_message(self):
+        self.assertEqual(app_module.format_sync_timestamp("2026-09-15 14:20:00"), "15 Sep 2026, 14:20")
+        self.assertEqual(app_module.format_sync_timestamp(""), "No successful synchronization recorded")
+
+    def test_missing_employee_warning_is_shown(self):
+        dashboard = app_module.build_dashboard_presentation(
+            self.configured_status(),
+            ServiceStatus(installed=True, state="Running"),
+            HealthSnapshot(warnings=["3 attendance records could not be matched to employees."]),
+            {},
+            app_module.ERP_NOT_TESTED,
+            "",
+            {},
+        )
+
+        self.assertEqual(dashboard.system_state, app_module.WARNING)
+        self.assertIn("3 attendance records", dashboard.action_text)
+
+    def test_secret_material_is_not_rendered_in_dashboard_text(self):
+        dashboard = app_module.build_dashboard_presentation(
+            self.configured_status(),
+            ServiceStatus(installed=True, state="Running"),
+            HealthSnapshot(),
+            {"erpnext_url": "https://erp.example.test", "api_secret": "SUPER_SECRET_VALUE", "enabled_devices": 0, "total_devices": 0},
+            app_module.ERP_NOT_TESTED,
+            "",
+            {},
+        )
+        rendered = json.dumps(dashboard, default=lambda value: getattr(value, "__dict__", str(value)))
+
+        self.assertNotIn("SUPER_SECRET_VALUE", rendered)
+
+
+class DashboardOperationalUxTests(unittest.TestCase):
+    def setUp(self):
+        self.logs_directory = Path.cwd() / ".test-logs" / self._testMethodName
+        if self.logs_directory.exists():
+            shutil.rmtree(self.logs_directory)
+        self.logs_directory.mkdir(parents=True)
+        TestableSyncManagerWindow.logs_directory = str(self.logs_directory)
+        self.window = TestableSyncManagerWindow(controller=FakeController(ServiceStatus(installed=True, state="Stopped", startup="Automatic")))
+        self.window.configuration_status = ConfigurationStatus(CONFIGURED, "json", "Configured")
+        self.window.last_service_status = self.window.controller.get_status()
+        self.window.sync_module = types.SimpleNamespace(config=types.SimpleNamespace(LOGS_DIRECTORY=str(self.logs_directory)))
+
+    def tearDown(self):
+        for job in list(self.window.active_jobs):
+            job["thread"].quit()
+            job["thread"].wait(1000)
+        self.window.close()
+        if self.logs_directory.exists():
+            shutil.rmtree(self.logs_directory)
+
+    def test_sync_now_success_and_failure_messages(self):
+        success = DiagnosticResult(True, "ok", "Manual sync completed.")
+        with mock.patch.object(app_module.diagnostics, "run_one_sync", return_value=success):
+            self.window._run_sync_now()
+            self.assertTrue(wait_until(lambda: not self.window.sync_running and len(self.window.active_jobs) == 0))
+            self.assertIn("Synchronization completed successfully.", "\n".join(self.window.messages.lines))
+
+        failure = DiagnosticResult(False, "error", "Manual sync did not complete successfully. Check logs.")
+        with mock.patch.object(app_module.diagnostics, "run_one_sync", return_value=failure):
+            self.window._run_sync_now()
+            self.assertTrue(wait_until(lambda: not self.window.sync_running and len(self.window.active_jobs) == 0))
+            self.assertIn("Synchronization could not be completed.", "\n".join(self.window.messages.lines))
+
+    def test_concurrent_sync_now_is_still_prevented(self):
+        self.window.sync_running = True
+
+        self.window._run_sync_now()
+
+        self.assertIn("Manual sync is already running.", self.window.messages.lines[-1])
+
+    def test_configure_action_opens_existing_workflow(self):
+        class ConfigureWindow(TestableSyncManagerWindow):
+            opened = False
+
+            def show_setup_wizard(self):
+                self.opened = True
+
+        window = ConfigureWindow(controller=FakeController())
+        try:
+            window.setup_button.clicked.emit()
+
+            self.assertTrue(window.opened)
+        finally:
+            window.close()
+
+    def test_refresh_overlap_is_prevented(self):
+        self.window.refresh_running = True
+
+        app_module.SyncManagerWindow.refresh(self.window)
+
+        self.assertIn("Refresh is already running.", self.window.messages.lines[-1])
+
+    def test_refresh_worker_failure_does_not_crash_ui(self):
+        with mock.patch.object(app_module.APP_LOGGER, "exception"):
+            app_module.SyncManagerWindow._handle_refresh_result(self.window, RuntimeError("refresh exploded"))
+
+        self.assertFalse(self.window.refresh_running)
+        self.assertEqual(self.window.last_service_status.state, "Unknown")
+
+    def test_existing_admin_service_actions_remain_callable(self):
+        controller = RestartController(ServiceStatus(installed=True, state="Stopped", startup="Automatic"))
+        window = TestableSyncManagerWindow(controller=controller)
+        try:
+            window.last_service_status = controller.get_status()
+            window._run_service_action("Restarting service...", controller.restart_service)
+            self.assertTrue(wait_until(lambda: len(window.active_jobs) == 0))
+            self.assertEqual(controller.restart_calls, 1)
+        finally:
             window.close()
 
 
