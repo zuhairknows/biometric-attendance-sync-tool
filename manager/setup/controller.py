@@ -16,11 +16,17 @@ from config.secrets import (
     erpnext_api_key_secret_id,
     erpnext_api_secret_secret_id,
 )
+from config.status import CONFIGURED, get_configuration_status
 from manager import diagnostics
 from manager.config_admin import build_change_summary
+from manager.service_controller import ServiceController
 
-from .model import DeviceSetup, ERPNextSetup, SetupConfiguration, SyncSetup
+from .model import DeviceSetup, ERPNextSetup, SetupCompletion, SetupConfiguration, SyncSetup
 from .validation import build_config_dict, safe_review_summary, validate_setup_config
+
+
+class SetupCompletionError(RuntimeError):
+    pass
 
 
 class SetupController:
@@ -97,6 +103,18 @@ class SetupController:
         runtime = self._runtime_from_setup(setup_config)
         return diagnostics.test_erpnext_connection(runtime, request_func=self.request_func)
 
+    def test_device(self, setup_config, device_id, sync_module):
+        selected_id = str(device_id or "").strip()
+        runtime = self._runtime_from_setup(setup_config)
+        runtime.devices = [
+            device
+            for device in runtime.devices
+            if str(device.get("device_id") or "").strip() == selected_id
+        ]
+        if not runtime.devices:
+            return diagnostics.DiagnosticResult(False, "error", "Select a configured device to test.")
+        return diagnostics.test_devices(runtime, sync_module=sync_module, zk_class=self.zk_class)
+
     def test_devices(self, setup_config, sync_module):
         runtime = self._runtime_from_setup(setup_config)
         enabled_devices = [device for device in runtime.devices if device.get("enabled", True)]
@@ -104,6 +122,35 @@ class SetupController:
         if not enabled_devices:
             return diagnostics.DiagnosticResult(True, "ok", "No enabled devices to test.")
         return diagnostics.test_devices(runtime, sync_module=sync_module, zk_class=self.zk_class)
+
+    def complete_setup(self, setup_config, service_controller=None):
+        self.validate(setup_config)
+        self.write_config_atomic(setup_config)
+
+        status = get_configuration_status(paths_module=self.paths)
+        if status.state != CONFIGURED:
+            details = " ".join(status.details or [])
+            message = "Configuration was saved, but it is not valid yet."
+            if details:
+                message += " " + details
+            raise SetupCompletionError(message)
+
+        service_controller = service_controller or ServiceController()
+        service_result = self._ensure_service_running(service_controller)
+        if not service_result.success:
+            raise SetupCompletionError(_friendly_service_failure(service_result))
+
+        final_status = service_controller.get_status()
+        if final_status.state != "Running":
+            raise SetupCompletionError("Configuration was saved, but synchronization is not running. Current service state: " + final_status.state + ".")
+
+        return SetupCompletion(
+            erpnext_configured=True,
+            devices_configured=bool(setup_config.devices),
+            configuration_saved=True,
+            service_running=True,
+            service_message=service_result.message,
+        )
 
     def write_config_atomic(self, setup_config):
         target = self.paths.get_config_path()
@@ -272,6 +319,18 @@ class SetupController:
     def _replace_config_file(self, temp_path, target):
         os.replace(str(temp_path), str(target))
 
+    def _ensure_service_running(self, service_controller):
+        status = service_controller.get_status()
+        if not status.installed:
+            return SimpleNamespace(
+                success=False,
+                message="Synchronization service is not installed.",
+                requires_admin=False,
+            )
+        if status.state == "Running":
+            return service_controller.restart_service()
+        return service_controller.start_service()
+
     def _apply_existing_secrets_for_runtime(self, config_dict):
         existing = self._read_existing_config()
         store = self._secret_store()
@@ -308,3 +367,12 @@ def _device_has_existing_password(device):
         return int(device.get("password") or 0) != 0
     except (TypeError, ValueError):
         return bool(str(device.get("password") or "").strip())
+
+
+def _friendly_service_failure(result):
+    if getattr(result, "requires_admin", False):
+        return "Configuration was saved, but the synchronization service could not be started. Open the Manager as Administrator and start the service."
+    message = str(getattr(result, "message", "") or "").strip()
+    if not message:
+        message = "Open the Manager and start the synchronization service."
+    return "Configuration was saved, but the synchronization service could not be started. " + message
