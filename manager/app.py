@@ -112,8 +112,15 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             self._maybe_show_first_run_setup()
 
     def _build_ui(self):
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
         central = QtWidgets.QWidget()
-        self.setCentralWidget(central)
+        size_policy = getattr(QtWidgets, "QSizePolicy", None)
+        if size_policy is not None:
+            central.setSizePolicy(size_policy.Ignored, size_policy.Preferred)
+        scroll_area.setWidget(central)
+        self.scroll_area = scroll_area
+        self.setCentralWidget(scroll_area)
         root = QtWidgets.QVBoxLayout(central)
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(12)
@@ -196,9 +203,9 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         group = QtWidgets.QGroupBox("Operational Dashboard")
         layout = QtWidgets.QGridLayout(group)
         layout.addWidget(self._status_card("ERPNext", self.erp_card_status, self.erp_card_detail), 0, 0)
-        layout.addWidget(self._status_card("Synchronization Service", self.service_card_status, self.service_card_detail), 0, 1)
-        layout.addWidget(self._status_card("Biometric Devices", self.devices_card_status, self.devices_card_detail), 1, 0)
-        layout.addWidget(self._status_card("Last Synchronization", self.last_sync_card_status, self.last_sync_card_detail), 1, 1)
+        layout.addWidget(self._status_card("Synchronization Service", self.service_card_status, self.service_card_detail), 1, 0)
+        layout.addWidget(self._status_card("Biometric Devices", self.devices_card_status, self.devices_card_detail), 2, 0)
+        layout.addWidget(self._status_card("Last Synchronization", self.last_sync_card_status, self.last_sync_card_detail), 3, 0)
         return group
 
     def _status_card(self, title, value_label, detail_label):
@@ -210,7 +217,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
 
     def _primary_actions_group(self):
         group = QtWidgets.QGroupBox("Primary Actions")
-        layout = QtWidgets.QHBoxLayout(group)
+        layout = QtWidgets.QVBoxLayout(group)
         self.sync_button = QtWidgets.QPushButton("Sync Now")
         self.setup_button = QtWidgets.QPushButton("Configure")
         self.primary_refresh_button = QtWidgets.QPushButton("Refresh")
@@ -227,8 +234,16 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.diagnostics_button.clicked.connect(self._show_diagnostics)
         self.logs_button.clicked.connect(lambda: self._safe_open_folder(get_logs_folder(self.config_module)))
         self.about_button.clicked.connect(self._show_about)
-        for button in [self.sync_button, self.setup_button, self.primary_refresh_button, self.erp_button, self.device_button, self.diagnostics_button, self.logs_button, self.about_button]:
-            layout.addWidget(button)
+        layout.addLayout(self._button_grid([
+            self.sync_button,
+            self.setup_button,
+            self.primary_refresh_button,
+            self.erp_button,
+            self.device_button,
+            self.diagnostics_button,
+            self.logs_button,
+            self.about_button,
+        ], columns=2))
         return group
 
     def _configuration_group(self):
@@ -283,14 +298,17 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.delayed_auto_button.clicked.connect(lambda: self._run_service_action("Setting delayed auto start...", self.controller.set_delayed_auto_start))
         self.recovery_button.clicked.connect(lambda: self._run_service_action("Configuring service recovery...", self.controller.configure_recovery))
 
-        buttons = QtWidgets.QHBoxLayout()
-        for button in [self.start_button, self.stop_button, self.restart_button, self.install_button, self.uninstall_button]:
-            buttons.addWidget(button)
-        layout.addLayout(buttons, 4, 0, 1, 2)
-        advanced_buttons = QtWidgets.QHBoxLayout()
-        for button in [self.delayed_auto_button, self.recovery_button]:
-            advanced_buttons.addWidget(button)
-        layout.addLayout(advanced_buttons, 5, 0, 1, 2)
+        layout.addLayout(self._button_grid([
+            self.start_button,
+            self.stop_button,
+            self.restart_button,
+            self.install_button,
+            self.uninstall_button,
+        ], columns=2), 4, 0, 1, 2)
+        layout.addLayout(self._button_grid([
+            self.delayed_auto_button,
+            self.recovery_button,
+        ], columns=2), 5, 0, 1, 2)
         return group
 
     def _erpnext_group(self):
@@ -321,7 +339,6 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         group = QtWidgets.QGroupBox("Advanced / Administration")
         layout = QtWidgets.QVBoxLayout(group)
         layout.addWidget(self._service_group())
-        buttons = QtWidgets.QHBoxLayout()
         self.validate_button = QtWidgets.QPushButton("Validate Configuration")
         self.config_button = QtWidgets.QPushButton("Open Config Folder")
         self.appdata_button = QtWidgets.QPushButton("Open Application Data")
@@ -336,9 +353,15 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.restore_button.clicked.connect(self._restore_configuration)
         self.reset_button.clicked.connect(self._reset_configuration)
         self.backup_folder_button.clicked.connect(lambda: self._safe_open_folder(get_programdata_backups_folder()))
-        for button in [self.validate_button, self.config_button, self.appdata_button, self.backup_button, self.restore_button, self.reset_button, self.backup_folder_button]:
-            buttons.addWidget(button)
-        layout.addLayout(buttons)
+        layout.addLayout(self._button_grid([
+            self.validate_button,
+            self.config_button,
+            self.appdata_button,
+            self.backup_button,
+            self.restore_button,
+            self.reset_button,
+            self.backup_folder_button,
+        ], columns=2))
         return group
 
     def _messages_group(self):
@@ -346,6 +369,12 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(group)
         layout.addWidget(self.messages)
         return group
+
+    def _button_grid(self, buttons, columns=4):
+        layout = QtWidgets.QGridLayout()
+        for index, button in enumerate(buttons):
+            layout.addWidget(button, index // columns, index % columns)
+        return layout
 
     def refresh(self):
         if self.refresh_running:

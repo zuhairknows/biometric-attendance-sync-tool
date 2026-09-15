@@ -156,6 +156,14 @@ class FakeQMainWindow(FakeWidget):
         self.central = widget
 
 
+class FakeScrollArea(FakeWidget):
+    def setWidgetResizable(self, value):
+        self.widget_resizable = value
+
+    def setWidget(self, widget):
+        self.widget = widget
+
+
 class FakeLayout:
     def __init__(self, *args, **kwargs):
         self.items = []
@@ -300,6 +308,7 @@ def install_fake_pyqt():
     qtwidgets = types.ModuleType("PyQt5.QtWidgets")
     qtwidgets.QApplication = FakeQApplication
     qtwidgets.QMainWindow = FakeQMainWindow
+    qtwidgets.QScrollArea = FakeScrollArea
     qtwidgets.QWidget = FakeWidget
     qtwidgets.QDialog = FakeDialog
     qtwidgets.QVBoxLayout = FakeLayout
@@ -764,6 +773,18 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         rendered = "\n".join(str(args[2]) for args in captured)
         self.assertIn("Synchronization Service", rendered)
         self.assertNotIn("ERPNext Biometric Push Service", rendered)
+
+    def test_manager_content_is_scrollable_for_realistic_window_sizes(self):
+        self.assertIs(self.window.central, self.window.scroll_area)
+        self.assertTrue(self.window.scroll_area.widget_resizable)
+        self.assertIsNotNone(self.window.scroll_area.widget)
+
+    def test_button_grid_wraps_large_action_sets(self):
+        buttons = [FakeButton(str(index)) for index in range(7)]
+
+        layout = self.window._button_grid(buttons, columns=3)
+
+        self.assertEqual(layout.items, buttons)
 
 
 class DashboardPresentationTests(unittest.TestCase):
