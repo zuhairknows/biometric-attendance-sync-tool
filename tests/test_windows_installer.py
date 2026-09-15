@@ -20,8 +20,10 @@ class WindowsInstallerDefinitionTests(unittest.TestCase):
         self.assertIn('#define AppName "Biometric Attendance Sync"', self.installer_text)
         self.assertIn('#define AppPublisher "Biometric Attendance Sync"', self.installer_text)
         self.assertIn("DefaultGroupName=Biometric Attendance Sync", self.installer_text)
-        self.assertIn("Biometric Attendance Sync Manager", self.installer_text)
+        self.assertIn("Biometric Attendance Sync", self.installer_text)
+        self.assertIn('Description: "Launch Biometric Attendance Sync"', self.installer_text)
         self.assertIn("Biometric Attendance Sync was installed", self.installer_text)
+        self.assertIn("Open Biometric Attendance Sync and complete the setup wizard.", self.installer_text)
         self.assertNotIn("FPF Biometric Sync", self.installer_text)
 
     def test_installer_uses_final_program_files_layout(self):
@@ -29,7 +31,7 @@ class WindowsInstallerDefinitionTests(unittest.TestCase):
         self.assertIn("..\\release\\Biometric Attendance Sync\\*", self.installer_text)
 
     def test_installer_creates_programdata_directories(self):
-        for folder in ["config", "logs", "state", "retry"]:
+        for folder in ["config", "logs", "state", "retry", "secrets", "backups", "diagnostics"]:
             self.assertIn("{commonappdata}\\BiometricAttendanceSync\\" + folder, self.installer_text)
 
     def test_installer_preserves_real_config_and_programdata(self):
@@ -73,6 +75,45 @@ class WindowsInstallerDefinitionTests(unittest.TestCase):
             "{commonappdata}\\FPF\\BiometricSync\"; Flags: delete",
             self.installer_text,
         )
+
+        self.assertNotIn(
+            "{commonappdata}\\BiometricAttendanceSync\"; Flags: delete",
+            self.installer_text,
+        )
+
+    def test_installer_shortcuts_use_generic_product_name(self):
+        self.assertIn('Name: "{group}\\Biometric Attendance Sync"', self.installer_text)
+        self.assertIn('Name: "{autodesktop}\\Biometric Attendance Sync"', self.installer_text)
+        self.assertNotIn('Name: "{group}\\Biometric Attendance Sync Manager"', self.installer_text)
+        self.assertNotIn('Name: "{autodesktop}\\Biometric Attendance Sync Manager"', self.installer_text)
+
+    def test_installer_docs_reflect_release_build_requirements(self):
+        docs = (paths.PROJECT_ROOT / "docs" / "installer.md").read_text(encoding="utf-8")
+
+        self.assertIn("build\\tools\\innosetup\\package\\tools\\ISCC.exe", docs)
+        self.assertIn("Inno Setup 7", docs)
+        self.assertIn("Inno Setup 6", docs)
+        self.assertIn("the release build stops with a clear", docs)
+        self.assertNotIn("staging folder is still created and the script exits with a warning", docs)
+
+    def test_manual_acceptance_checklist_exists(self):
+        checklist = (paths.PROJECT_ROOT / "docs" / "m5_6_manual_acceptance_checklist.md").read_text(encoding="utf-8")
+
+        for scenario in [
+            "Scenario A - Clean Install, No Configuration",
+            "Scenario B - First-Run Configuration And Service Start",
+            "Scenario C - Existing Configured Install Opens Dashboard",
+            "Scenario D - Upgrade Preserves ProgramData",
+            "Scenario E - Upgrade With Running Service",
+            "Scenario F - Service Start Failure",
+            "Scenario G - Shortcuts And Product Naming",
+            "Scenario H - Uninstall Preserves Customer Data",
+            "Scenario I - Reinstall After Uninstall",
+        ]:
+            self.assertIn(scenario, checklist)
+
+        self.assertIn("Result: Pass / Fail / N/A", checklist)
+        self.assertIn("C:\\ProgramData\\BiometricAttendanceSync", checklist)
 
     def test_installer_generates_service_commands(self):
         self.assertIn("Biometric-Attendance-Sync-Service.exe", self.installer_text)

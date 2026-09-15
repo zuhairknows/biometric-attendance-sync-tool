@@ -655,7 +655,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         answer = QtWidgets.QMessageBox.question(
             self,
             "Uninstall Service",
-            "Uninstall ERPNext Biometric Push Service?\n\nThis stops automatic attendance synchronization until the service is installed again.",
+            "Uninstall the Synchronization Service?\n\nThis stops automatic attendance synchronization until the service is installed again.",
         )
         if answer == QtWidgets.QMessageBox.Yes:
             self._run_service_action("Uninstalling service...", self.controller.uninstall_service)
@@ -664,7 +664,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         answer = QtWidgets.QMessageBox.question(
             self,
             "Stop Service",
-            "Stop ERPNext Biometric Push Service?\n\nAutomatic attendance synchronization will pause until it is started again.",
+            "Stop the Synchronization Service?\n\nAutomatic attendance synchronization will pause until it is started again.",
         )
         if answer == QtWidgets.QMessageBox.Yes:
             self._run_service_action("Stopping service...", self.controller.stop_service)

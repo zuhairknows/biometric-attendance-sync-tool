@@ -751,6 +751,20 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
             app_module.QtWidgets.QMessageBox.question = original_question
             window.close()
 
+    def test_service_confirmation_copy_uses_customer_friendly_name(self):
+        captured = []
+        original_question = app_module.QtWidgets.QMessageBox.question
+        app_module.QtWidgets.QMessageBox.question = lambda *args, **kwargs: captured.append(args) or app_module.QtWidgets.QMessageBox.No
+        try:
+            self.window._confirm_stop()
+            self.window._confirm_uninstall()
+        finally:
+            app_module.QtWidgets.QMessageBox.question = original_question
+
+        rendered = "\n".join(str(args[2]) for args in captured)
+        self.assertIn("Synchronization Service", rendered)
+        self.assertNotIn("ERPNext Biometric Push Service", rendered)
+
 
 class DashboardPresentationTests(unittest.TestCase):
     def configured_status(self):
