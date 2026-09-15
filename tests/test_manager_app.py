@@ -131,6 +131,20 @@ class FakeWidget(FakeQObject):
         pass
 
 
+class FakeDialog(FakeWidget):
+    Accepted = 1
+    Rejected = 0
+
+    def setWindowTitle(self, title):
+        self.title = title
+
+    def exec_(self):
+        return self.Accepted
+
+    def accept(self):
+        self.accepted = True
+
+
 class FakeQMainWindow(FakeWidget):
     def setWindowTitle(self, title):
         self.title = title
@@ -247,6 +261,7 @@ class FakeTable(FakeWidget):
 
 class FakeQApplication:
     _instance = None
+    clipboard_text = ""
 
     def __init__(self, *args, **kwargs):
         FakeQApplication._instance = self
@@ -260,6 +275,12 @@ class FakeQApplication:
 
     def exec_(self):
         return 0
+
+    def clipboard(self):
+        return types.SimpleNamespace(setText=self._set_clipboard_text, text=lambda: FakeQApplication.clipboard_text)
+
+    def _set_clipboard_text(self, text):
+        FakeQApplication.clipboard_text = str(text)
 
 
 def pyqt_slot(*args, **kwargs):
@@ -280,6 +301,7 @@ def install_fake_pyqt():
     qtwidgets.QApplication = FakeQApplication
     qtwidgets.QMainWindow = FakeQMainWindow
     qtwidgets.QWidget = FakeWidget
+    qtwidgets.QDialog = FakeDialog
     qtwidgets.QVBoxLayout = FakeLayout
     qtwidgets.QHBoxLayout = FakeLayout
     qtwidgets.QGridLayout = FakeLayout
@@ -436,6 +458,27 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         release.set()
         self.assertTrue(wait_until(lambda: self.window.validate_button.isEnabled()))
         self.assertEqual(len(self.window.active_jobs), 0)
+        rendered_messages = "\n".join(self.window.messages.lines)
+        self.assertIn("Open Diagnostics or Logs", rendered_messages)
+        self.assertNotIn("diagnostic failed", rendered_messages)
+
+    def test_copy_diagnostics_summary_contains_no_credentials(self):
+        FakeQApplication()
+        self.window.last_configuration_summary = {
+            "erpnext_url": "https://erp.example.test",
+            "api_secret": "SUPER_SECRET_VALUE",
+            "enabled_devices": 1,
+            "total_devices": 2,
+        }
+        self.window.last_health_snapshot = HealthSnapshot(last_successful_sync="2026-09-15 14:30:00")
+
+        text = self.window._copy_diagnostics_summary()
+
+        self.assertIn("Biometric Attendance Sync", text)
+        self.assertIn("Last Sync: 2026-09-15 14:30:00", text)
+        self.assertNotIn("SUPER_SECRET_VALUE", text)
+        self.assertNotIn("api_secret", text.lower())
+        self.assertEqual(FakeQApplication.clipboard_text, text)
 
     def test_result_handler_failure_restores_controls_and_cleans_up(self):
         self.window.validate_button.setEnabled(False)

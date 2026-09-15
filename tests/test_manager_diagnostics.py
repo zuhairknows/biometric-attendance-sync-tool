@@ -97,7 +97,7 @@ class ManagerDiagnosticsTests(unittest.TestCase):
         result = diagnostics.validate_configuration(FakeSyncModule(self.config))
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.message, "Configuration problem:")
+        self.assertEqual(result.title, "Configuration Invalid")
         self.assertEqual(result.details, ["- ERPNEXT_API_KEY is required."])
 
     def test_erpnext_test_success(self):
@@ -118,7 +118,8 @@ class ManagerDiagnosticsTests(unittest.TestCase):
         result = diagnostics.test_erpnext_connection(self.config, request_func=mock.Mock(return_value=FakeResponse(401)))
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.message, "Authentication failed. Check API credentials.")
+        self.assertEqual(result.title, "ERPNext Authentication Failed")
+        self.assertIn("API Key", result.action)
 
     def test_erpnext_unreachable(self):
         request_func = mock.Mock(side_effect=diagnostics.requests.exceptions.ConnectionError())
@@ -126,7 +127,8 @@ class ManagerDiagnosticsTests(unittest.TestCase):
         result = diagnostics.test_erpnext_connection(self.config, request_func=request_func)
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.message, "ERPNext server could not be reached.")
+        self.assertEqual(result.title, "ERPNext Server Unreachable")
+        self.assertIn("network", result.action.lower())
 
     def test_erpnext_ssl_failure(self):
         request_func = mock.Mock(side_effect=diagnostics.requests.exceptions.SSLError())
@@ -134,12 +136,23 @@ class ManagerDiagnosticsTests(unittest.TestCase):
         result = diagnostics.test_erpnext_connection(self.config, request_func=request_func)
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.message, "SSL certificate validation failed.")
+        self.assertEqual(result.title, "ERPNext SSL Certificate Problem")
+        self.assertIn("certificate", result.action.lower())
+
+    def test_erpnext_timeout_failure(self):
+        request_func = mock.Mock(side_effect=diagnostics.requests.exceptions.Timeout())
+
+        result = diagnostics.test_erpnext_connection(self.config, request_func=request_func)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.title, "ERPNext Connection Timed Out")
+        self.assertIn("retry", result.action.lower())
 
     def test_device_test_success(self):
         result = diagnostics.test_devices(self.config, FakeSyncModule(self.config), FakeZK)
 
         self.assertTrue(result.ok)
+        self.assertEqual(result.title, "Biometric Device Connected")
         self.assertEqual(result.details, ["DEVICE_01 (192.0.2.10:4370) - Connected"])
         self.assertTrue(FakeZK.connections[0].disconnected)
 
@@ -151,6 +164,7 @@ class ManagerDiagnosticsTests(unittest.TestCase):
         result = diagnostics.test_devices(self.config, FakeSyncModule(self.config), FakeZK)
 
         self.assertTrue(result.ok)
+        self.assertIn("Disabled", result.details[0])
         self.assertEqual(result.details, ["DEVICE_01 (192.0.2.10:4370) - Disabled"])
         self.assertEqual(FakeZK.connections, [])
 
@@ -160,6 +174,8 @@ class ManagerDiagnosticsTests(unittest.TestCase):
         result = diagnostics.test_devices(self.config, FakeSyncModule(self.config), FakeZK)
 
         self.assertFalse(result.ok)
+        self.assertEqual(result.title, "Biometric Device Unavailable")
+        self.assertIn("powered on", result.action)
         self.assertEqual(result.details, ["DEVICE_01 (192.0.2.10:4370) - Connection failed"])
 
     def test_run_sync_invokes_exactly_one_cycle(self):

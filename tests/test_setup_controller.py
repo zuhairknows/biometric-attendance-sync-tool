@@ -559,7 +559,8 @@ class SetupControllerTests(unittest.TestCase):
         result = controller.test_erpnext(valid_setup_config())
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.message, "Connection successful.")
+        self.assertEqual(result.title, "ERPNext Connected")
+        self.assertIn("successfully", result.message)
 
     def test_erpnext_connection_failure_is_friendly(self):
         response = types.SimpleNamespace(status_code=401)
@@ -568,7 +569,8 @@ class SetupControllerTests(unittest.TestCase):
         result = controller.test_erpnext(valid_setup_config())
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.message, "Authentication failed. Check API credentials.")
+        self.assertEqual(result.title, "ERPNext Authentication Failed")
+        self.assertIn("API Key", result.action)
 
     def test_api_secret_is_not_displayed_after_save_and_reload(self):
         self.controller.write_config_atomic(valid_setup_config())

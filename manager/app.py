@@ -1,7 +1,6 @@
 import datetime
 import logging
 import sys
-import traceback
 from dataclasses import dataclass, field
 
 from PyQt5 import QtCore, QtWidgets
@@ -9,6 +8,7 @@ from PyQt5 import QtCore, QtWidgets
 from config.status import CONFIGURED, INVALID, LEGACY_CONFIGURED, UNCONFIGURED, get_configuration_status
 from . import config_admin
 from . import diagnostics
+from . import support
 from .health import get_health_snapshot
 from .paths import get_app_data_folder, get_config_folder, get_logs_folder, get_programdata_backups_folder, open_folder
 from .service_controller import ServiceController, ServiceStatus
@@ -224,7 +224,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.primary_refresh_button.clicked.connect(self.refresh)
         self.erp_button.clicked.connect(lambda: self._run_diagnostic("Testing ERPNext...", diagnostics.test_erpnext_connection, self.erp_button))
         self.device_button.clicked.connect(lambda: self._run_diagnostic("Testing devices...", diagnostics.test_devices, self.device_button))
-        self.diagnostics_button.clicked.connect(self._export_diagnostics)
+        self.diagnostics_button.clicked.connect(self._show_diagnostics)
         self.logs_button.clicked.connect(lambda: self._safe_open_folder(get_logs_folder(self.config_module)))
         self.about_button.clicked.connect(self._show_about)
         for button in [self.sync_button, self.setup_button, self.primary_refresh_button, self.erp_button, self.device_button, self.diagnostics_button, self.logs_button, self.about_button]:
@@ -610,16 +610,21 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
 
     def _handle_action_result(self, result):
         if isinstance(result, Exception):
-            self._append_message("Action failed.")
+            self._append_message("Action failed. Open Diagnostics or Logs for technical details.")
         else:
-            self._append_message(result.message)
+            if getattr(result, "success", False):
+                self._append_message(result.message)
+            else:
+                message = support.service_action_failed_message("complete the requested action", getattr(result, "requires_admin", False), getattr(result, "message", ""))
+                self._append_message(message.compact())
         self.refresh()
 
     def _handle_diagnostic_result(self, result, button, is_sync=False):
         if isinstance(result, Exception):
             self._append_message("Operation failed.")
-            detail = traceback.format_exception_only(type(result), result)[-1].strip()
-            self._append_message(detail)
+            APP_LOGGER.exception("Diagnostic operation failed", exc_info=(type(result), result, result.__traceback__))
+            diagnostics._get_logger(self.config_module).exception("Diagnostic operation failed")
+            self._append_message("Open Diagnostics or Logs for technical details.")
             if button is self.erp_button:
                 self.erpnext_connection_state = ERP_FAILED
                 self.erpnext_connection_detail = "Connection failed. Open Diagnostics or Logs for technical details."
@@ -629,12 +634,12 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             elif is_sync:
                 self._append_message("Synchronization could not be completed. Open Diagnostics or Logs for technical details.")
             else:
-                self._append_message(result.message)
+                self._append_message(self._diagnostic_message_text(result))
             for line in result.details:
                 self._append_message("- " + line)
             if button is self.erp_button:
                 self.erpnext_connection_state = ERP_CONNECTED if result.ok else ERP_FAILED
-                self.erpnext_connection_detail = result.message
+                self.erpnext_connection_detail = self._diagnostic_message_text(result)
                 self._set_state(self.erp_status, "Connected" if result.ok else "Connection failed", result.status)
             if button is self.device_button:
                 self._store_device_test_results(result.details)
@@ -669,14 +674,15 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             open_folder(folder)
             self._append_message("Opened " + str(folder))
         except Exception:
-            self._append_message("Could not open folder: " + str(folder))
+            self._append_message("Could not open folder. Check permissions and try again.")
 
     def _backup_configuration(self):
         try:
             path = config_admin.create_configuration_backup()
             self._append_message("Configuration backup created: " + str(path))
         except Exception as exc:
-            self._append_message("Could not back up configuration. " + str(exc))
+            APP_LOGGER.exception("Configuration backup failed")
+            self._append_message(support.file_operation_failed_message("backed up").compact())
 
     def _restore_configuration(self):
         try:
@@ -691,8 +697,9 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             self._append_message("Configuration restored successfully.")
             self._maybe_prompt_restart_after_config_save()
             self.refresh()
-        except Exception as exc:
-            self._append_message("Could not restore configuration. " + str(exc))
+        except Exception:
+            APP_LOGGER.exception("Configuration restore failed")
+            self._append_message(support.file_operation_failed_message("restored").compact())
 
     def _reset_configuration(self):
         answer = QtWidgets.QMessageBox.question(
@@ -709,15 +716,40 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
                 message += " Backup created: " + str(backup_path)
             self._append_message(message)
             self.refresh()
-        except Exception as exc:
-            self._append_message("Could not reset configuration. " + str(exc))
+        except Exception:
+            APP_LOGGER.exception("Configuration reset failed")
+            self._append_message("Configuration could not be reset. Open Diagnostics or Logs for technical details.")
 
     def _export_diagnostics(self):
         try:
             path = config_admin.export_diagnostics_report(service_status=self.last_service_status)
             self._append_message("Diagnostics exported: " + str(path))
-        except Exception as exc:
-            self._append_message("Could not export diagnostics. " + str(exc))
+            return path
+        except Exception:
+            APP_LOGGER.exception("Diagnostics export failed")
+            self._append_message("Could not export diagnostics. Check folder permissions and open Logs for technical details.")
+            return None
+
+    def _show_diagnostics(self):
+        dialog = DiagnosticsDialog(self)
+        dialog.exec_()
+
+    def _copy_diagnostics_summary(self):
+        text = config_admin.build_diagnostics_summary_text(
+            self.configuration_status,
+            self.last_service_status,
+            self.last_health_snapshot,
+            self.last_configuration_summary,
+            self.last_dashboard.erpnext.text if self.last_dashboard else "Not tested",
+        )
+        app = QtWidgets.QApplication.instance()
+        clipboard = app.clipboard() if app is not None and hasattr(app, "clipboard") else None
+        if clipboard is not None:
+            clipboard.setText(text)
+            self._append_message("Diagnostics summary copied.")
+            return text
+        self._append_message("Clipboard is not available. Diagnostics summary was not copied.")
+        return text
 
     def _maybe_prompt_restart_after_config_save(self):
         if not self.last_service_status or self.last_service_status.state != "Running":
@@ -752,6 +784,17 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
 
     def _append_message(self, message):
         self.messages.append(str(message))
+
+    def _diagnostic_message_text(self, result):
+        title = str(getattr(result, "title", "") or "").strip()
+        message = str(getattr(result, "message", "") or "").strip()
+        action = str(getattr(result, "action", "") or "").strip()
+        if not title:
+            return message
+        text = title + ": " + message
+        if action:
+            text += " Suggested action: " + action
+        return text
 
     def _set_state(self, label, text, state):
         label.setText(text)
@@ -917,6 +960,52 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             + version_text
             + "\n\nSynchronizes attendance from biometric devices to ERPNext.",
         )
+
+
+class DiagnosticsDialog(QtWidgets.QDialog):
+    def __init__(self, manager_window):
+        super().__init__(manager_window)
+        self.manager_window = manager_window
+        self.setWindowTitle("Diagnostics")
+        self.summary = QtWidgets.QTextEdit()
+        self.summary.setReadOnly(True)
+        self._refresh_summary()
+
+        self.validate_button = QtWidgets.QPushButton("Validate Configuration")
+        self.erp_button = QtWidgets.QPushButton("Test ERPNext")
+        self.devices_button = QtWidgets.QPushButton("Test Devices")
+        self.refresh_button = QtWidgets.QPushButton("Refresh Diagnostics")
+        self.export_button = QtWidgets.QPushButton("Export Diagnostics")
+        self.copy_button = QtWidgets.QPushButton("Copy Diagnostics Summary")
+        self.logs_button = QtWidgets.QPushButton("Open Logs")
+        self.close_button = QtWidgets.QPushButton("Close")
+
+        self.validate_button.clicked.connect(lambda: manager_window._run_diagnostic("Validating configuration...", diagnostics.validate_configuration, manager_window.validate_button))
+        self.erp_button.clicked.connect(lambda: manager_window._run_diagnostic("Testing ERPNext...", diagnostics.test_erpnext_connection, manager_window.erp_button))
+        self.devices_button.clicked.connect(lambda: manager_window._run_diagnostic("Testing devices...", diagnostics.test_devices, manager_window.device_button))
+        self.refresh_button.clicked.connect(manager_window.refresh)
+        self.export_button.clicked.connect(manager_window._export_diagnostics)
+        self.copy_button.clicked.connect(manager_window._copy_diagnostics_summary)
+        self.logs_button.clicked.connect(lambda: manager_window._safe_open_folder(get_logs_folder(manager_window.config_module)))
+        self.close_button.clicked.connect(self.accept)
+
+        buttons = QtWidgets.QHBoxLayout()
+        for button in [self.validate_button, self.erp_button, self.devices_button, self.refresh_button, self.export_button, self.copy_button, self.logs_button, self.close_button]:
+            buttons.addWidget(button)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(self.summary)
+        layout.addLayout(buttons)
+
+    def _refresh_summary(self):
+        text = config_admin.build_diagnostics_summary_text(
+            self.manager_window.configuration_status,
+            self.manager_window.last_service_status,
+            self.manager_window.last_health_snapshot,
+            self.manager_window.last_configuration_summary,
+            self.manager_window.last_dashboard.erpnext.text if self.manager_window.last_dashboard else "Not tested",
+        )
+        self.summary.setText(text)
 
 
 def main():

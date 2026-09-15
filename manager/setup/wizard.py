@@ -7,6 +7,7 @@ writes live in manager.setup.controller so they can be tested without a desktop.
 from PyQt5 import QtCore, QtWidgets
 
 from .. import device_import
+from .. import support
 from ..device_management import (
     CONNECTED,
     DISABLED,
@@ -144,7 +145,7 @@ class ERPNextPage(QtWidgets.QWizardPage):
         try:
             self.wizard_ref.controller.validate_erpnext(config)
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Configuration", str(exc))
+            QtWidgets.QMessageBox.warning(self, "Configuration", support.configuration_invalid_message([str(exc)]).compact())
             return False
         return True
 
@@ -345,7 +346,7 @@ class DevicesPage(QtWidgets.QWizardPage):
         try:
             self.wizard_ref.controller.validate(config)
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Configuration", str(exc))
+            QtWidgets.QMessageBox.warning(self, "Configuration", support.configuration_invalid_message([str(exc)]).compact())
             return False
         return True
 
@@ -431,7 +432,7 @@ class DevicesPage(QtWidgets.QWizardPage):
             self._write_text_file(path, device_import.export_devices_csv(self.to_models()))
             self.result.setText("Devices exported.")
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Export Devices", "Could not export devices. " + str(exc))
+            QtWidgets.QMessageBox.warning(self, "Export Devices", support.file_operation_failed_message("exported").compact())
 
     def save_template(self):
         file_dialog = getattr(QtWidgets, "QFileDialog", None)
@@ -445,7 +446,7 @@ class DevicesPage(QtWidgets.QWizardPage):
             self._write_text_file(path, device_import.template_csv())
             self.result.setText("Template saved.")
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Save Template", "Could not save template. " + str(exc))
+            QtWidgets.QMessageBox.warning(self, "Save Template", support.file_operation_failed_message("saved").compact())
 
     def _item_text(self, row, column):
         item = self.table.item(row, column)
@@ -824,7 +825,7 @@ class SaveConfigurationPage(QtWidgets.QWizardPage):
             self.message.setText("Configuration saved securely. Synchronization service is running.")
             return True
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Setup", str(exc))
+            QtWidgets.QMessageBox.warning(self, "Setup", support.configuration_invalid_message([str(exc)]).compact())
             return False
 
 
