@@ -71,8 +71,7 @@ def _missing_employee_warnings(config_module):
             lines = failed_log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
         except OSError:
             continue
-        count += sum("No Employee found for the given employee field value" in line for line in lines)
+        count += sum("No Employee found" in line for line in lines)
     if not count:
         return []
     return [str(count) + " attendance records could not be matched to ERPNext employees."]
-

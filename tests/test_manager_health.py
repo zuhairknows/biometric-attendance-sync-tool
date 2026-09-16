@@ -69,7 +69,7 @@ class ManagerHealthTests(unittest.TestCase):
         failed_log = self.logs_directory / "attendance_failed_log_DEVICE_01.log"
         failed_log.write_text(
             "No Employee found for the given employee field value\n"
-            "No Employee found for the given employee field value\n",
+            "No Employee found for attendance_device_id\n",
             encoding="utf-8",
         )
 
@@ -80,4 +80,3 @@ class ManagerHealthTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

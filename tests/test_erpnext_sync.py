@@ -1,5 +1,6 @@
 import datetime
 import importlib
+import json
 import logging
 import os
 import shutil
@@ -54,6 +55,20 @@ class FakeAttendance:
         self.timestamp = timestamp
         self.punch = punch
         self.status = status
+
+
+def erpnext_response(status_code, payload):
+    return types.SimpleNamespace(
+        status_code=status_code,
+        _content=json.dumps(payload).encode("utf-8"),
+    )
+
+
+def erpnext_validation_response(message, status_code=417):
+    return erpnext_response(
+        status_code,
+        {"exc": json.dumps(["frappe.exceptions.ValidationError: " + message])},
+    )
 
 
 class FakeZK:
@@ -236,6 +251,21 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         self.assertIn("DUPLICATE_ALREADY_SYNCED", success_log)
         self.assertEqual(failed_log, "")
 
+    def test_duplicate_timestamp_erpnext_response_is_idempotent_success(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.requests.request.return_value = erpnext_validation_response(sync.DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE)
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
+        logs = [{"uid": 1, "user_id": "duplicate", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
+
+        sync.pull_process_and_push_data(device, logs)
+
+        success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
+        failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
+        error_log = (self.logs_directory / "error.log").read_text()
+        self.assertIn("DUPLICATE_ALREADY_SYNCED", success_log)
+        self.assertEqual(failed_log, "")
+        self.assertNotIn("Error during ERPNext API Call", error_log)
+
     def test_duplicate_employee_checkin_advances_local_checkpoint(self):
         sync = load_sync_module(self.logs_directory)
         first_run_sent = []
@@ -262,6 +292,35 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
         self.assertEqual(second_run_sent, ["later"])
 
+    def test_duplicate_timestamp_is_not_written_repeatedly_to_failed_retry_storage(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.requests.request.return_value = erpnext_validation_response(sync.DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE)
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
+        duplicate_log = {"uid": 1, "user_id": "duplicate", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}
+
+        sync.pull_process_and_push_data(device, [duplicate_log])
+        sync.pull_process_and_push_data(device, [duplicate_log])
+
+        failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
+        success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
+        self.assertEqual(failed_log, "")
+        self.assertEqual(sync.requests.request.call_count, 1)
+        self.assertEqual(success_log.count("DUPLICATE_ALREADY_SYNCED"), 1)
+
+    def test_missing_employee_attendance_device_id_remains_actionable_failure(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.requests.request.return_value = erpnext_validation_response(sync.EMPLOYEE_NOT_FOUND_ATTENDANCE_DEVICE_ID_MESSAGE)
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
+        logs = [{"uid": 1, "user_id": "missing", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
+
+        sync.pull_process_and_push_data(device, logs)
+
+        failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
+        success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
+        self.assertIn("417", failed_log)
+        self.assertIn("missing", failed_log)
+        self.assertNotIn("DUPLICATE_ALREADY_SYNCED", success_log)
+
     def test_unrelated_http_417_remains_failure(self):
         sync = load_sync_module(self.logs_directory)
 
@@ -278,6 +337,47 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         self.assertIn("417", failed_log)
         self.assertNotIn("DUPLICATE_ALREADY_SYNCED", failed_log)
+
+    def test_http_417_with_duplicate_text_but_unrelated_validation_remains_failure(self):
+        sync = load_sync_module(self.logs_directory)
+
+        def fake_send(user_id, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
+            return 417, "A different validation failure occurred."
+
+        sync.send_to_erpnext = fake_send
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
+        logs = [{"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
+
+        with self.assertRaisesRegex(Exception, "API Call to ERPNext Failed"):
+            sync.pull_process_and_push_data(device, logs)
+
+    def test_http_5xx_responses_remain_retryable_failures(self):
+        for status_code in [500, 503]:
+            with self.subTest(status_code=status_code):
+                sync = load_sync_module(self.logs_directory)
+
+                def fake_send(user_id, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
+                    return status_code, "Temporary ERPNext server failure"
+
+                sync.send_to_erpnext = fake_send
+                device_id = "DEVICE_" + str(status_code)
+                device = {"device_id": device_id, "ip": "192.0.2.10", "punch_direction": None}
+                logs = [{"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
+
+                with self.assertRaisesRegex(Exception, "API Call to ERPNext Failed"):
+                    sync.pull_process_and_push_data(device, logs)
+
+                failed_log = (self.logs_directory / ("attendance_failed_log_" + device_id + ".log")).read_text()
+                self.assertIn(str(status_code), failed_log)
+
+    def test_send_to_erpnext_200_response_remains_success(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.requests.request.return_value = erpnext_response(200, {"message": {"name": "CHECKIN-0001"}})
+
+        status_code, message = sync.send_to_erpnext("100", datetime.datetime(2026, 8, 27, 8, 0), "DEVICE_01")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(message, "CHECKIN-0001")
 
     def test_later_punches_are_processed_after_duplicate(self):
         sync = load_sync_module(self.logs_directory)

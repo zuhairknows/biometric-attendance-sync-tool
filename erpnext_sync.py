@@ -30,6 +30,7 @@ if config is None:
     config = load_config()
 
 EMPLOYEE_NOT_FOUND_ERROR_MESSAGE = "No Employee found for the given employee field value"
+EMPLOYEE_NOT_FOUND_ATTENDANCE_DEVICE_ID_MESSAGE = "No Employee found for attendance_device_id"
 EMPLOYEE_INACTIVE_ERROR_MESSAGE = "Transactions cannot be created for an Inactive Employee"
 DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE = "This employee already has a log with the same timestamp"
 allowlisted_errors = [EMPLOYEE_NOT_FOUND_ERROR_MESSAGE, EMPLOYEE_INACTIVE_ERROR_MESSAGE, DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE]
@@ -193,7 +194,7 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
-            if not(any(error in erpnext_message for error in allowlisted_errors)):
+            if not is_non_retryable_attendance_failure(erpnext_message):
                 raise Exception('API Call to ERPNext Failed.')
 
 
@@ -280,7 +281,9 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
         return 200, json.loads(response._content)['message']['name']
     else:
         error_str = _safe_get_error_str(response)
-        if EMPLOYEE_NOT_FOUND_ERROR_MESSAGE in error_str:
+        if is_duplicate_employee_checkin_response(response.status_code, error_str):
+            info_logger.info('\t'.join(['Duplicate Employee Checkin already exists in ERPNext.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
+        elif is_missing_employee_response(error_str):
             error_logger.error('\t'.join(['Error during ERPNext API Call.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), error_str]))
             # TODO: send email?
         else:
@@ -288,7 +291,22 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
         return response.status_code, error_str
 
 def is_duplicate_employee_checkin_response(status_code, message):
-    return status_code == 417 and DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE in message
+    return int(status_code or 0) == 417 and DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE in str(message or "")
+
+def is_missing_employee_response(message):
+    text = str(message or "")
+    return EMPLOYEE_NOT_FOUND_ERROR_MESSAGE in text or EMPLOYEE_NOT_FOUND_ATTENDANCE_DEVICE_ID_MESSAGE in text
+
+def is_non_retryable_attendance_failure(message):
+    text = str(message or "")
+    for error in allowlisted_errors:
+        if error == DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE:
+            continue
+        if error == EMPLOYEE_NOT_FOUND_ERROR_MESSAGE and is_missing_employee_response(text):
+            return True
+        if error in text:
+            return True
+    return False
 
 def validate_runtime_config(config_module=None):
     config_module = config_module or config
