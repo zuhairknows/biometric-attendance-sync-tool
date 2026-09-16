@@ -575,6 +575,17 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         self.assertEqual(self.window.device_table.item(0, 2).text(), "Connected")
         self.assertEqual(self.window.device_table.item(1, 2).text(), "Failed")
 
+    def test_device_table_keeps_connection_and_sync_outcome_separate(self):
+        self.window.device_connection_status["DEVICE_01"] = "Connected"
+
+        self.window._populate_devices([
+            DeviceHealth("DEVICE_01", "192.0.2.10", 4370, sync_outcome="DEVICE_SUCCESS_WITH_WARNINGS"),
+        ])
+
+        self.assertEqual(self.window.device_table.labels, ["Device", "Address", "Connection", "Latest Sync", "Last Pull", "Last Push"])
+        self.assertEqual(self.window.device_table.item(0, 2).text(), "Connected")
+        self.assertEqual(self.window.device_table.item(0, 3).text(), "Success with warnings")
+
     def test_second_device_test_replaces_prior_status(self):
         self.window.device_connection_status["DEVICE_01"] = "Failed"
         result = DiagnosticResult(
@@ -796,6 +807,7 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
         self.assertIs(self.window.central, self.window.scroll_area)
         self.assertTrue(self.window.scroll_area.widget_resizable)
         self.assertIsNotNone(self.window.scroll_area.widget)
+        self.assertEqual(self.window.size, (800, 600))
 
     def test_button_grid_wraps_large_action_sets(self):
         buttons = [FakeButton(str(index)) for index in range(7)]
@@ -915,11 +927,108 @@ class DashboardPresentationTests(unittest.TestCase):
         self.assertEqual(dashboard.system_state, app_module.WARNING)
         self.assertIn("3 attendance records", dashboard.action_text)
 
-    def test_secret_material_is_not_rendered_in_dashboard_text(self):
+    def test_structured_cycle_summary_renders_customer_friendly_counts(self):
+        health = HealthSnapshot(
+            warnings=[
+                "Missing Employee mappings: 2",
+                "Corrupt attendance records skipped: 1",
+                "Permanent validation/data failures: 1",
+                "Retryable synchronization failures: 1",
+            ],
+            cycle_summary={
+                "completed_at": "2026-09-15 14:30:00",
+                "total_enabled_devices_attempted": 4,
+                "successful": 1,
+                "successful_with_warnings": 1,
+                "retryable_failures": 1,
+                "failed": 1,
+                "stopped_early": False,
+            },
+        )
+
+        dashboard = app_module.build_dashboard_presentation(
+            self.configured_status(),
+            ServiceStatus(installed=True, state="Running"),
+            health,
+            {"enabled_devices": 4, "total_devices": 4},
+            app_module.ERP_NOT_TESTED,
+            "",
+            {},
+        )
+
+        self.assertEqual(dashboard.last_sync_text, "15 Sep 2026, 14:30")
+        rendered = "\n".join(dashboard.last_sync_detail)
+        self.assertIn("Devices attempted: 4", rendered)
+        self.assertIn("Successful devices: 1", rendered)
+        self.assertIn("Successful with warnings: 1", rendered)
+        self.assertIn("Retryable failures: 1", rendered)
+        self.assertIn("Failed devices: 1", rendered)
+        self.assertIn("Missing Employee mappings: 2", rendered)
+        self.assertNotIn("DEVICE_SUCCESS", rendered)
+
+    def test_no_cycle_state_is_clear_without_verified_zero_counts(self):
         dashboard = app_module.build_dashboard_presentation(
             self.configured_status(),
             ServiceStatus(installed=True, state="Running"),
             HealthSnapshot(),
+            {},
+            app_module.ERP_NOT_TESTED,
+            "",
+            {},
+        )
+
+        self.assertEqual(dashboard.last_sync_text, "No sync data yet")
+        self.assertEqual(dashboard.last_sync_detail, ["No completed synchronization cycle has been recorded yet."])
+        self.assertNotIn("Devices attempted: 0", "\n".join(dashboard.last_sync_detail))
+
+    def test_legacy_status_without_cycle_uses_existing_last_sync(self):
+        dashboard = app_module.build_dashboard_presentation(
+            self.configured_status(),
+            ServiceStatus(installed=True, state="Running"),
+            HealthSnapshot(last_successful_sync="2026-09-15 14:30:00", warnings=["Missing Employee mappings: 1"]),
+            {},
+            app_module.ERP_NOT_TESTED,
+            "",
+            {},
+        )
+
+        self.assertEqual(dashboard.last_sync_text, "15 Sep 2026, 14:30")
+        self.assertEqual(dashboard.last_sync_detail, ["Missing Employee mappings: 1"])
+
+    def test_stopped_early_message_is_neutral(self):
+        detail = app_module.build_latest_sync_detail({
+            "total_enabled_devices_attempted": 1,
+            "successful": 1,
+            "successful_with_warnings": 0,
+            "retryable_failures": 0,
+            "failed": 0,
+            "stopped_early": True,
+        })
+
+        rendered = "\n".join(detail)
+        self.assertIn("stopped before all devices were processed", rendered)
+        self.assertNotIn("failed before all devices", rendered.lower())
+
+    def test_sync_outcome_labels_are_user_friendly(self):
+        self.assertEqual(app_module.sync_outcome_label("DEVICE_SUCCESS"), "Success")
+        self.assertEqual(app_module.sync_outcome_label("DEVICE_SUCCESS_WITH_WARNINGS"), "Success with warnings")
+        self.assertEqual(app_module.sync_outcome_label("DEVICE_RETRYABLE_FAILURE"), "Retryable failure")
+        self.assertEqual(app_module.sync_outcome_label("DEVICE_FAILED"), "Failed")
+        self.assertEqual(app_module.sync_outcome_label(""), "No sync data")
+
+    def test_secret_material_is_not_rendered_in_dashboard_text(self):
+        dashboard = app_module.build_dashboard_presentation(
+            self.configured_status(),
+            ServiceStatus(installed=True, state="Running"),
+            HealthSnapshot(cycle_summary={
+                "completed_at": "2026-09-15 14:30:00",
+                "total_enabled_devices_attempted": 1,
+                "successful": 1,
+                "devices": [{
+                    "device_id": "DEVICE_01",
+                    "message": "Traceback token key:SUPER_SECRET_VALUE raw attendance payload",
+                }],
+            }),
             {"erpnext_url": "https://erp.example.test", "api_secret": "SUPER_SECRET_VALUE", "enabled_devices": 0, "total_devices": 0},
             app_module.ERP_NOT_TESTED,
             "",
@@ -928,6 +1037,8 @@ class DashboardPresentationTests(unittest.TestCase):
         rendered = json.dumps(dashboard, default=lambda value: getattr(value, "__dict__", str(value)))
 
         self.assertNotIn("SUPER_SECRET_VALUE", rendered)
+        self.assertNotIn("Traceback", rendered)
+        self.assertNotIn("raw attendance payload", rendered)
 
 
 class DashboardOperationalUxTests(unittest.TestCase):

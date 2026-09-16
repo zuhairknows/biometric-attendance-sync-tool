@@ -53,7 +53,8 @@ class DashboardPresentation:
     erpnext: ComponentPresentation = field(default_factory=lambda: ComponentPresentation("Not tested", "Run Test ERPNext to verify connectivity."))
     service: ComponentPresentation = field(default_factory=lambda: ComponentPresentation("Unknown", "Service status has not been refreshed."))
     devices: DeviceDashboardSummary = field(default_factory=DeviceDashboardSummary)
-    last_sync_text: str = "No successful synchronization recorded"
+    last_sync_text: str = "No sync data yet"
+    last_sync_detail: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     action_text: str = ""
 
@@ -105,7 +106,7 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.config_module = None
         self.sync_module = None
         self.setWindowTitle(APP_NAME)
-        self.resize(900, 760)
+        self.resize(800, 600)
         self._build_ui()
         self.refresh()
         if self.auto_launch_setup:
@@ -326,8 +327,8 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
     def _devices_group(self):
         group = QtWidgets.QGroupBox("Devices")
         layout = QtWidgets.QVBoxLayout(group)
-        self.device_table = QtWidgets.QTableWidget(0, 5)
-        self.device_table.setHorizontalHeaderLabels(["Device", "Address", "Status", "Last Pull", "Last Push"])
+        self.device_table = QtWidgets.QTableWidget(0, 6)
+        self.device_table.setHorizontalHeaderLabels(["Device", "Address", "Connection", "Latest Sync", "Last Pull", "Last Push"])
         self.device_table.horizontalHeader().setStretchLastSection(True)
         self.device_table.verticalHeader().setVisible(False)
         self.device_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -568,12 +569,15 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
                 device.device_id,
                 str(device.ip) + ":" + str(device.port) if device.ip else "",
                 self.device_connection_status.get(device.device_id, "Unknown"),
+                sync_outcome_label(getattr(device, "sync_outcome", "")),
                 device.last_pull or "Never",
                 device.last_push or "Never",
             ]
             for column, value in enumerate(values):
                 if column == 2:
                     self.device_table.setItem(row, column, self._device_status_item(value))
+                elif column == 3:
+                    self.device_table.setItem(row, column, self._sync_outcome_item(getattr(device, "sync_outcome", "")))
                 else:
                     self.device_table.setItem(row, column, QtWidgets.QTableWidgetItem(value))
         self.device_table.resizeColumnsToContents()
@@ -873,6 +877,17 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             item.setForeground(QtCore.Qt.gray)
         return item
 
+    def _sync_outcome_item(self, outcome):
+        label = sync_outcome_label(outcome)
+        item = QtWidgets.QTableWidgetItem(label)
+        if label == "Success":
+            item.setForeground(QtCore.Qt.darkGreen)
+        elif label in ("Retryable failure", "Failed"):
+            item.setForeground(QtCore.Qt.red)
+        elif label == "No sync data":
+            item.setForeground(QtCore.Qt.gray)
+        return item
+
     def _parse_device_result(self, detail):
         if " - Connected" in detail:
             return detail.split(" ", 1)[0], "Connected"
@@ -971,8 +986,8 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             + " | Not tested: "
             + str(dashboard.devices.not_tested)
         )
-        self._set_state(self.last_sync_card_status, dashboard.last_sync_text, "ok" if dashboard.last_sync_text != "No successful synchronization recorded" else "unknown")
-        self.last_sync_card_detail.setText("\n".join(dashboard.warnings))
+        self._set_state(self.last_sync_card_status, dashboard.last_sync_text, "ok" if dashboard.last_sync_text != "No sync data yet" else "unknown")
+        self.last_sync_card_detail.setText("\n".join(dashboard.last_sync_detail))
 
     def _show_about(self):
         version_text = ""
@@ -1057,9 +1072,13 @@ def build_dashboard_presentation(configuration_status, service_status, health, c
     erpnext = build_erpnext_presentation(configuration_status, erpnext_state, erpnext_detail)
     service = build_service_presentation(service_status)
     warnings = list(getattr(health, "warnings", []) or [])
-    last_sync_text = "No successful synchronization recorded"
-    if health and getattr(health, "last_successful_sync", ""):
+    cycle_summary = getattr(health, "cycle_summary", {}) if health is not None else {}
+    last_sync_text = "No sync data yet"
+    if cycle_summary and cycle_summary.get("completed_at"):
+        last_sync_text = format_sync_timestamp(cycle_summary.get("completed_at"))
+    elif health and getattr(health, "last_successful_sync", ""):
         last_sync_text = format_sync_timestamp(health.last_successful_sync)
+    last_sync_detail = build_latest_sync_detail(cycle_summary, warnings)
 
     system_state, system_detail = derive_system_state(
         configuration_status,
@@ -1077,6 +1096,7 @@ def build_dashboard_presentation(configuration_status, service_status, health, c
         service=service,
         devices=device_summary,
         last_sync_text=last_sync_text,
+        last_sync_detail=last_sync_detail,
         warnings=warnings,
         action_text=action_text,
     )
@@ -1158,6 +1178,43 @@ def format_sync_timestamp(value):
         return parsed.strftime("%d %b %Y, %H:%M")
     except ValueError:
         return text
+
+
+def build_latest_sync_detail(cycle_summary, warnings=None):
+    warnings = list(warnings or [])
+    if not cycle_summary:
+        if warnings:
+            return warnings
+        return ["No completed synchronization cycle has been recorded yet."]
+    lines = [
+        "Devices attempted: " + str(_safe_int(cycle_summary.get("total_enabled_devices_attempted"))),
+        "Successful devices: " + str(_safe_int(cycle_summary.get("successful"))),
+        "Successful with warnings: " + str(_safe_int(cycle_summary.get("successful_with_warnings"))),
+        "Retryable failures: " + str(_safe_int(cycle_summary.get("retryable_failures"))),
+        "Failed devices: " + str(_safe_int(cycle_summary.get("failed"))),
+    ]
+    if cycle_summary.get("stopped_early"):
+        lines.append("Last synchronization stopped before all devices were processed.")
+    if warnings:
+        lines.extend(warnings)
+    return lines
+
+
+def sync_outcome_label(outcome):
+    labels = {
+        "DEVICE_SUCCESS": "Success",
+        "DEVICE_SUCCESS_WITH_WARNINGS": "Success with warnings",
+        "DEVICE_RETRYABLE_FAILURE": "Retryable failure",
+        "DEVICE_FAILED": "Failed",
+    }
+    return labels.get(str(outcome or ""), "No sync data")
+
+
+def _safe_int(value):
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def build_action_text(system_state, warnings, erpnext_state, device_summary):
