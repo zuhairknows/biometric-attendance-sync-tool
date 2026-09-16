@@ -24,6 +24,9 @@ WARNING = "WARNING"
 ERROR = "ERROR"
 UNKNOWN = "UNKNOWN"
 
+CONNECTION_COLUMN = 2
+LATEST_SYNC_COLUMN = 3
+
 ERP_NOT_TESTED = "not_tested"
 ERP_CONNECTED = "connected"
 ERP_FAILED = "failed"
@@ -96,7 +99,16 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         self.active_jobs = []
         self.sync_running = False
         self.refresh_running = False
+        # Refresh results are stamped so a slow background refresh that started
+        # before a connectivity test or a service action cannot land afterwards and
+        # repaint the dashboard from state that is already known to be stale.
+        self._refresh_generation = 0
+        self._applied_refresh_generation = 0
+        self._refresh_pending = False
+        # Connection is deliberately separate from Latest Sync: it is owned by the
+        # connectivity test and stays authoritative until the next one runs.
         self.device_connection_status = {}
+        self._device_rows = {}
         self.erpnext_connection_state = ERP_NOT_TESTED
         self.erpnext_connection_detail = "Run Test ERPNext to verify connectivity."
         self.last_service_status = None
@@ -379,14 +391,23 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
 
     def refresh(self):
         if self.refresh_running:
+            # Queue instead of dropping: callers such as the connectivity test and
+            # the service actions rely on this repaint to publish their result.
+            self._refresh_pending = True
             self._append_message("Refresh is already running.")
             return
         self.refresh_running = True
+        self._refresh_pending = False
+        self._refresh_generation += 1
+        generation = self._refresh_generation
         self.refresh_button.setEnabled(False)
         if hasattr(self, "primary_refresh_button"):
             self.primary_refresh_button.setEnabled(False)
         self.refresh_label.setText("Refreshing...")
-        self._run_worker(self._collect_refresh_snapshot, self._handle_refresh_result)
+        self._run_worker(
+            self._collect_refresh_snapshot,
+            lambda result, refresh_generation=generation: self._handle_refresh_result(result, refresh_generation),
+        )
 
     def _collect_refresh_snapshot(self):
         snapshot = DashboardSnapshot()
@@ -446,11 +467,18 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             messages.append("Configuration could not be loaded. The manager can still control the synchronization service.")
             return None, None, messages
 
-    def _handle_refresh_result(self, result):
+    def _handle_refresh_result(self, result, generation=None):
         self.refresh_running = False
         self.refresh_button.setEnabled(True)
         if hasattr(self, "primary_refresh_button"):
             self.primary_refresh_button.setEnabled(True)
+        if generation is not None and generation <= self._applied_refresh_generation:
+            # A newer refresh already painted the dashboard; this one is stale.
+            APP_LOGGER.debug("Discarding stale refresh result")
+            self._run_pending_refresh()
+            return
+        if generation is not None:
+            self._applied_refresh_generation = generation
         if isinstance(result, Exception):
             APP_LOGGER.exception("Refresh worker failed", exc_info=(type(result), result, result.__traceback__))
             snapshot = DashboardSnapshot(
@@ -461,6 +489,13 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
         else:
             snapshot = result
         self._apply_refresh_snapshot(snapshot)
+        self._run_pending_refresh()
+
+    def _run_pending_refresh(self):
+        if not self._refresh_pending or self.refresh_running:
+            return
+        self._refresh_pending = False
+        self.refresh()
 
     def _apply_refresh_snapshot(self, snapshot):
         self.configuration_status = snapshot.configuration_status
@@ -564,23 +599,47 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
 
     def _populate_devices(self, devices):
         self.device_table.setRowCount(len(devices))
+        # device_id is the model identity. The visual row index is only ever a
+        # coordinate for painting, so reordering devices cannot shuffle state.
+        self._device_rows = {}
         for row, device in enumerate(devices):
+            device_id = device.device_id
+            self._device_rows[device_id] = row
             values = [
-                device.device_id,
+                device_id,
                 str(device.ip) + ":" + str(device.port) if device.ip else "",
-                self.device_connection_status.get(device.device_id, "Unknown"),
+                self._connection_status_for(device_id),
                 sync_outcome_label(getattr(device, "sync_outcome", "")),
                 device.last_pull or "Never",
                 device.last_push or "Never",
             ]
             for column, value in enumerate(values):
-                if column == 2:
+                if column == CONNECTION_COLUMN:
                     self.device_table.setItem(row, column, self._device_status_item(value))
-                elif column == 3:
+                elif column == LATEST_SYNC_COLUMN:
                     self.device_table.setItem(row, column, self._sync_outcome_item(getattr(device, "sync_outcome", "")))
                 else:
                     self.device_table.setItem(row, column, QtWidgets.QTableWidgetItem(value))
         self.device_table.resizeColumnsToContents()
+
+    def _connection_status_for(self, device_id):
+        return self.device_connection_status.get(device_id, "Unknown")
+
+    def _apply_device_connection_status(self):
+        """Repaint only the Connection column from the latest connectivity test.
+
+        The dashboard refresh is a separate, slower worker. Publishing the test
+        result here means the column is correct as soon as the test finishes,
+        whether or not a refresh happens to be in flight.
+        """
+        for device_id, row in self._device_rows.items():
+            if row >= self.device_table.rowCount():
+                continue
+            self.device_table.setItem(
+                row,
+                CONNECTION_COLUMN,
+                self._device_status_item(self._connection_status_for(device_id)),
+            )
 
     def _run_service_action(self, running_message, callback):
         self._set_busy(True)
@@ -675,6 +734,11 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
                 self.erpnext_connection_detail = self._diagnostic_message_text(result)
             if button is self.device_button:
                 self._store_device_test_results(result.details)
+                # Publish straight to the table and the dashboard card. refresh()
+                # may be queued behind an in-flight refresh, and the connection
+                # result must not wait on it.
+                self._apply_device_connection_status()
+                self._render_dashboard()
         if is_sync:
             self.sync_running = False
             self.sync_button.setText("Sync Now")

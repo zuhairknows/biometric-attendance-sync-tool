@@ -50,11 +50,30 @@ ERPNEXT_REQUEST_TIMEOUT = getattr(config, 'ERPNEXT_REQUEST_TIMEOUT', getattr(con
 DEFAULT_ZK_PORT = 4370
 DEFAULT_ZK_PASSWORD = 0
 
+# Record layouts pyzk's get_attendance() actually knows how to decode. Anything
+# else means we could not prove where one record ends and the next begins, so the
+# buffer must not be decoded at a guessed stride.
+SUPPORTED_ATTENDANCE_RECORD_SIZES = (8, 16, 40)
+# ZKTeco's DecodeTime packs the whole timestamp into one uint32, so *any* four
+# bytes yield a datetime somewhere in 2000-2133. Misaligned data therefore decodes
+# "successfully" most of the time, which is why semantic validation is mandatory
+# before anything reaches ERPNext.
+#
+# These are read with the same getattr(config, NAME, default) mechanism the module
+# already uses for ERPNEXT_VERSION and friends. Note that both config loaders build
+# the runtime namespace from an explicit allowlist, so these are not settable from
+# config.json or local_config.py without a schema change; that change is
+# deliberately out of scope for this hotfix and the defaults below apply.
+MAX_ATTENDANCE_FUTURE_SKEW_MINUTES = getattr(config, 'MAX_ATTENDANCE_FUTURE_SKEW_MINUTES', 5)
+MIN_ATTENDANCE_YEAR = getattr(config, 'MIN_ATTENDANCE_YEAR', 2000)
+MAX_ATTENDANCE_USER_ID_LENGTH = getattr(config, 'MAX_ATTENDANCE_USER_ID_LENGTH', 64)
+
 SUCCESS = "SUCCESS"
 IDEMPOTENT_SUCCESS = "IDEMPOTENT_SUCCESS"
 TERMINAL_DATA_FAILURE = "TERMINAL_DATA_FAILURE"
 RETRYABLE_FAILURE = "RETRYABLE_FAILURE"
 VALIDATION_FAILURE = "VALIDATION_FAILURE"
+UNSUPPORTED_RECORD_LAYOUT = "UNSUPPORTED_RECORD_LAYOUT"
 
 DEVICE_SUCCESS = "DEVICE_SUCCESS"
 DEVICE_SUCCESS_WITH_WARNINGS = "DEVICE_SUCCESS_WITH_WARNINGS"
@@ -93,6 +112,16 @@ class RetryableSyncError(Exception):
     pass
 
 
+class UnsupportedAttendanceRecordLayout(Exception):
+    """Raised when the attendance buffer cannot be split into provable records.
+
+    Decoding at a guessed stride produces plausible-looking punches from garbage,
+    so the whole device is failed instead. One device failing safely is preferable
+    to corrupt attendance reaching ERPNext.
+    """
+    pass
+
+
 @dataclass
 class DeviceSyncResult:
     device_id: str
@@ -105,6 +134,7 @@ class DeviceSyncResult:
     missing_employee_count: int = 0
     validation_failure_count: int = 0
     corrupt_record_count: int = 0
+    invalid_record_count: int = 0
     retryable_failure_count: int = 0
     error_category: str = ""
     message: str = ""
@@ -240,6 +270,17 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
             return result
     device_attendance_logs = normalize_attendance_logs(device_attendance_logs)
     result.fetched_record_count = len(device_attendance_logs)
+    # Reject malformed punches before anything is sent to ERPNext, before the
+    # success-log checkpoint is consulted, and without counting them as missing
+    # Employee or ERPNext validation failures.
+    device_attendance_logs, rejected_attendance_logs = partition_valid_attendance_logs(device_attendance_logs)
+    for rejected_log, reason in rejected_attendance_logs:
+        result.invalid_record_count += 1
+        audit_invalid_attendance_record(device['device_id'], rejected_log, reason)
+    if rejected_attendance_logs and not device_attendance_logs:
+        result.completed_at = str(datetime.datetime.now())
+        result.outcome = classify_completed_device_outcome(result)
+        return result
     # for finding the last successfull push and restart from that point (or) from a set 'config.IMPORT_START_DATE' (whichever is later)
     index_of_last = -1
     last_line = get_last_line_from_file('/'.join([config.LOGS_DIRECTORY, attendance_success_log_file])+'.log')
@@ -375,6 +416,11 @@ def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, passwor
             elif clear_from_device_on_fetch:
                 x = conn.clear_attendance()
                 info_logger.info("\t".join((ip, "Attendance Clear Attempted. Result:", str(x))))
+    except UnsupportedAttendanceRecordLayout:
+        # Keep this distinct from a transport failure: the device answered, we just
+        # refuse to guess at its record boundaries.
+        error_logger.exception(str(ip)+' unsupported attendance record layout...')
+        raise
     except:
         error_logger.exception(str(ip)+' exception when fetching from device...')
         raise Exception('Device fetch failed.')
@@ -399,6 +445,7 @@ def classify_completed_device_outcome(result):
         result.missing_employee_count
         or result.validation_failure_count
         or result.corrupt_record_count
+        or result.invalid_record_count
     ):
         return DEVICE_SUCCESS_WITH_WARNINGS
     return DEVICE_SUCCESS
@@ -424,6 +471,16 @@ def device_sync_result_from_exception(device, exc):
         device_id = "UNKNOWN"
     now = str(datetime.datetime.now())
     message = str(exc)
+    if isinstance(exc, UnsupportedAttendanceRecordLayout):
+        # Not retryable and not an ERPNext problem: the decoder refused the buffer.
+        return DeviceSyncResult(
+            device_id=device_id,
+            outcome=DEVICE_FAILED,
+            started_at=now,
+            completed_at=now,
+            error_category=UNSUPPORTED_RECORD_LAYOUT,
+            message=safe_device_result_message(exc),
+        )
     is_retryable = isinstance(exc, RetryableSyncError) or message in ("Device fetch failed.", "API Call to ERPNext Failed.")
     return DeviceSyncResult(
         device_id=device_id,
@@ -439,6 +496,8 @@ def device_sync_result_from_exception(device, exc):
 def safe_device_result_message(exc):
     if isinstance(exc, RetryableSyncError):
         return "Retryable synchronization failure."
+    if isinstance(exc, UnsupportedAttendanceRecordLayout):
+        return "Attendance record layout is not supported for this device."
     text = str(exc)
     if text == "Device fetch failed.":
         return "Device communication failed."
@@ -501,8 +560,13 @@ def get_attendance_with_corrupt_record_recovery(conn, device_id=None, ip=None):
     total_size = unpack("I", attendance_data[:4])[0]
     if not getattr(conn, "records", 0):
         return []
-    record_size = int(total_size / conn.records)
     attendance_data = attendance_data[4:]
+    record_size = resolve_attendance_record_size(total_size, conn.records, len(attendance_data))
+    if record_size is None:
+        audit_unsupported_attendance_layout(device_id, ip, total_size, conn.records, len(attendance_data))
+        raise UnsupportedAttendanceRecordLayout(
+            "Attendance record layout could not be proven for this device."
+        )
 
     if record_size == 8:
         record_index = 0
@@ -560,8 +624,138 @@ def get_attendance_with_corrupt_record_recovery(conn, device_id=None, ip=None):
     return attendances
 
 
+def resolve_attendance_record_size(total_size, records, payload_length):
+    """Return the record stride only when pyzk's layout can be proven for this buffer.
+
+    Upstream pyzk computes ``total_size / records`` and treats every value that is
+    not 8 or 16 as the 40-byte layout. That makes the 40-byte branch a catch-all:
+    a device whose real stride is something else still gets sliced every 40 bytes,
+    and because DecodeTime maps any four bytes onto a valid datetime, the garbage
+    that falls out looks like real attendance. Returning None here keeps the caller
+    from decoding a buffer whose record boundaries are unknown.
+    """
+    try:
+        total_size = int(total_size)
+        records = int(records)
+        payload_length = int(payload_length)
+    except (TypeError, ValueError):
+        return None
+    if records <= 0 or total_size <= 0:
+        return None
+    if total_size % records:
+        # A non-integral stride means total_size and records disagree; pyzk would
+        # silently truncate this to an int and pick a layout the device never sent.
+        return None
+    record_size = total_size // records
+    if record_size not in SUPPORTED_ATTENDANCE_RECORD_SIZES:
+        return None
+    if payload_length < total_size:
+        # Short buffer: the tail records are incomplete, so boundaries are unproven.
+        return None
+    return record_size
+
+
 def decode_attendance_timestamp(conn, raw_timestamp):
     return getattr(conn, "_ZK__decode_time")(raw_timestamp)
+
+
+def audit_unsupported_attendance_layout(device_id, ip, total_size, records, payload_length):
+    safe_device_id = str(device_id or "UNKNOWN")
+    info_logger.error("\t".join([
+        "Attendance record layout could not be proven; device fetch refused.",
+        "device_id=" + safe_device_id,
+        "host=" + str(ip or ""),
+        "total_size=" + str(total_size),
+        "records=" + str(records),
+        "payload_bytes=" + str(payload_length),
+    ]))
+
+
+def validate_attendance_record(attendance_log, now=None):
+    """Check a decoded punch is semantically plausible before it is sent to ERPNext.
+
+    Returns (True, "") for sane records and (False, reason) otherwise. Malformed
+    identifiers are rejected outright rather than normalized: silently stripping
+    control characters would turn garbage into a plausible employee reference.
+    """
+    if not isinstance(attendance_log, dict):
+        return False, "record_not_a_mapping"
+
+    timestamp = attendance_log.get('timestamp')
+    if not isinstance(timestamp, datetime.datetime):
+        return False, "timestamp_not_a_datetime"
+    now = now or datetime.datetime.now()
+    if timestamp > now + datetime.timedelta(minutes=MAX_ATTENDANCE_FUTURE_SKEW_MINUTES):
+        return False, "timestamp_in_future"
+    if timestamp.year < MIN_ATTENDANCE_YEAR:
+        return False, "timestamp_before_supported_range"
+
+    user_id = attendance_log.get('user_id')
+    if isinstance(user_id, bytes):
+        return False, "user_id_not_text"
+    if not isinstance(user_id, (str, int)):
+        return False, "user_id_not_text"
+    user_id = str(user_id)
+    if not user_id.strip():
+        return False, "user_id_empty"
+    if len(user_id) > MAX_ATTENDANCE_USER_ID_LENGTH:
+        return False, "user_id_too_long"
+    if any(character in user_id for character in (' ', '\t', '\r', '\n')):
+        return False, "user_id_contains_whitespace"
+    if not user_id.isprintable():
+        return False, "user_id_contains_control_characters"
+    if not user_id.isascii():
+        return False, "user_id_not_ascii"
+    return True, ""
+
+
+def partition_valid_attendance_logs(attendance_logs, now=None):
+    """Split decoded punches into the ones safe to send and the ones to reject."""
+    valid_logs = []
+    rejected_logs = []
+    for attendance_log in attendance_logs:
+        is_valid, reason = validate_attendance_record(attendance_log, now=now)
+        if is_valid:
+            valid_logs.append(attendance_log)
+        else:
+            rejected_logs.append((attendance_log, reason))
+    return valid_logs, rejected_logs
+
+
+def audit_invalid_attendance_record(device_id, attendance_log, reason):
+    safe_device_id = str(device_id or "UNKNOWN")
+    info_logger.warning("\t".join([
+        "Invalid attendance record rejected locally.",
+        "device_id=" + safe_device_id,
+        "reason=" + str(reason),
+    ]))
+    invalid_log_file = '_'.join(["attendance_invalid_record_log", safe_device_id])
+    invalid_logger = setup_logger(invalid_log_file, '/'.join([config.LOGS_DIRECTORY, invalid_log_file])+'.log')
+    invalid_logger.warning("\t".join([
+        "INVALID_ATTENDANCE_RECORD",
+        safe_device_id,
+        str(reason),
+        safe_attendance_identifier(attendance_log.get('user_id') if isinstance(attendance_log, dict) else None),
+        safe_attendance_timestamp(attendance_log.get('timestamp') if isinstance(attendance_log, dict) else None),
+    ]))
+
+
+def safe_attendance_identifier(user_id):
+    """Render a rejected identifier without writing raw control bytes to the audit."""
+    if user_id is None:
+        return ""
+    if isinstance(user_id, bytes):
+        return "hex:" + user_id.hex()
+    text = str(user_id)
+    if text.isprintable() and text.isascii():
+        return text
+    return "hex:" + text.encode('utf-8', errors='replace').hex()
+
+
+def safe_attendance_timestamp(timestamp):
+    if isinstance(timestamp, datetime.datetime):
+        return timestamp.isoformat(sep=' ')
+    return repr(timestamp)
 
 
 def audit_corrupt_attendance_record(device_id, ip, record_index, record_size, raw_record, exc):
