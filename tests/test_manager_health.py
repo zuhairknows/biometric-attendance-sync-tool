@@ -85,6 +85,26 @@ class ManagerHealthTests(unittest.TestCase):
 
         self.assertEqual(snapshot.warnings, ["Missing Employee mappings: 1"])
 
+    def test_retryable_and_validation_failure_warning_counts(self):
+        failed_log = self.logs_directory / "attendance_failed_log_DEVICE_01.log"
+        failed_log.write_text(
+            "503\t1\t100\t1780000000.0\t0\t1\t{}\n"
+            "0\t2\t101\t1780000060.0\t0\t1\t{}\n",
+            encoding="utf-8",
+        )
+        validation_log = self.logs_directory / "attendance_validation_failure_log_DEVICE_01.log"
+        validation_log.write_text(
+            "VALIDATION_FAILURE\tDEVICE_01\t100\t2026-08-27 08:00:00\t417\tvalidation_failure\n",
+            encoding="utf-8",
+        )
+
+        snapshot = get_health_snapshot(self.config, FakeSyncModule)
+
+        self.assertEqual(snapshot.warnings, [
+            "Retryable synchronization failures: 2",
+            "Permanent validation/data failures: 1",
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,7 @@ import sys
 import time
 import logging
 from logging.handlers import RotatingFileHandler
+from dataclasses import dataclass
 from pickledb import PickleDB
 from zk import ZK, const
 
@@ -47,6 +48,23 @@ ERPNEXT_VERSION = getattr(config, 'ERPNEXT_VERSION', 14)
 ERPNEXT_REQUEST_TIMEOUT = getattr(config, 'ERPNEXT_REQUEST_TIMEOUT', getattr(config, 'REQUEST_TIMEOUT', 30))
 DEFAULT_ZK_PORT = 4370
 DEFAULT_ZK_PASSWORD = 0
+
+SUCCESS = "SUCCESS"
+IDEMPOTENT_SUCCESS = "IDEMPOTENT_SUCCESS"
+TERMINAL_DATA_FAILURE = "TERMINAL_DATA_FAILURE"
+RETRYABLE_FAILURE = "RETRYABLE_FAILURE"
+VALIDATION_FAILURE = "VALIDATION_FAILURE"
+
+
+@dataclass
+class SyncOutcome:
+    status_code: int
+    message: str
+    category: str
+
+    def __iter__(self):
+        yield self.status_code
+        yield self.message
 
 # possible area of further developemt
     # Real-time events - setup getting events pushed from the machine rather then polling.
@@ -133,9 +151,11 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
     attendance_success_log_file = '_'.join(["attendance_success_log", device['device_id']])
     attendance_failed_log_file = '_'.join(["attendance_failed_log", device['device_id']])
     attendance_missing_employee_log_file = '_'.join(["attendance_missing_employee_log", device['device_id']])
+    attendance_validation_failure_log_file = '_'.join(["attendance_validation_failure_log", device['device_id']])
     attendance_success_logger = setup_logger(attendance_success_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_success_log_file])+'.log')
     attendance_failed_logger = setup_logger(attendance_failed_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_failed_log_file])+'.log')
     attendance_missing_employee_logger = setup_logger(attendance_missing_employee_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_missing_employee_log_file])+'.log')
+    attendance_validation_failure_logger = setup_logger(attendance_validation_failure_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_validation_failure_log_file])+'.log')
     if not device_attendance_logs:
         device_attendance_logs = get_all_attendance_from_device(device['ip'], port=device['port'], password=device['password'], device_id=device['device_id'], clear_from_device_on_fetch=device['clear_from_device_on_fetch'])
         if not device_attendance_logs:
@@ -180,18 +200,18 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 punch_direction = 'IN'
             else:
                 punch_direction = None
-        erpnext_status_code, erpnext_message = send_to_erpnext(device_attendance_log['user_id'], device_attendance_log['timestamp'], device['device_id'], punch_direction, latitude=device.get('latitude'), longitude=device.get('longitude'))
-        if erpnext_status_code == 200:
-            attendance_success_logger.info("\t".join([erpnext_message, str(device_attendance_log['uid']),
+        outcome = normalize_sync_outcome(send_to_erpnext(device_attendance_log['user_id'], device_attendance_log['timestamp'], device['device_id'], punch_direction, latitude=device.get('latitude'), longitude=device.get('longitude')))
+        if outcome.category == SUCCESS:
+            attendance_success_logger.info("\t".join([outcome.message, str(device_attendance_log['uid']),
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
-        elif is_duplicate_employee_checkin_response(erpnext_status_code, erpnext_message):
-            attendance_success_logger.info("\t".join(['DUPLICATE_ALREADY_SYNCED: '+erpnext_message, str(device_attendance_log['uid']),
+        elif outcome.category == IDEMPOTENT_SUCCESS:
+            attendance_success_logger.info("\t".join(['DUPLICATE_ALREADY_SYNCED: '+outcome.message, str(device_attendance_log['uid']),
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
-        elif is_missing_employee_response(erpnext_message):
+        elif outcome.category == TERMINAL_DATA_FAILURE:
             missing_employee_audit = missing_employee_audit_context(device['device_id'], device_attendance_log)
             attendance_missing_employee_logger.warning("\t".join([
                 "MISSING_EMPLOYEE_MAPPING",
@@ -204,13 +224,26 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
-        else:
-            attendance_failed_logger.error("\t".join([str(erpnext_status_code), str(device_attendance_log['uid']),
+        elif outcome.category == VALIDATION_FAILURE:
+            validation_audit = validation_failure_audit_context(device['device_id'], device_attendance_log, outcome)
+            attendance_validation_failure_logger.warning("\t".join([
+                "VALIDATION_FAILURE",
+                validation_audit["device_id"],
+                validation_audit["attendance_device_id"],
+                validation_audit["timestamp"],
+                validation_audit["status_code"],
+                validation_audit["category"],
+            ]))
+            attendance_success_logger.info("\t".join(['VALIDATION_FAILURE: '+json.dumps(validation_audit, sort_keys=True), str(device_attendance_log['uid']),
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
-            if not is_non_retryable_attendance_failure(erpnext_message):
-                raise Exception('API Call to ERPNext Failed.')
+        else:
+            attendance_failed_logger.error("\t".join([str(outcome.status_code), str(device_attendance_log['uid']),
+                str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
+                str(device_attendance_log['punch']), str(device_attendance_log['status']),
+                json.dumps(device_attendance_log, default=str)]))
+            raise Exception('API Call to ERPNext Failed.')
 
 
 def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, password=DEFAULT_ZK_PASSWORD, device_id=None, clear_from_device_on_fetch=False):
@@ -291,19 +324,62 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
         'latitude' : latitude,
         'longitude' : longitude
     }
-    response = requests.request("POST", url, headers=headers, json=data, timeout=ERPNEXT_REQUEST_TIMEOUT)
+    try:
+        response = requests.request("POST", url, headers=headers, json=data, timeout=ERPNEXT_REQUEST_TIMEOUT)
+    except _request_timeout_exception():
+        error_logger.error('\t'.join(['Retryable ERPNext API timeout.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
+        return SyncOutcome(0, "ERPNext request timed out.", RETRYABLE_FAILURE)
+    except _request_connection_exception():
+        error_logger.error('\t'.join(['Retryable ERPNext API connection failure.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
+        return SyncOutcome(0, "ERPNext connection failed.", RETRYABLE_FAILURE)
+    except Exception as exc:
+        error_logger.error('\t'.join(['Retryable ERPNext API transport failure.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), type(exc).__name__]))
+        return SyncOutcome(0, "ERPNext transport failure.", RETRYABLE_FAILURE)
     if response.status_code == 200:
-        return 200, json.loads(response._content)['message']['name']
+        return SyncOutcome(response.status_code, json.loads(response._content)['message']['name'], SUCCESS)
+    error_str = _safe_get_error_str(response)
+    outcome = classify_erpnext_outcome(response.status_code, error_str)
+    if outcome.category == IDEMPOTENT_SUCCESS:
+        info_logger.info('\t'.join(['Duplicate Employee Checkin already exists in ERPNext.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
+    elif outcome.category == TERMINAL_DATA_FAILURE:
+        error_logger.error('\t'.join(['Terminal ERPNext data issue.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), outcome.category]))
+    elif outcome.category == VALIDATION_FAILURE:
+        error_logger.error('\t'.join(['Permanent ERPNext validation failure.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), str(outcome.status_code)]))
     else:
-        error_str = _safe_get_error_str(response)
-        if is_duplicate_employee_checkin_response(response.status_code, error_str):
-            info_logger.info('\t'.join(['Duplicate Employee Checkin already exists in ERPNext.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
-        elif is_missing_employee_response(error_str):
-            error_logger.error('\t'.join(['Error during ERPNext API Call.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), error_str]))
-            # TODO: send email?
-        else:
-            error_logger.error('\t'.join(['Error during ERPNext API Call.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), error_str]))
-        return response.status_code, error_str
+        error_logger.error('\t'.join(['Retryable ERPNext API failure.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), str(outcome.status_code)]))
+    return outcome
+
+def normalize_sync_outcome(result):
+    if isinstance(result, SyncOutcome):
+        return result
+    status_code, message = result
+    return classify_erpnext_outcome(status_code, message)
+
+def classify_erpnext_outcome(status_code, message):
+    try:
+        normalized_status = int(status_code or 0)
+    except (TypeError, ValueError):
+        normalized_status = 0
+    text = str(message or "")
+    if 200 <= normalized_status < 300:
+        return SyncOutcome(normalized_status, text, SUCCESS)
+    if is_duplicate_employee_checkin_response(normalized_status, text):
+        return SyncOutcome(normalized_status, text, IDEMPOTENT_SUCCESS)
+    if is_missing_employee_response(text):
+        return SyncOutcome(normalized_status, text, TERMINAL_DATA_FAILURE)
+    if normalized_status in (500, 502, 503, 504) or normalized_status == 0:
+        return SyncOutcome(normalized_status, text, RETRYABLE_FAILURE)
+    if normalized_status in (400, 417):
+        return SyncOutcome(normalized_status, text, VALIDATION_FAILURE)
+    if 400 <= normalized_status < 500:
+        return SyncOutcome(normalized_status, text, VALIDATION_FAILURE)
+    return SyncOutcome(normalized_status, text, RETRYABLE_FAILURE)
+
+def _request_timeout_exception():
+    return getattr(getattr(requests, "exceptions", object), "Timeout", TimeoutError)
+
+def _request_connection_exception():
+    return getattr(getattr(requests, "exceptions", object), "ConnectionError", ConnectionError)
 
 def is_duplicate_employee_checkin_response(status_code, message):
     return int(status_code or 0) == 417 and DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE in str(message or "")
@@ -323,6 +399,20 @@ def missing_employee_audit_context(device_id, device_attendance_log):
         "device_id": str(device_id or ""),
         "attendance_device_id": str(device_attendance_log.get('user_id') or ""),
         "timestamp": timestamp_value,
+    }
+
+def validation_failure_audit_context(device_id, device_attendance_log, outcome):
+    timestamp = device_attendance_log.get('timestamp')
+    if hasattr(timestamp, 'isoformat'):
+        timestamp_value = timestamp.isoformat(sep=' ')
+    else:
+        timestamp_value = str(timestamp or "")
+    return {
+        "category": "validation_failure",
+        "device_id": str(device_id or ""),
+        "attendance_device_id": str(device_attendance_log.get('user_id') or ""),
+        "timestamp": timestamp_value,
+        "status_code": str(getattr(outcome, "status_code", "") or ""),
     }
 
 def is_non_retryable_attendance_failure(message):

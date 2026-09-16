@@ -54,7 +54,7 @@ def get_health_snapshot(config_module=None, sync_module=None):
             last_push=str(status_data.get(device_id + "_push_timestamp") or ""),
         ))
 
-    warnings = _missing_employee_warnings(config_module)
+    warnings = _sync_warnings(config_module)
     return HealthSnapshot(
         last_successful_sync=str(status_data.get("mission_accomplished_timestamp") or ""),
         devices=devices,
@@ -63,21 +63,35 @@ def get_health_snapshot(config_module=None, sync_module=None):
     )
 
 
-def _missing_employee_warnings(config_module):
+def _sync_warnings(config_module):
     logs_folder = get_status_file(config_module).parent
-    count = 0
+    missing_employee_count = 0
+    retryable_failure_count = 0
+    validation_failure_count = 0
     for missing_log in logs_folder.glob("attendance_missing_employee_log_*.log"):
         try:
             lines = missing_log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
         except OSError:
             continue
-        count += sum("MISSING_EMPLOYEE_MAPPING" in line for line in lines)
+        missing_employee_count += sum("MISSING_EMPLOYEE_MAPPING" in line for line in lines)
+    for validation_log in logs_folder.glob("attendance_validation_failure_log_*.log"):
+        try:
+            lines = validation_log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+        except OSError:
+            continue
+        validation_failure_count += sum("VALIDATION_FAILURE" in line for line in lines)
     for failed_log in logs_folder.glob("attendance_failed_log_*.log"):
         try:
             lines = failed_log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
         except OSError:
             continue
-        count += sum("No Employee found" in line for line in lines)
-    if not count:
-        return []
-    return ["Missing Employee mappings: " + str(count)]
+        missing_employee_count += sum("No Employee found" in line for line in lines)
+        retryable_failure_count += sum(line.strip() and "No Employee found" not in line for line in lines)
+    warnings = []
+    if missing_employee_count:
+        warnings.append("Missing Employee mappings: " + str(missing_employee_count))
+    if retryable_failure_count:
+        warnings.append("Retryable synchronization failures: " + str(retryable_failure_count))
+    if validation_failure_count:
+        warnings.append("Permanent validation/data failures: " + str(validation_failure_count))
+    return warnings
