@@ -160,6 +160,31 @@ class ConfigAdminTests(unittest.TestCase):
             "mission_accomplished_timestamp": "2026-09-15 14:30:00",
             "DEVICE_01_pull_timestamp": "2026-09-15 14:25:00",
             "DEVICE_01_push_timestamp": "2026-09-15 14:29:00",
+            "latest_sync_cycle": {
+                "started_at": "2026-09-15 14:24:00",
+                "completed_at": "2026-09-15 14:30:00",
+                "total_enabled_devices_attempted": 1,
+                "successful": 0,
+                "successful_with_warnings": 1,
+                "retryable_failures": 0,
+                "failed": 0,
+                "stopped_early": False,
+                "devices": [
+                    {
+                        "device_id": "DEVICE_01",
+                        "outcome": "DEVICE_SUCCESS_WITH_WARNINGS",
+                        "successful_record_count": 1,
+                        "duplicate_record_count": 1,
+                        "missing_employee_count": 1,
+                        "validation_failure_count": 1,
+                        "corrupt_record_count": 1,
+                        "retryable_failure_count": 0,
+                        "error_category": "VALIDATION_FAILURE",
+                        "message": "Traceback raw_record=deadbeef api_secret=SUPER_SECRET",
+                        "raw_record": "deadbeef",
+                    }
+                ],
+            },
         }), encoding="utf-8")
 
         with mock.patch("config.schema._default_secret_store", return_value=self.secret_store):
@@ -176,11 +201,19 @@ class ConfigAdminTests(unittest.TestCase):
         self.assertIn("platform", report)
         self.assertEqual(report["service"]["state"], "Running")
         self.assertEqual(report["synchronization"]["last_successful_sync"], "2026-09-15 14:30:00")
+        self.assertEqual(report["synchronization"]["latest_sync_cycle"]["total_enabled_devices_attempted"], 1)
+        self.assertEqual(report["synchronization"]["latest_sync_cycle"]["successful_with_warnings"], 1)
         self.assertEqual(report["device_health"][0]["last_pull"], "2026-09-15 14:25:00")
+        self.assertEqual(report["device_health"][0]["latest_sync"]["corrupt_record_count"], 1)
+        self.assertEqual(report["device_health"][0]["latest_sync"]["message"], "")
         self.assertIn("credentials_configured", report["configuration"])
         self.assertNotIn('"api_secret":', report_text)
         self.assertNotIn('"api_key":', report_text)
         self.assertNotIn("1234", report_text)
+        self.assertNotIn("deadbeef", report_text)
+        self.assertNotIn("SUPER_SECRET", report_text)
+        self.assertNotIn("Traceback", report_text)
+        self.assertNotIn("raw_record", report_text)
 
     def test_change_summary_reports_safe_edits_and_not_secret_values(self):
         self.controller.write_config_atomic(valid_setup_config())

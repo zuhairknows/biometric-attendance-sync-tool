@@ -200,6 +200,7 @@ def main(stop_requested=None):
                 cycle_result.stopped_early = True
                 cycle_result.completed_at = str(datetime.datetime.now())
                 persist_cycle_result(cycle_result)
+                log_cycle_summary(cycle_result)
                 return
             if hasattr(config,'shift_type_device_mapping'):
                 update_shift_last_sync_timestamp(config.shift_type_device_mapping)
@@ -207,6 +208,7 @@ def main(stop_requested=None):
             cycle_result.completed_at = status.get('mission_accomplished_timestamp')
             persist_cycle_result(cycle_result)
             status.save()
+            log_cycle_summary(cycle_result)
             info_logger.info("Mission Accomplished!")
     except:
         error_logger.exception('exception has occurred in the main function...')
@@ -288,7 +290,7 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 json.dumps(device_attendance_log, default=str)]))
         elif outcome.category == IDEMPOTENT_SUCCESS:
             result.duplicate_record_count += 1
-            attendance_success_logger.info("\t".join(['DUPLICATE_ALREADY_SYNCED: '+outcome.message, str(device_attendance_log['uid']),
+            attendance_success_logger.info("\t".join(['DUPLICATE_ALREADY_SYNCED', str(device_attendance_log['uid']),
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
@@ -463,6 +465,18 @@ def persist_cycle_result(cycle_result):
     status.save()
 
 
+def log_cycle_summary(cycle_result):
+    info_logger.info("\t".join([
+        "Synchronization cycle summary",
+        "attempted=" + str(cycle_result.total_enabled_devices_attempted),
+        "success=" + str(cycle_result.successful),
+        "success_with_warnings=" + str(cycle_result.successful_with_warnings),
+        "retryable_failure=" + str(cycle_result.retryable_failures),
+        "failed=" + str(cycle_result.failed),
+        "stopped_early=" + str(bool(cycle_result.stopped_early)),
+    ]))
+
+
 def get_attendance_with_corrupt_record_recovery(conn, device_id=None, ip=None):
     """Read attendance using pyzk's buffer API so one bad timestamp can be skipped.
 
@@ -552,6 +566,14 @@ def decode_attendance_timestamp(conn, raw_timestamp):
 
 def audit_corrupt_attendance_record(device_id, ip, record_index, record_size, raw_record, exc):
     safe_device_id = str(device_id or "UNKNOWN")
+    info_logger.warning("\t".join([
+        "Corrupt attendance record skipped.",
+        "device_id=" + safe_device_id,
+        "host=" + str(ip or ""),
+        "record_index=" + str(record_index),
+        "record_size=" + str(record_size),
+        "reason=" + type(exc).__name__,
+    ]))
     corrupt_log_file = '_'.join(["attendance_corrupt_record_log", safe_device_id])
     corrupt_logger = setup_logger(corrupt_log_file, '/'.join([config.LOGS_DIRECTORY, corrupt_log_file])+'.log')
     corrupt_logger.warning("\t".join([
@@ -593,26 +615,26 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
     try:
         response = requests.request("POST", url, headers=headers, json=data, timeout=ERPNEXT_REQUEST_TIMEOUT)
     except _request_timeout_exception():
-        error_logger.error('\t'.join(['Retryable ERPNext API timeout.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
+        error_logger.error('\t'.join(['Retryable ERPNext API timeout; attendance will be retried.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
         return SyncOutcome(0, "ERPNext request timed out.", RETRYABLE_FAILURE)
     except _request_connection_exception():
-        error_logger.error('\t'.join(['Retryable ERPNext API connection failure.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
+        error_logger.error('\t'.join(['Retryable ERPNext API connection failure; attendance will be retried.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
         return SyncOutcome(0, "ERPNext connection failed.", RETRYABLE_FAILURE)
     except Exception as exc:
-        error_logger.error('\t'.join(['Retryable ERPNext API transport failure.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), type(exc).__name__]))
+        error_logger.error('\t'.join(['Retryable ERPNext API transport failure; attendance will be retried.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), type(exc).__name__]))
         return SyncOutcome(0, "ERPNext transport failure.", RETRYABLE_FAILURE)
     if response.status_code == 200:
         return SyncOutcome(response.status_code, json.loads(response._content)['message']['name'], SUCCESS)
     error_str = _safe_get_error_str(response)
     outcome = classify_erpnext_outcome(response.status_code, error_str)
     if outcome.category == IDEMPOTENT_SUCCESS:
-        info_logger.info('\t'.join(['Duplicate Employee Checkin already exists in ERPNext.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
+        info_logger.info('\t'.join(['Employee Checkin already exists; treating as synchronized.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
     elif outcome.category == TERMINAL_DATA_FAILURE:
-        error_logger.error('\t'.join(['Terminal ERPNext data issue.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), outcome.category]))
+        info_logger.warning('\t'.join(['Missing Employee mapping; attendance record needs ERPNext master-data correction.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type)]))
     elif outcome.category == VALIDATION_FAILURE:
-        error_logger.error('\t'.join(['Permanent ERPNext validation failure.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), str(outcome.status_code)]))
+        info_logger.warning('\t'.join(['ERPNext validation/data issue; attendance record was checkpointed for support review.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), str(outcome.status_code)]))
     else:
-        error_logger.error('\t'.join(['Retryable ERPNext API failure.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), str(outcome.status_code)]))
+        error_logger.error('\t'.join(['Retryable ERPNext API failure; attendance will be retried.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), str(outcome.status_code)]))
     return outcome
 
 def normalize_sync_outcome(result):

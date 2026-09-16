@@ -282,9 +282,11 @@ def _safe_service_status(service_status):
 
 
 def _safe_sync_status(status_data, status_file_found):
+    cycle = _safe_cycle_summary(status_data)
     return {
         "status_file_found": bool(status_file_found),
         "last_successful_sync": str(status_data.get("mission_accomplished_timestamp") or ""),
+        "latest_sync_cycle": cycle,
     }
 
 
@@ -304,14 +306,17 @@ def _read_support_status_data(paths_module, runtime):
 
 def _safe_device_health(devices, status_data=None, configured_devices=None):
     status_data = status_data or {}
+    cycle_devices = _cycle_devices_by_id(status_data)
     safe = []
     for device in devices:
+        device_id = str(getattr(device, "device_id", "") or "")
         safe.append({
-            "device_id": str(getattr(device, "device_id", "") or ""),
+            "device_id": device_id,
             "ip": str(getattr(device, "ip", "") or ""),
             "port": getattr(device, "port", ""),
-            "last_pull": str(getattr(device, "last_pull", "") or status_data.get(str(getattr(device, "device_id", "")) + "_pull_timestamp") or ""),
-            "last_push": str(getattr(device, "last_push", "") or status_data.get(str(getattr(device, "device_id", "")) + "_push_timestamp") or ""),
+            "last_pull": str(getattr(device, "last_pull", "") or status_data.get(device_id + "_pull_timestamp") or ""),
+            "last_push": str(getattr(device, "last_push", "") or status_data.get(device_id + "_push_timestamp") or ""),
+            "latest_sync": cycle_devices.get(device_id, {}),
         })
     if safe:
         return safe
@@ -325,8 +330,65 @@ def _safe_device_health(devices, status_data=None, configured_devices=None):
             "port": device.get("port", ""),
             "last_pull": str(status_data.get(device_id + "_pull_timestamp") or ""),
             "last_push": str(status_data.get(device_id + "_push_timestamp") or ""),
+            "latest_sync": cycle_devices.get(device_id, {}),
         })
     return safe
+
+
+def _safe_cycle_summary(status_data):
+    cycle = status_data.get("latest_sync_cycle") if isinstance(status_data, dict) else None
+    if not isinstance(cycle, dict):
+        return {}
+    return {
+        "started_at": str(cycle.get("started_at") or ""),
+        "completed_at": str(cycle.get("completed_at") or ""),
+        "total_enabled_devices_attempted": _safe_int(cycle.get("total_enabled_devices_attempted")),
+        "successful": _safe_int(cycle.get("successful")),
+        "successful_with_warnings": _safe_int(cycle.get("successful_with_warnings")),
+        "retryable_failures": _safe_int(cycle.get("retryable_failures")),
+        "failed": _safe_int(cycle.get("failed")),
+        "stopped_early": bool(cycle.get("stopped_early", False)),
+    }
+
+
+def _cycle_devices_by_id(status_data):
+    cycle = status_data.get("latest_sync_cycle") if isinstance(status_data, dict) else None
+    if not isinstance(cycle, dict):
+        return {}
+    safe = {}
+    for device in cycle.get("devices", []) or []:
+        if not isinstance(device, dict):
+            continue
+        device_id = str(device.get("device_id") or "")
+        if not device_id:
+            continue
+        safe[device_id] = {
+            "outcome": str(device.get("outcome") or ""),
+            "successful_record_count": _safe_int(device.get("successful_record_count")),
+            "duplicate_record_count": _safe_int(device.get("duplicate_record_count")),
+            "missing_employee_count": _safe_int(device.get("missing_employee_count")),
+            "validation_failure_count": _safe_int(device.get("validation_failure_count")),
+            "corrupt_record_count": _safe_int(device.get("corrupt_record_count")),
+            "retryable_failure_count": _safe_int(device.get("retryable_failure_count")),
+            "error_category": str(device.get("error_category") or ""),
+            "message": _safe_device_message(device.get("message")),
+        }
+    return safe
+
+
+def _safe_device_message(message):
+    text = str(message or "")
+    blocked_tokens = ("Traceback", "frappe.exceptions", "Authorization", "api_secret", "password", "raw_record")
+    if any(token.lower() in text.lower() for token in blocked_tokens):
+        return ""
+    return text[:200]
+
+
+def _safe_int(value):
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _safe_warnings(health):

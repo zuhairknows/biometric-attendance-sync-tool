@@ -314,9 +314,14 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         error_log = (self.logs_directory / "error.log").read_text()
+        operational_log = (self.logs_directory / "logs.log").read_text()
         self.assertIn("DUPLICATE_ALREADY_SYNCED", success_log)
         self.assertEqual(failed_log, "")
         self.assertNotIn("Error during ERPNext API Call", error_log)
+        self.assertEqual(error_log, "")
+        self.assertIn("Employee Checkin already exists; treating as synchronized.", operational_log)
+        self.assertNotIn("frappe.exceptions.ValidationError", operational_log)
+        self.assertNotIn(sync.DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE, success_log)
         self.assertEqual(sync.classify_erpnext_outcome(417, sync.DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE).category, sync.IDEMPOTENT_SUCCESS)
         self.assertEqual(result.outcome, sync.DEVICE_SUCCESS)
 
@@ -373,11 +378,15 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         missing_log = (self.logs_directory / "attendance_missing_employee_log_DEVICE_01.log").read_text()
         success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
         error_log = (self.logs_directory / "error.log").read_text()
+        operational_log = (self.logs_directory / "logs.log").read_text()
         self.assertEqual(failed_log, "")
         self.assertIn("MISSING_EMPLOYEE_MAPPING", missing_log)
         self.assertIn("DEVICE_01", missing_log)
         self.assertIn("missing", missing_log)
         self.assertIn("2026-08-27 08:00:00", missing_log)
+        self.assertIn("Missing Employee mapping; attendance record needs ERPNext master-data correction.", operational_log)
+        self.assertNotIn("frappe.exceptions.ValidationError", operational_log)
+        self.assertEqual(error_log, "")
         self.assertIn("missing_employee_mapping", success_log)
         self.assertNotIn("DUPLICATE_ALREADY_SYNCED", success_log)
         rendered_logs = failed_log + missing_log + success_log + error_log
@@ -424,11 +433,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
     def test_unrelated_http_417_remains_failure(self):
         sync = load_sync_module(self.logs_directory)
-
-        def fake_send(user_id, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
-            return 417, "Some other validation error"
-
-        sync.send_to_erpnext = fake_send
+        sync.requests.request.return_value = erpnext_validation_response("Some other validation error")
         device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         logs = [{"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
 
@@ -437,11 +442,16 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         validation_log = (self.logs_directory / "attendance_validation_failure_log_DEVICE_01.log").read_text()
         success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
+        operational_log = (self.logs_directory / "logs.log").read_text()
+        error_log = (self.logs_directory / "error.log").read_text()
         self.assertEqual(failed_log, "")
         self.assertIn("VALIDATION_FAILURE", validation_log)
         self.assertIn("DEVICE_01", validation_log)
         self.assertIn("100", validation_log)
         self.assertIn("417", validation_log)
+        self.assertIn("ERPNext validation/data issue; attendance record was checkpointed for support review.", operational_log)
+        self.assertNotIn("frappe.exceptions.ValidationError", operational_log)
+        self.assertEqual(error_log, "")
         self.assertIn("VALIDATION_FAILURE", success_log)
         self.assertNotIn("DUPLICATE_ALREADY_SYNCED", success_log)
         self.assertEqual(result.outcome, sync.DEVICE_SUCCESS_WITH_WARNINGS)
@@ -504,6 +514,10 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
         with self.assertRaisesRegex(sync.RetryableSyncError, "API Call to ERPNext Failed"):
             sync.pull_process_and_push_data(device, [log])
+        error_log = (self.logs_directory / "error.log").read_text()
+        self.assertIn("attendance will be retried", error_log)
+        self.assertNotIn("Authorization", error_log)
+        self.assertNotIn("secret", error_log.lower())
 
     def test_retryable_device_failure_maps_to_device_retryable_outcome(self):
         sync = load_sync_module(self.logs_directory)
@@ -544,6 +558,8 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         self.assertIn("0", failed_log)
+        error_log = (self.logs_directory / "error.log").read_text()
+        self.assertIn("attendance will be retried", error_log)
         self.assertEqual(sync.classify_erpnext_outcome(0, "ERPNext request timed out.").category, sync.RETRYABLE_FAILURE)
 
     def test_connection_failure_is_retryable_failure(self):
@@ -557,6 +573,8 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         self.assertIn("0", failed_log)
+        error_log = (self.logs_directory / "error.log").read_text()
+        self.assertIn("attendance will be retried", error_log)
 
     def test_send_to_erpnext_200_response_remains_success(self):
         sync = load_sync_module(self.logs_directory)
@@ -829,6 +847,13 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         rendered = json.dumps(cycle)
         self.assertNotIn("secret", rendered.lower())
         self.assertNotIn("password", rendered.lower())
+        operational_log = (self.logs_directory / "logs.log").read_text()
+        self.assertEqual(operational_log.count("Synchronization cycle summary"), 1)
+        self.assertIn("attempted=4", operational_log)
+        self.assertIn("success=1", operational_log)
+        self.assertIn("success_with_warnings=1", operational_log)
+        self.assertIn("retryable_failure=1", operational_log)
+        self.assertIn("failed=1", operational_log)
 
     def test_main_skips_disabled_devices(self):
         sync = load_sync_module(self.logs_directory)
@@ -989,10 +1014,14 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         corrupt_log = (self.logs_directory / "attendance_corrupt_record_log_DEVICE_01.log").read_text()
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
+        operational_log = (self.logs_directory / "logs.log").read_text()
         self.assertIn("CORRUPT_ATTENDANCE_RECORD", corrupt_log)
         self.assertIn("DEVICE_01", corrupt_log)
         self.assertIn("192.0.2.10", corrupt_log)
         self.assertIn("ValueError", corrupt_log)
+        self.assertIn("Corrupt attendance record skipped.", operational_log)
+        self.assertIn("record_index=1", operational_log)
+        self.assertNotIn(records[1].hex(), operational_log)
         self.assertNotIn("101", success_log)
         self.assertEqual(failed_log, "")
         rendered_logs = corrupt_log + failed_log + success_log
@@ -1102,6 +1131,9 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             sync.get_all_attendance_from_device("192.0.2.10", device_id="DEVICE_01")
 
         self.assertEqual(calls, ["disable", "read_sizes", "get_users", "read_with_buffer", "enable", "disconnect"])
+        error_log = (self.logs_directory / "error.log").read_text()
+        self.assertIn("Traceback", error_log)
+        self.assertIn("exception when fetching from device", error_log)
 
     def test_minimal_legacy_config_without_logs_directory_imports_runtime(self):
         programdata = self.logs_directory.parent / (self._testMethodName + "_programdata")
