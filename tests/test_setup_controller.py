@@ -12,7 +12,7 @@ from config.loader import load_config
 from config.schema import validate_runtime_config
 from config.secrets import SecretStore
 from config.status import CONFIGURED, INVALID, LEGACY_CONFIGURED, UNCONFIGURED, get_configuration_status, is_configured
-from manager.setup.controller import SetupController
+from manager.setup.controller import SetupController, SetupServiceError
 from manager.setup.model import DeviceSetup, ERPNextSetup, SetupConfiguration, SyncSetup
 from manager.setup.validation import safe_review_summary
 from manager.service_controller import ActionResult, ServiceStatus
@@ -676,8 +676,20 @@ class SetupControllerTests(unittest.TestCase):
         service = FakeServiceController(ServiceStatus(installed=True, state="Stopped", startup="Automatic"), start_success=False)
 
         with mock.patch("config.schema._default_secret_store", return_value=self.secret_store):
-            with self.assertRaisesRegex(RuntimeError, "could not be started"):
+            with self.assertRaisesRegex(SetupServiceError, "could not be started"):
                 self.controller.complete_setup(valid_setup_config(), service_controller=service)
+
+        self.assertTrue(self.paths.get_config_path().is_file())
+
+    def test_service_start_failure_preserves_admin_requirement(self):
+        service = FakeServiceController(ServiceStatus(installed=True, state="Stopped", startup="Automatic"), start_success=False, requires_admin=True)
+
+        with mock.patch("config.schema._default_secret_store", return_value=self.secret_store):
+            with self.assertRaises(SetupServiceError) as caught:
+                self.controller.complete_setup(valid_setup_config(), service_controller=service)
+
+        self.assertTrue(caught.exception.requires_admin)
+        self.assertTrue(self.paths.get_config_path().is_file())
 
     def test_existing_configuration_remains_compatible_after_setup_completion(self):
         self.paths.get_config_path().write_text(json.dumps(valid_json_config()), encoding="utf-8")
@@ -695,9 +707,10 @@ class SetupControllerTests(unittest.TestCase):
 
 
 class FakeServiceController:
-    def __init__(self, initial_status, start_success=True):
+    def __init__(self, initial_status, start_success=True, requires_admin=False):
         self.status = initial_status
         self.start_success = start_success
+        self.requires_admin = requires_admin
         self.start_calls = 0
         self.restart_calls = 0
 
@@ -710,7 +723,7 @@ class FakeServiceController:
             self.status = ServiceStatus(installed=True, state="Running", startup=self.status.startup)
             return ActionResult(True, "Service started successfully.")
         self.status = ServiceStatus(installed=True, state="Stopped", startup=self.status.startup)
-        return ActionResult(False, "Could not start the service.")
+        return ActionResult(False, "Could not start the service.", requires_admin=self.requires_admin)
 
     def restart_service(self):
         self.restart_calls += 1
@@ -718,7 +731,7 @@ class FakeServiceController:
             self.status = ServiceStatus(installed=True, state="Running", startup=self.status.startup)
             return ActionResult(True, "Service restarted successfully.")
         self.status = ServiceStatus(installed=True, state="Stopped", startup=self.status.startup)
-        return ActionResult(False, "Could not restart the service.")
+        return ActionResult(False, "Could not restart the service.", requires_admin=self.requires_admin)
 
 
 if __name__ == "__main__":

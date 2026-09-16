@@ -1,4 +1,6 @@
 import json
+import csv
+import io
 import shutil
 import unittest
 from pathlib import Path
@@ -43,6 +45,34 @@ class DeviceImportTests(unittest.TestCase):
 
         self.assertEqual(len(preview.valid_rows), 2)
         self.assertFalse(preview.valid_rows[1].enabled)
+
+    def test_twelve_row_import_preserves_model_field_association(self):
+        lines = ["Device Name,IP Address,Port,Device ID,Enabled,"]
+        expected = {}
+        for index in range(12):
+            name = "Site A - Attendance Terminal - " + str(12 - index).zfill(2)
+            device_id = "DEVICE_" + str(index + 1).zfill(2)
+            host = "192.0.2." + str(20 + index)
+            port = str(4370 + index)
+            enabled = "Yes" if index % 2 == 0 else "No"
+            lines.append(",".join([name, host, port, device_id, enabled, "0"]))
+            expected[device_id] = {
+                "name": name,
+                "ip": host,
+                "port": int(port),
+                "enabled": enabled == "Yes",
+            }
+
+        preview = self.parse("\n".join(lines) + "\n")
+
+        self.assertEqual(len(preview.valid_rows), 12)
+        self.assertEqual(preview.invalid_count, 0)
+        for row in preview.valid_rows:
+            device = row.to_device_setup()
+            self.assertEqual(device.name, expected[device.device_id]["name"])
+            self.assertEqual(device.ip, expected[device.device_id]["ip"])
+            self.assertEqual(device.port, expected[device.device_id]["port"])
+            self.assertEqual(device.enabled, expected[device.device_id]["enabled"])
 
     def test_utf8_bom_csv(self):
         preview = self.parse("\ufeffDevice Name,IP Address,Port,Device ID,Enabled\nMain,192.0.2.20,4370,DEVICE_03,Yes\n")
@@ -125,6 +155,17 @@ class DeviceImportTests(unittest.TestCase):
         device = preview.valid_rows[0].to_device_setup()
         self.assertFalse(hasattr(device, "notes"))
 
+    def test_blank_trailing_column_is_ignored(self):
+        preview = self.parse("Device Name,IP Address,Port,Device ID,Enabled,\nMain,192.0.2.20,4370,DEVICE_03,Yes,0\n")
+
+        self.assertTrue(preview.can_apply)
+        device = preview.valid_rows[0].to_device_setup()
+        self.assertEqual(device.name, "Main")
+        self.assertEqual(device.device_id, "DEVICE_03")
+        self.assertEqual(device.ip, "192.0.2.20")
+        self.assertEqual(device.port, 4370)
+        self.assertTrue(device.enabled)
+
     def test_sensitive_unexpected_column_is_rejected(self):
         with self.assertRaisesRegex(device_import.DeviceImportError, "sensitive column"):
             self.parse("Device Name,IP Address,Port,Device ID,Enabled,API Secret\nMain,192.0.2.20,4370,DEVICE_03,Yes,nope\n")
@@ -164,6 +205,14 @@ class DeviceImportTests(unittest.TestCase):
 
         self.assertIn("Device Name,IP Address,Port,Device ID,Enabled", output)
         self.assertIn("Main Office,192.0.2.10,4370,DEVICE_01,Yes", output)
+
+    def test_export_does_not_produce_unnamed_trailing_column(self):
+        output = device_import.export_devices_csv(valid_setup_config().devices)
+
+        rows = list(csv.reader(io.StringIO(output)))
+        self.assertEqual(rows[0], ["Device Name", "IP Address", "Port", "Device ID", "Enabled"])
+        for row in rows:
+            self.assertEqual(len(row), 5)
 
     def test_export_does_not_contain_credentials(self):
         output = device_import.export_devices_csv(valid_setup_config().devices)

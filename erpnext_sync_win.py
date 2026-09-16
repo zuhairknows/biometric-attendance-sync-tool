@@ -58,6 +58,7 @@ class PythonCornerExample(SMWinservice):
     def stop(self):
         self.isrunning = False
         log_service_info("Service stop requested")
+        log_service_info("Finishing current device before shutdown")
 
     def main(self):
         log_service_info("Service loop started")
@@ -66,7 +67,7 @@ class PythonCornerExample(SMWinservice):
                 if getattr(erpnext_sync.config, "CONFIG_SOURCE", "") == "defaults":
                     log_service_info("Product is not configured. Complete first-run setup.")
                 else:
-                    erpnext_sync.main()
+                    erpnext_sync.main(stop_requested=self.stop_requested)
             except Exception:
                 erpnext_sync.error_logger.exception("Unexpected service cycle exception")
                 log_service_error("Unexpected service cycle exception")
@@ -75,7 +76,11 @@ class PythonCornerExample(SMWinservice):
             if wait_result == win32event.WAIT_OBJECT_0:
                 self.isrunning = False
 
+        log_service_info("Service loop exiting")
         log_service_info("Service stopped")
+
+    def stop_requested(self):
+        return not self.isrunning
 
 
 if __name__ == '__main__':

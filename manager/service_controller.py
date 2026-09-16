@@ -197,7 +197,7 @@ class ServiceController:
             return self._action_result(result, "Service stopped successfully.", "Could not stop the service.", ("sc.exe", "stop", SERVICE_NAME))
         if wait and not self._wait_for_state("Stopped", timeout_seconds=30):
             final_state = self.get_status().state
-            return ActionResult(False, "Service stop was requested, but final state is " + final_state + ".")
+            return ActionResult(False, "Service stop was requested, but it did not reach Stopped within 30 seconds. Final state is " + final_state + ".")
         return ActionResult(True, "Service stopped successfully.", command=("sc.exe", "stop", SERVICE_NAME))
 
     def restart_service(self):

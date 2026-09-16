@@ -515,6 +515,24 @@ class ManagerAppWorkerLifecycleTests(unittest.TestCase):
 
         self.assertEqual(len(self.window.active_jobs), 0)
 
+    def test_erpnext_diagnostic_success_updates_dashboard_without_stale_widget(self):
+        result = DiagnosticResult(True, "ok", "ERPNext connection succeeded.")
+
+        self.window._run_diagnostic("Testing ERPNext...", lambda: result, self.window.erp_button)
+        self.assertTrue(wait_until(lambda: self.window.erp_button.isEnabled() and len(self.window.active_jobs) == 0))
+
+        self.assertEqual(self.window.erpnext_connection_state, app_module.ERP_CONNECTED)
+        self.assertEqual(self.window.erpnext_connection_detail, "ERPNext connection succeeded.")
+
+    def test_erpnext_diagnostic_failure_updates_dashboard_without_stale_widget(self):
+        result = DiagnosticResult(False, "error", "ERPNext connection failed.")
+
+        self.window._run_diagnostic("Testing ERPNext...", lambda: result, self.window.erp_button)
+        self.assertTrue(wait_until(lambda: self.window.erp_button.isEnabled() and len(self.window.active_jobs) == 0))
+
+        self.assertEqual(self.window.erpnext_connection_state, app_module.ERP_FAILED)
+        self.assertEqual(self.window.erpnext_connection_detail, "ERPNext connection failed.")
+
     def test_initial_device_status_is_unknown(self):
         self.assertEqual(self.window.device_table.item(0, 2).text(), "Unknown")
         self.assertEqual(self.window.device_table.item(1, 2).text(), "Unknown")

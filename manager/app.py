@@ -669,7 +669,6 @@ class SyncManagerWindow(QtWidgets.QMainWindow):
             if button is self.erp_button:
                 self.erpnext_connection_state = ERP_CONNECTED if result.ok else ERP_FAILED
                 self.erpnext_connection_detail = self._diagnostic_message_text(result)
-                self._set_state(self.erp_status, "Connected" if result.ok else "Connection failed", result.status)
             if button is self.device_button:
                 self._store_device_test_results(result.details)
         if is_sync:

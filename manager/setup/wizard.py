@@ -4,6 +4,9 @@ The widget layer intentionally stays thin: validation, review data, and file
 writes live in manager.setup.controller so they can be tested without a desktop.
 """
 
+import logging
+import re
+
 from PyQt5 import QtCore, QtWidgets
 
 from .. import device_import
@@ -20,8 +23,16 @@ from ..device_management import (
     validate_device_form_values,
 )
 from config.status import INVALID
-from .controller import SetupController
+from .controller import SetupController, SetupPostSaveError, SetupServiceError
 from .model import DeviceSetup, ERPNextSetup, SetupConfiguration, SyncSetup
+
+
+WIZARD_LOGGER = logging.getLogger("manager.setup.wizard")
+WIZARD_LOGGER.addHandler(logging.NullHandler())
+
+FRESH_SETUP = "fresh_setup"
+EDIT_CONFIGURATION = "edit_configuration"
+REPAIR_CONFIGURATION = "repair_configuration"
 
 
 class WizardWorker(QtCore.QObject):
@@ -44,10 +55,12 @@ class SetupWizard(QtWidgets.QWizard):
         super().__init__(parent)
         self.controller = controller or SetupController()
         self.setup_config = self.controller.load_existing_setup_config()
+        self.mode = self._detect_mode()
+        self.edit_mode = self.mode in (EDIT_CONFIGURATION, REPAIR_CONFIGURATION)
         self.setup_result = None
         self.setWindowTitle(self._window_title())
         self.setWizardStyle(QtWidgets.QWizard.ModernStyle)
-        self.addPage(WelcomePage())
+        self.addPage(WelcomePage(mode=self.mode))
         self.erp_page = ERPNextPage(self)
         self.devices_page = DevicesPage(self)
         self.sync_page = SyncPage(self)
@@ -61,13 +74,26 @@ class SetupWizard(QtWidgets.QWizard):
         self.addPage(self.save_page)
         self.addPage(self.completion_page)
 
-    def _window_title(self):
+    def _detect_mode(self):
         status = getattr(self.parent(), "configuration_status", None) if hasattr(self, "parent") else None
         if status is not None and status.state == INVALID:
-            return "Repair Configuration"
+            return REPAIR_CONFIGURATION
         if self.controller.paths.get_config_path().is_file():
+            return EDIT_CONFIGURATION
+        return FRESH_SETUP
+
+    def _window_title(self):
+        if self.mode == REPAIR_CONFIGURATION:
+            return "Repair Configuration"
+        if self.mode == EDIT_CONFIGURATION:
             return "Edit Configuration"
         return "Biometric Attendance Sync Setup"
+
+    def use_standard_next_button(self):
+        self.setButtonText(QtWidgets.QWizard.NextButton, "Next")
+
+    def save_button_text(self):
+        return "Save Changes" if self.mode in (EDIT_CONFIGURATION, REPAIR_CONFIGURATION) else "Save Configuration"
 
     def collect_pages(self):
         self.setup_config.erpnext = self.erp_page.to_model()
@@ -77,8 +103,9 @@ class SetupWizard(QtWidgets.QWizard):
 
 
 class WelcomePage(QtWidgets.QWizardPage):
-    def __init__(self):
+    def __init__(self, mode=FRESH_SETUP):
         super().__init__()
+        self.mode = mode
         self.setTitle("Welcome")
         self.setSubTitle("Set up Biometric Attendance Sync for your ERPNext site.")
         layout = QtWidgets.QVBoxLayout(self)
@@ -89,7 +116,7 @@ class WelcomePage(QtWidgets.QWizardPage):
         layout.addWidget(message)
 
     def initializePage(self):
-        self.wizard().setButtonText(QtWidgets.QWizard.NextButton, "Get Started")
+        self.wizard().setButtonText(QtWidgets.QWizard.NextButton, "Get Started" if self.mode == FRESH_SETUP else "Next")
 
     def cleanupPage(self):
         self.wizard().setButtonText(QtWidgets.QWizard.NextButton, "Next")
@@ -128,6 +155,9 @@ class ERPNextPage(QtWidgets.QWizardPage):
             form.addRow("", self.api_secret_hint)
         form.addRow("", self.verify_ssl)
         form.addRow(self.test_button, self.test_result)
+
+    def initializePage(self):
+        self.wizard_ref.use_standard_next_button()
 
     def to_model(self):
         return ERPNextSetup(
@@ -190,6 +220,10 @@ class DevicesPage(QtWidgets.QWizardPage):
             "Clear After Fetch",
         ])
         self.table.horizontalHeader().setStretchLastSection(True)
+        self._configure_table_header()
+        self._suspend_item_updates = False
+        if hasattr(self.table, "setEditTriggers"):
+            self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         if hasattr(self.table, "setSelectionBehavior"):
             self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         if hasattr(self.table, "setSortingEnabled"):
@@ -215,6 +249,8 @@ class DevicesPage(QtWidgets.QWizardPage):
         self.template_button.clicked.connect(self.save_template)
         if hasattr(self.table, "itemSelectionChanged"):
             self.table.itemSelectionChanged.connect(self._update_action_state)
+        if hasattr(self.table, "itemChanged"):
+            self.table.itemChanged.connect(self._handle_item_changed)
 
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.add_button)
@@ -237,39 +273,14 @@ class DevicesPage(QtWidgets.QWizardPage):
             self.add_device(device)
         self._update_action_state()
 
+    def initializePage(self):
+        self.wizard_ref.use_standard_next_button()
+
     def add_device(self, device):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        test_state = display_connectivity_status(
-            device.enabled,
-            self.wizard_ref.setup_config.device_test_states.get(device.device_id, NOT_TESTED),
-        )
-        health = self.health_by_device.get(device.device_id)
-        values = [
-            device.name,
-            device.device_id,
-            device.ip,
-            str(device.port),
-            device.enabled,
-            test_state,
-            format_device_timestamp(getattr(health, "last_pull", "")),
-            format_device_timestamp(getattr(health, "last_push", "")),
-            "" if device.password in (None, "") else str(device.password),
-            device.clear_from_device_on_fetch,
-        ]
-        for column, value in enumerate(values):
-            if column in (self.COL_ENABLED, self.COL_CLEAR):
-                widget = QtWidgets.QCheckBox()
-                widget.setChecked(bool(value))
-                if column == self.COL_ENABLED and hasattr(widget, "stateChanged"):
-                    widget.stateChanged.connect(lambda _state=None, row=row: self._enabled_changed(row))
-                self.table.setCellWidget(row, column, widget)
-            elif column == self.COL_PASSWORD:
-                widget = QtWidgets.QLineEdit(value)
-                widget.setEchoMode(QtWidgets.QLineEdit.Password)
-                self.table.setCellWidget(row, column, widget)
-            else:
-                self.table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
+        with self._sorting_suspended():
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self._set_row_from_model(row, device, update_actions=False)
         self._update_action_state()
 
     def add_device_dialog(self):
@@ -282,7 +293,7 @@ class DevicesPage(QtWidgets.QWizardPage):
         if row < 0:
             self.result.setText("Select a device to edit.")
             return
-        current_id = self._item_text(row, self.COL_ID)
+        current_id = self._device_id_for_row(row)
         dialog = DeviceDialog(
             self._model_from_row(row),
             self,
@@ -295,7 +306,7 @@ class DevicesPage(QtWidgets.QWizardPage):
     def remove_selected_device(self):
         row = self.table.currentRow()
         if row >= 0:
-            device_id = self._item_text(row, self.COL_ID) or "this device"
+            device_id = self._device_id_for_row(row) or "this device"
             name = self._item_text(row, self.COL_NAME) or "Unnamed device"
             host = self._item_text(row, self.COL_HOST)
             port = self._item_text(row, self.COL_PORT)
@@ -324,20 +335,17 @@ class DevicesPage(QtWidgets.QWizardPage):
             for device in self.wizard_ref.setup_config.devices
         }
         for row in range(self.table.rowCount()):
-            password_widget = self.table.cellWidget(row, self.COL_PASSWORD)
-            enabled_widget = self.table.cellWidget(row, self.COL_ENABLED)
-            clear_widget = self.table.cellWidget(row, self.COL_CLEAR)
-            device_id = self._item_text(row, self.COL_ID)
+            device_id = self._device_id_for_row(row)
             existing_device = existing_by_id.get(device_id)
             devices.append(DeviceSetup(
                 name=self._item_text(row, self.COL_NAME),
                 device_id=device_id,
                 ip=self._item_text(row, self.COL_HOST),
                 port=int(self._item_text(row, self.COL_PORT) or "4370"),
-                enabled=enabled_widget.isChecked() if enabled_widget else True,
-                password=password_widget.text() if password_widget else "",
+                enabled=self._checked(row, self.COL_ENABLED),
+                password=self._item_text(row, self.COL_PASSWORD),
                 has_existing_password=bool(existing_device and existing_device.has_existing_password),
-                clear_from_device_on_fetch=clear_widget.isChecked() if clear_widget else False,
+                clear_from_device_on_fetch=self._checked(row, self.COL_CLEAR),
             ))
         return devices
 
@@ -362,7 +370,7 @@ class DevicesPage(QtWidgets.QWizardPage):
             self.result.setText("Disabled devices are skipped. Enable the device before testing it.")
             self._set_row_status(row, DISABLED)
             return
-        device_id = self._item_text(row, self.COL_ID)
+        device_id = self._device_id_for_row(row)
         self._set_testing_state(True, "Testing " + device_id + "...")
         config = self.wizard_ref.collect_pages()
 
@@ -414,8 +422,11 @@ class DevicesPage(QtWidgets.QWizardPage):
         if not preview.can_apply:
             QtWidgets.QMessageBox.warning(self, "Import Devices", "Fix import errors before importing devices.")
             return
-        for row in preview.valid_rows:
-            self.add_device(row.to_device_setup())
+        with self._sorting_suspended():
+            for row in preview.valid_rows:
+                table_row = self.table.rowCount()
+                self.table.insertRow(table_row)
+                self._set_row_from_model(table_row, row.to_device_setup(), update_actions=False)
         self.result.setText("Imported: " + str(len(preview.valid_rows)) + " Skipped: 0 Errors: 0")
         self._update_action_state()
 
@@ -452,9 +463,16 @@ class DevicesPage(QtWidgets.QWizardPage):
         item = self.table.item(row, column)
         return item.text() if item else ""
 
+    def _device_id_for_row(self, row):
+        item = self.table.item(row, self.COL_ID)
+        if item is None:
+            return ""
+        device_id = item.data(QtCore.Qt.UserRole)
+        return str(device_id or item.text() or "").strip()
+
     def _current_device_ids(self, exclude_row=None):
         return [
-            self._item_text(row, self.COL_ID)
+            self._device_id_for_row(row)
             for row in range(self.table.rowCount())
             if row != exclude_row
         ]
@@ -464,10 +482,7 @@ class DevicesPage(QtWidgets.QWizardPage):
             handle.write(contents)
 
     def _model_from_row(self, row):
-        password_widget = self.table.cellWidget(row, self.COL_PASSWORD)
-        enabled_widget = self.table.cellWidget(row, self.COL_ENABLED)
-        clear_widget = self.table.cellWidget(row, self.COL_CLEAR)
-        device_id = self._item_text(row, self.COL_ID)
+        device_id = self._device_id_for_row(row)
         existing = {
             device.device_id: device
             for device in self.wizard_ref.setup_config.devices
@@ -477,31 +492,32 @@ class DevicesPage(QtWidgets.QWizardPage):
             device_id=device_id,
             ip=self._item_text(row, self.COL_HOST),
             port=int(self._item_text(row, self.COL_PORT) or "4370"),
-            enabled=enabled_widget.isChecked() if enabled_widget else True,
-            password=password_widget.text() if password_widget else "",
+            enabled=self._checked(row, self.COL_ENABLED),
+            password=self._item_text(row, self.COL_PASSWORD),
             has_existing_password=bool(existing and existing.has_existing_password),
-            clear_from_device_on_fetch=clear_widget.isChecked() if clear_widget else False,
+            clear_from_device_on_fetch=self._checked(row, self.COL_CLEAR),
         )
 
-    def _set_row_from_model(self, row, device):
-        self.table.setItem(row, self.COL_NAME, QtWidgets.QTableWidgetItem(device.name))
-        self.table.setItem(row, self.COL_ID, QtWidgets.QTableWidgetItem(device.device_id))
-        self.table.setItem(row, self.COL_HOST, QtWidgets.QTableWidgetItem(device.ip))
-        self.table.setItem(row, self.COL_PORT, QtWidgets.QTableWidgetItem(str(device.port)))
-        enabled_widget = self.table.cellWidget(row, self.COL_ENABLED)
-        if enabled_widget:
-            enabled_widget.setChecked(device.enabled)
-        password_widget = self.table.cellWidget(row, self.COL_PASSWORD)
-        if password_widget:
-            password_widget.setText("" if device.password in (None, "") else str(device.password))
-        clear_widget = self.table.cellWidget(row, self.COL_CLEAR)
-        if clear_widget:
-            clear_widget.setChecked(device.clear_from_device_on_fetch)
-        health = self.health_by_device.get(device.device_id)
-        self.table.setItem(row, self.COL_LAST_PULL, QtWidgets.QTableWidgetItem(format_device_timestamp(getattr(health, "last_pull", ""))))
-        self.table.setItem(row, self.COL_LAST_PUSH, QtWidgets.QTableWidgetItem(format_device_timestamp(getattr(health, "last_push", ""))))
-        self._set_row_status(row, display_connectivity_status(device.enabled, NOT_TESTED))
-        self._update_action_state()
+    def _set_row_from_model(self, row, device, update_actions=True):
+        with self._sorting_suspended():
+            self._suspend_item_updates = True
+            try:
+                device_id = str(device.device_id or "").strip()
+                health = self.health_by_device.get(device_id)
+                self.table.setItem(row, self.COL_NAME, self._text_item(device.name, device_id))
+                self.table.setItem(row, self.COL_ID, self._text_item(device_id, device_id))
+                self.table.setItem(row, self.COL_HOST, self._text_item(device.ip, device_id))
+                self.table.setItem(row, self.COL_PORT, self._text_item(str(device.port), device_id))
+                self.table.setItem(row, self.COL_ENABLED, self._check_item(device.enabled, device_id))
+                self.table.setItem(row, self.COL_PASSWORD, self._text_item("" if device.password in (None, "") else str(device.password), device_id))
+                self.table.setItem(row, self.COL_CLEAR, self._check_item(device.clear_from_device_on_fetch, device_id))
+                self.table.setItem(row, self.COL_LAST_PULL, self._text_item(format_device_timestamp(getattr(health, "last_pull", "")), device_id))
+                self.table.setItem(row, self.COL_LAST_PUSH, self._text_item(format_device_timestamp(getattr(health, "last_push", "")), device_id))
+                self.table.setItem(row, self.COL_STATUS, self._text_item(display_connectivity_status(device.enabled, NOT_TESTED), device_id))
+            finally:
+                self._suspend_item_updates = False
+        if update_actions:
+            self._update_action_state()
 
     def _load_device_health(self):
         parent = self.wizard_ref.parent() if hasattr(self.wizard_ref, "parent") else None
@@ -514,13 +530,17 @@ class DevicesPage(QtWidgets.QWizardPage):
         }
 
     def _row_enabled(self, row):
-        enabled_widget = self.table.cellWidget(row, self.COL_ENABLED)
-        return enabled_widget.isChecked() if enabled_widget else True
+        return self._checked(row, self.COL_ENABLED)
 
     def _enabled_changed(self, row):
         if row < self.table.rowCount():
             self._set_row_status(row, display_connectivity_status(self._row_enabled(row), self._item_text(row, self.COL_STATUS)))
         self._update_action_state()
+
+    def _handle_item_changed(self, item):
+        if self._suspend_item_updates or item is None or item.column() != self.COL_ENABLED:
+            return
+        self._enabled_changed(item.row())
 
     def _selected_row(self):
         row = self.table.currentRow()
@@ -535,7 +555,8 @@ class DevicesPage(QtWidgets.QWizardPage):
         self.test_all_button.setEnabled(not self.device_test_running)
 
     def _set_row_status(self, row, status):
-        self.table.setItem(row, self.COL_STATUS, QtWidgets.QTableWidgetItem(status))
+        device_id = self._device_id_for_row(row)
+        self.table.setItem(row, self.COL_STATUS, self._text_item(status, device_id))
 
     def _set_testing_state(self, running, message):
         self.device_test_running = running
@@ -582,18 +603,18 @@ class DevicesPage(QtWidgets.QWizardPage):
         if isinstance(result, Exception):
             for row in range(self.table.rowCount()):
                 if self._row_enabled(row):
-                    device_id = self._item_text(row, self.COL_ID)
+                    device_id = self._device_id_for_row(row)
                     self.wizard_ref.setup_config.device_test_states[device_id] = UNAVAILABLE
                     self._set_row_status(row, UNAVAILABLE)
                     statuses.append(UNAVAILABLE)
             self._set_testing_state(False, bulk_test_summary(statuses) + ". Open Diagnostics or Logs for technical details.")
             return
-        detail_text = str(getattr(result, "details", "") or getattr(result, "message", "") or "")
+        status_by_device = self._status_by_device_from_bulk_result(result)
         for row in range(self.table.rowCount()):
             if not self._row_enabled(row):
                 continue
-            device_id = self._item_text(row, self.COL_ID)
-            status = self._status_from_bulk_details(device_id, detail_text, getattr(result, "ok", False))
+            device_id = self._device_id_for_row(row)
+            status = status_by_device.get(device_id, UNAVAILABLE)
             self.wizard_ref.setup_config.device_test_states[device_id] = status
             self._set_row_status(row, status)
             statuses.append(status)
@@ -601,20 +622,109 @@ class DevicesPage(QtWidgets.QWizardPage):
             statuses.append(DISABLED)
         self._set_testing_state(False, bulk_test_summary(statuses))
 
-    def _status_from_bulk_details(self, device_id, details, overall_ok):
-        for line in details.splitlines():
-            if device_id in line:
-                if "Connected" in line:
-                    return CONNECTED
-                if "failed" in line.lower() or "unavailable" in line.lower() or "error" in line.lower():
-                    return UNAVAILABLE
-        return CONNECTED if overall_ok else UNAVAILABLE
+    def _status_by_device_from_bulk_result(self, result):
+        entries = self._bulk_detail_entries(result)
+        status_by_device = {}
+        device_ids = [
+            self._device_id_for_row(row)
+            for row in range(self.table.rowCount())
+            if self._row_enabled(row)
+        ]
+        for entry in entries:
+            text = str(entry or "")
+            for device_id in device_ids:
+                if device_id not in status_by_device and _detail_mentions_device(device_id, text):
+                    status_by_device[device_id] = _status_from_device_detail(text)
+                    break
+        return status_by_device
+
+    def _bulk_detail_entries(self, result):
+        details = getattr(result, "details", None)
+        if isinstance(details, (list, tuple)):
+            return [str(detail) for detail in details]
+        if details:
+            return str(details).splitlines()
+        message = getattr(result, "message", "")
+        return str(message).splitlines() if message else []
 
     def _find_row_by_device_id(self, device_id):
         for row in range(self.table.rowCount()):
-            if self._item_text(row, self.COL_ID) == device_id:
+            if self._device_id_for_row(row) == device_id:
                 return row
         return -1
+
+    def _text_item(self, value, device_id=""):
+        item = QtWidgets.QTableWidgetItem(str(value))
+        item.setData(QtCore.Qt.UserRole, str(device_id or ""))
+        item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable & ~QtCore.Qt.ItemIsUserCheckable)
+        return item
+
+    def _check_item(self, checked, device_id=""):
+        item = self._text_item("Yes" if checked else "No", device_id)
+        item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+        item.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+        return item
+
+    def _checked(self, row, column):
+        item = self.table.item(row, column)
+        if item is None:
+            return False
+        return item.checkState() == QtCore.Qt.Checked
+
+    def _sorting_suspended(self):
+        return _SortingSuspension(self.table)
+
+    def _configure_table_header(self):
+        header = self.table.horizontalHeader()
+        if hasattr(header, "setStretchLastSection"):
+            header.setStretchLastSection(False)
+        header_view = getattr(QtWidgets, "QHeaderView", None)
+        if header_view is not None and hasattr(header, "setSectionResizeMode"):
+            header.setSectionResizeMode(self.COL_NAME, header_view.Stretch)
+            for column in [self.COL_ID, self.COL_HOST, self.COL_STATUS, self.COL_LAST_PULL, self.COL_LAST_PUSH, self.COL_CLEAR]:
+                header.setSectionResizeMode(column, header_view.Interactive)
+            for column in [self.COL_PORT, self.COL_ENABLED]:
+                header.setSectionResizeMode(column, header_view.ResizeToContents)
+        for column, width in {
+            self.COL_NAME: 220,
+            self.COL_ID: 140,
+            self.COL_HOST: 150,
+            self.COL_PORT: 70,
+            self.COL_ENABLED: 80,
+            self.COL_STATUS: 170,
+            self.COL_LAST_PULL: 130,
+            self.COL_LAST_PUSH: 130,
+            self.COL_CLEAR: 150,
+        }.items():
+            self.table.setColumnWidth(column, width)
+
+
+class _SortingSuspension:
+    def __init__(self, table):
+        self.table = table
+        self.enabled = False
+        self.section = 0
+        self.order = QtCore.Qt.AscendingOrder
+
+    def __enter__(self):
+        if hasattr(self.table, "isSortingEnabled"):
+            self.enabled = self.table.isSortingEnabled()
+        header = self.table.horizontalHeader() if hasattr(self.table, "horizontalHeader") else None
+        if header is not None:
+            if hasattr(header, "sortIndicatorSection"):
+                self.section = header.sortIndicatorSection()
+            if hasattr(header, "sortIndicatorOrder"):
+                self.order = header.sortIndicatorOrder()
+        if hasattr(self.table, "setSortingEnabled"):
+            self.table.setSortingEnabled(False)
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        if hasattr(self.table, "setSortingEnabled"):
+            self.table.setSortingEnabled(self.enabled)
+        if self.enabled and hasattr(self.table, "sortItems"):
+            self.table.sortItems(self.section, self.order)
+        return False
 
 
 class DeviceDialog(QtWidgets.QDialog):
@@ -755,6 +865,9 @@ class SyncPage(QtWidgets.QWizardPage):
         form.addRow(help_text)
         form.addRow("Sync interval in minutes", self.frequency)
 
+    def initializePage(self):
+        self.wizard_ref.use_standard_next_button()
+
     def to_model(self):
         return SyncSetup(
             import_start_date=self.start_date.date().toString("yyyy-MM-dd"),
@@ -773,6 +886,7 @@ class ReviewPage(QtWidgets.QWizardPage):
         layout.addWidget(self.summary)
 
     def initializePage(self):
+        self.wizard_ref.use_standard_next_button()
         summary = self.wizard_ref.controller.review_summary(self.wizard_ref.collect_pages())
         lines = [
             "ERPNext URL: " + summary["erpnext_url"],
@@ -814,6 +928,12 @@ class SaveConfigurationPage(QtWidgets.QWizardPage):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.message)
 
+    def initializePage(self):
+        self.wizard().setButtonText(QtWidgets.QWizard.NextButton, self.wizard_ref.save_button_text())
+
+    def cleanupPage(self):
+        self.wizard().setButtonText(QtWidgets.QWizard.NextButton, "Next")
+
     def validatePage(self):
         try:
             parent = self.wizard_ref.parent()
@@ -824,8 +944,33 @@ class SaveConfigurationPage(QtWidgets.QWizardPage):
             )
             self.message.setText("Configuration saved securely. Synchronization service is running.")
             return True
+        except SetupServiceError as exc:
+            WIZARD_LOGGER.exception("Setup saved configuration but could not start synchronization service")
+            if getattr(exc, "requires_admin", False):
+                title = "Administrator Permission Required"
+                message = (
+                    "Configuration saved securely, but Windows did not allow the synchronization service to be started or restarted.\n\n"
+                    "Open the Manager as Administrator and try again."
+                )
+            else:
+                title = "Synchronization Service Could Not Start"
+                message = (
+                    "Configuration saved securely, but the synchronization service could not be started or restarted.\n\n"
+                    "Open Diagnostics or Logs for technical details, then start the service from the Manager."
+                )
+            QtWidgets.QMessageBox.warning(self, title, message)
+            return False
+        except SetupPostSaveError:
+            WIZARD_LOGGER.exception("Setup saved configuration but could not confirm final setup state")
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Setup Could Not Be Completed",
+                "Configuration saved securely, but setup could not confirm the final running state.\n\nOpen Diagnostics or Logs for technical details.",
+            )
+            return False
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Setup", support.configuration_invalid_message([str(exc)]).compact())
+            WIZARD_LOGGER.exception("Setup validation or save failed")
+            QtWidgets.QMessageBox.warning(self, "Configuration Invalid", _configuration_validation_message(exc))
             return False
 
 
@@ -862,3 +1007,34 @@ def _verification_label(tested, ok):
 
 def _format_bool(value):
     return "Enabled" if value else "Disabled"
+
+
+def _configuration_validation_message(exc):
+    details = [line.strip() for line in str(exc).splitlines() if line.strip()]
+    message = support.configuration_invalid_message(details)
+    lines = [message.message]
+    if details:
+        lines.append("")
+        lines.append("Details:")
+        lines.extend(details)
+    if message.action:
+        lines.append("")
+        lines.append(message.action)
+    return "\n".join(lines)
+
+
+def _detail_mentions_device(device_id, detail):
+    if not device_id:
+        return False
+    pattern = r"(^|[^A-Za-z0-9_])" + re.escape(str(device_id)) + r"([^A-Za-z0-9_]|$)"
+    return re.search(pattern, str(detail or "")) is not None
+
+
+def _status_from_device_detail(detail):
+    text = str(detail or "").lower()
+    failure_markers = ["failed", "unavailable", "error", "timed out", "timeout", "could not", "can't reach", "cannot reach"]
+    if any(marker in text for marker in failure_markers):
+        return UNAVAILABLE
+    if "connected" in text:
+        return CONNECTED
+    return UNAVAILABLE

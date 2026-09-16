@@ -29,6 +29,16 @@ class SetupCompletionError(RuntimeError):
     pass
 
 
+class SetupServiceError(SetupCompletionError):
+    def __init__(self, message, requires_admin=False):
+        super().__init__(message)
+        self.requires_admin = bool(requires_admin)
+
+
+class SetupPostSaveError(SetupCompletionError):
+    pass
+
+
 class SetupController:
     def __init__(self, paths_module=config_paths, request_func=None, zk_class=None, secret_store=None):
         self.paths = paths_module
@@ -133,16 +143,16 @@ class SetupController:
             message = "Configuration was saved, but it is not valid yet."
             if details:
                 message += " " + details
-            raise SetupCompletionError(message)
+            raise SetupPostSaveError(message)
 
         service_controller = service_controller or ServiceController()
         service_result = self._ensure_service_running(service_controller)
         if not service_result.success:
-            raise SetupCompletionError(_friendly_service_failure(service_result))
+            raise SetupServiceError(_friendly_service_failure(service_result), getattr(service_result, "requires_admin", False))
 
         final_status = service_controller.get_status()
         if final_status.state != "Running":
-            raise SetupCompletionError("Configuration was saved, but synchronization is not running. Current service state: " + final_status.state + ".")
+            raise SetupServiceError("Configuration was saved, but synchronization is not running. Current service state: " + final_status.state + ".")
 
         return SetupCompletion(
             erpnext_configured=True,

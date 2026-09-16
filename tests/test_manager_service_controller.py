@@ -1,5 +1,6 @@
 import subprocess
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from manager import paths
@@ -185,6 +186,27 @@ class ServiceControllerTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(runner.calls[8][0], ["sc.exe", "stop", SERVICE_NAME])
         self.assertEqual(runner.calls[17][0], ["sc.exe", "start", SERVICE_NAME])
+
+    def test_restart_timeout_does_not_start_until_stopped(self):
+        clock = [0]
+        runner = FakeRunner([
+            *status_responses(state="RUNNING"),
+            *status_responses(state="RUNNING"),
+            completed(),
+            *status_responses(state="STOP_PENDING"),
+            *status_responses(state="STOP_PENDING"),
+        ])
+        controller = ServiceController(
+            runner=runner,
+            sleep=lambda _seconds: clock.__setitem__(0, 31),
+            time_func=lambda: clock[0],
+        )
+
+        result = controller.restart_service()
+
+        self.assertFalse(result.success)
+        self.assertIn("did not reach Stopped within 30 seconds", result.message)
+        self.assertFalse(any(call[0] == ["sc.exe", "start", SERVICE_NAME] for call in runner.calls))
 
     def test_install_reports_already_installed(self):
         runner = FakeRunner([completed(stdout="SERVICE_NAME: " + SERVICE_NAME)])
