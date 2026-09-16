@@ -253,8 +253,10 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         sync.send_to_erpnext = fake_send
         device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         logs = [{"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27), "punch": 0, "status": 1}]
-        sync.pull_process_and_push_data(device, logs)
+        result = sync.pull_process_and_push_data(device, logs)
         self.assertEqual(sent, [("100", None, None)])
+        self.assertEqual(result.outcome, sync.DEVICE_SUCCESS)
+        self.assertEqual(result.successful_record_count, 1)
 
     def test_import_start_date_boundary_imports_midnight_and_later(self):
         sync = load_sync_module(self.logs_directory, import_start_date="20260827")
@@ -271,8 +273,9 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             {"uid": 2, "user_id": "midnight", "timestamp": datetime.datetime(2026, 8, 27, 0, 0), "punch": 0, "status": 1},
             {"uid": 3, "user_id": "later", "timestamp": datetime.datetime(2026, 8, 27, 8, 30), "punch": 0, "status": 1},
         ]
-        sync.pull_process_and_push_data(device, logs)
+        result = sync.pull_process_and_push_data(device, logs)
         self.assertEqual([row[0] for row in sent], ["midnight", "later"])
+        self.assertEqual(result.outcome, sync.DEVICE_SUCCESS)
 
     def test_duplicate_employee_checkin_does_not_halt_processing(self):
         sync = load_sync_module(self.logs_directory)
@@ -290,9 +293,11 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             {"uid": 1, "user_id": "duplicate", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1},
             {"uid": 2, "user_id": "later", "timestamp": datetime.datetime(2026, 8, 27, 8, 1), "punch": 0, "status": 1},
         ]
-        sync.pull_process_and_push_data(device, logs)
+        result = sync.pull_process_and_push_data(device, logs)
 
         self.assertEqual(sent, ["duplicate", "later"])
+        self.assertEqual(result.outcome, sync.DEVICE_SUCCESS)
+        self.assertEqual(result.duplicate_record_count, 1)
         success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         self.assertIn("DUPLICATE_ALREADY_SYNCED", success_log)
@@ -304,7 +309,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         logs = [{"uid": 1, "user_id": "duplicate", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
 
-        sync.pull_process_and_push_data(device, logs)
+        result = sync.pull_process_and_push_data(device, logs)
 
         success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
@@ -313,6 +318,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         self.assertEqual(failed_log, "")
         self.assertNotIn("Error during ERPNext API Call", error_log)
         self.assertEqual(sync.classify_erpnext_outcome(417, sync.DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE).category, sync.IDEMPOTENT_SUCCESS)
+        self.assertEqual(result.outcome, sync.DEVICE_SUCCESS)
 
     def test_duplicate_employee_checkin_advances_local_checkpoint(self):
         sync = load_sync_module(self.logs_directory)
@@ -361,7 +367,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "password": 1234, "punch_direction": None}
         logs = [{"uid": 1, "user_id": "missing", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
 
-        sync.pull_process_and_push_data(device, logs)
+        result = sync.pull_process_and_push_data(device, logs)
 
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         missing_log = (self.logs_directory / "attendance_missing_employee_log_DEVICE_01.log").read_text()
@@ -377,6 +383,8 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         rendered_logs = failed_log + missing_log + success_log + error_log
         self.assertNotIn("1234", rendered_logs)
         self.assertNotIn("secret", rendered_logs.lower())
+        self.assertEqual(result.outcome, sync.DEVICE_SUCCESS_WITH_WARNINGS)
+        self.assertEqual(result.missing_employee_count, 1)
 
     def test_missing_employee_is_not_retried_indefinitely(self):
         sync = load_sync_module(self.logs_directory)
@@ -424,7 +432,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         logs = [{"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
 
-        sync.pull_process_and_push_data(device, logs)
+        result = sync.pull_process_and_push_data(device, logs)
 
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         validation_log = (self.logs_directory / "attendance_validation_failure_log_DEVICE_01.log").read_text()
@@ -436,6 +444,8 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         self.assertIn("417", validation_log)
         self.assertIn("VALIDATION_FAILURE", success_log)
         self.assertNotIn("DUPLICATE_ALREADY_SYNCED", success_log)
+        self.assertEqual(result.outcome, sync.DEVICE_SUCCESS_WITH_WARNINGS)
+        self.assertEqual(result.validation_failure_count, 1)
 
     def test_http_417_with_duplicate_text_but_unrelated_validation_remains_failure(self):
         sync = load_sync_module(self.logs_directory)
@@ -447,7 +457,7 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         logs = [{"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
 
-        sync.pull_process_and_push_data(device, logs)
+        result = sync.pull_process_and_push_data(device, logs)
 
         validation_log = (self.logs_directory / "attendance_validation_failure_log_DEVICE_01.log").read_text()
         self.assertIn("VALIDATION_FAILURE", validation_log)
@@ -458,13 +468,14 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
         logs = [{"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
 
-        sync.pull_process_and_push_data(device, logs)
+        result = sync.pull_process_and_push_data(device, logs)
 
         validation_log = (self.logs_directory / "attendance_validation_failure_log_DEVICE_01.log").read_text()
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
         self.assertIn("VALIDATION_FAILURE", validation_log)
         self.assertIn("400", validation_log)
         self.assertEqual(failed_log, "")
+        self.assertEqual(result.outcome, sync.DEVICE_SUCCESS_WITH_WARNINGS)
 
     def test_http_5xx_responses_remain_retryable_failures(self):
         for status_code in [500, 502, 503, 504]:
@@ -484,6 +495,29 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
                 failed_log = (self.logs_directory / ("attendance_failed_log_" + device_id + ".log")).read_text()
                 self.assertIn(str(status_code), failed_log)
+
+    def test_retryable_erpnext_failure_maps_to_device_retryable_outcome(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.requests.request.return_value = erpnext_response(503, {"message": "Temporary outage"})
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
+        log = {"uid": 1, "user_id": "100", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}
+
+        with self.assertRaisesRegex(sync.RetryableSyncError, "API Call to ERPNext Failed"):
+            sync.pull_process_and_push_data(device, [log])
+
+    def test_retryable_device_failure_maps_to_device_retryable_outcome(self):
+        sync = load_sync_module(self.logs_directory)
+        result = sync.device_sync_result_from_exception({"device_id": "DEVICE_01"}, Exception("Device fetch failed."))
+
+        self.assertEqual(result.outcome, sync.DEVICE_RETRYABLE_FAILURE)
+        self.assertEqual(result.retryable_failure_count, 1)
+
+    def test_hard_program_failure_maps_to_device_failed_outcome(self):
+        sync = load_sync_module(self.logs_directory)
+        result = sync.device_sync_result_from_exception({"device_id": "DEVICE_01"}, RuntimeError("unexpected bug"))
+
+        self.assertEqual(result.outcome, sync.DEVICE_FAILED)
+        self.assertEqual(result.error_category, "OPERATIONAL_FAILURE")
 
     def test_retryable_failure_does_not_advance_checkpoint(self):
         sync = load_sync_module(self.logs_directory)
@@ -757,6 +791,45 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         self.assertIn("***", error_log)
         self.assertNotIn("1234", error_log)
 
+    def test_main_persists_aggregate_cycle_counts(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.devices = [
+            {"device_id": "DEVICE_SUCCESS", "ip": "192.0.2.10"},
+            {"device_id": "DEVICE_WARN", "ip": "192.0.2.11"},
+            {"device_id": "DEVICE_RETRY", "ip": "192.0.2.12"},
+            {"device_id": "DEVICE_FAILED", "ip": "192.0.2.13"},
+        ]
+
+        def fake_pull_process_and_push_data(device, device_attendance_logs=None):
+            now = str(datetime.datetime.now())
+            if device["device_id"] == "DEVICE_SUCCESS":
+                return sync.DeviceSyncResult(device["device_id"], sync.DEVICE_SUCCESS, now, now, successful_record_count=1)
+            if device["device_id"] == "DEVICE_WARN":
+                return sync.DeviceSyncResult(device["device_id"], sync.DEVICE_SUCCESS_WITH_WARNINGS, now, now, missing_employee_count=1)
+            if device["device_id"] == "DEVICE_RETRY":
+                raise sync.RetryableSyncError("API Call to ERPNext Failed.")
+            raise RuntimeError("unexpected bug")
+
+        sync.pull_process_and_push_data = fake_pull_process_and_push_data
+        sync.main()
+
+        cycle = sync.status.get(sync.LATEST_SYNC_CYCLE_STATUS_KEY)
+        self.assertEqual(cycle["total_enabled_devices_attempted"], 4)
+        self.assertEqual(cycle["successful"], 1)
+        self.assertEqual(cycle["successful_with_warnings"], 1)
+        self.assertEqual(cycle["retryable_failures"], 1)
+        self.assertEqual(cycle["failed"], 1)
+        self.assertFalse(cycle["stopped_early"])
+        self.assertEqual([device["device_id"] for device in cycle["devices"]], [
+            "DEVICE_SUCCESS",
+            "DEVICE_WARN",
+            "DEVICE_RETRY",
+            "DEVICE_FAILED",
+        ])
+        rendered = json.dumps(cycle)
+        self.assertNotIn("secret", rendered.lower())
+        self.assertNotIn("password", rendered.lower())
+
     def test_main_skips_disabled_devices(self):
         sync = load_sync_module(self.logs_directory)
         sync.config.devices = [
@@ -802,6 +875,10 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
         self.assertEqual(processed_device_ids, ["DEVICE_01"])
         self.assertIsNone(sync.status.get("mission_accomplished_timestamp"))
+        cycle = sync.status.get(sync.LATEST_SYNC_CYCLE_STATUS_KEY)
+        self.assertTrue(cycle["stopped_early"])
+        self.assertEqual(cycle["total_enabled_devices_attempted"], 1)
+        self.assertEqual(len(cycle["devices"]), 1)
 
     def test_current_device_completes_before_shutdown(self):
         sync = load_sync_module(self.logs_directory)
@@ -903,9 +980,11 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
         sync.ZK = LowLevelZK
         device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "password": 1234, "punch_direction": None}
 
-        sync.pull_process_and_push_data(device)
+        result = sync.pull_process_and_push_data(device)
 
         self.assertEqual([row[0] for row in sent], ["100", "102"])
+        self.assertEqual(result.outcome, sync.DEVICE_SUCCESS_WITH_WARNINGS)
+        self.assertEqual(result.corrupt_record_count, 1)
         self.assertEqual(calls[-2:], ["enable", "disconnect"])
         corrupt_log = (self.logs_directory / "attendance_corrupt_record_log_DEVICE_01.log").read_text()
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()

@@ -16,7 +16,7 @@ import sys
 import time
 import logging
 from logging.handlers import RotatingFileHandler
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from struct import unpack
 from pickledb import PickleDB
 from zk import ZK, const
@@ -56,6 +56,12 @@ TERMINAL_DATA_FAILURE = "TERMINAL_DATA_FAILURE"
 RETRYABLE_FAILURE = "RETRYABLE_FAILURE"
 VALIDATION_FAILURE = "VALIDATION_FAILURE"
 
+DEVICE_SUCCESS = "DEVICE_SUCCESS"
+DEVICE_SUCCESS_WITH_WARNINGS = "DEVICE_SUCCESS_WITH_WARNINGS"
+DEVICE_RETRYABLE_FAILURE = "DEVICE_RETRYABLE_FAILURE"
+DEVICE_FAILED = "DEVICE_FAILED"
+LATEST_SYNC_CYCLE_STATUS_KEY = "latest_sync_cycle"
+
 
 @dataclass
 class SyncOutcome:
@@ -81,6 +87,40 @@ class AttendanceFetchResult(list):
     def __init__(self, attendances=None, corrupt_record_count=0):
         super().__init__(attendances or [])
         self.corrupt_record_count = corrupt_record_count
+
+
+class RetryableSyncError(Exception):
+    pass
+
+
+@dataclass
+class DeviceSyncResult:
+    device_id: str
+    outcome: str
+    started_at: str
+    completed_at: str = ""
+    fetched_record_count: int = 0
+    successful_record_count: int = 0
+    duplicate_record_count: int = 0
+    missing_employee_count: int = 0
+    validation_failure_count: int = 0
+    corrupt_record_count: int = 0
+    retryable_failure_count: int = 0
+    error_category: str = ""
+    message: str = ""
+
+
+@dataclass
+class CycleSyncResult:
+    started_at: str
+    completed_at: str = ""
+    total_enabled_devices_attempted: int = 0
+    successful: int = 0
+    successful_with_warnings: int = 0
+    retryable_failures: int = 0
+    failed: int = 0
+    stopped_early: bool = False
+    devices: list = None
 
 # possible area of further developemt
     # Real-time events - setup getting events pushed from the machine rather then polling.
@@ -108,7 +148,8 @@ def main(stop_requested=None):
     try:
         last_lift_off_timestamp = _safe_convert_date(status.get('lift_off_timestamp'), "%Y-%m-%d %H:%M:%S.%f")
         if (last_lift_off_timestamp and last_lift_off_timestamp < datetime.datetime.now() - datetime.timedelta(minutes=config.PULL_FREQUENCY)) or not last_lift_off_timestamp:
-            status.set('lift_off_timestamp', str(datetime.datetime.now()))
+            cycle_result = CycleSyncResult(started_at=str(datetime.datetime.now()), devices=[])
+            status.set('lift_off_timestamp', cycle_result.started_at)
             status.save()
             info_logger.info("Cleared for lift off!")
             validate_unique_device_ids(config.devices)
@@ -125,6 +166,7 @@ def main(stop_requested=None):
                         stopped_early = True
                         break
                     info_logger.info("Processing Device: "+ device['device_id'])
+                    cycle_result.total_enabled_devices_attempted += 1
                     dump_file = get_dump_file_name_and_directory(device['device_id'])
                     if os.path.exists(dump_file):
                         info_logger.error('Device Attendance Dump Found in Log Directory. This can mean the program crashed unexpectedly. Retrying with dumped data.')
@@ -132,13 +174,22 @@ def main(stop_requested=None):
                             file_contents = f.read()
                             if file_contents:
                                 device_attendance_logs = read_attendance_dump(file_contents)
-                    pull_process_and_push_data(device, device_attendance_logs)
+                    device_result = normalize_device_sync_result(
+                        pull_process_and_push_data(device, device_attendance_logs),
+                        device['device_id'],
+                    )
+                    cycle_result.devices.append(asdict(device_result))
+                    apply_device_result_to_cycle(cycle_result, device_result)
                     status.set(f'{device["device_id"]}_push_timestamp', str(datetime.datetime.now()))
                     status.save()
                     if os.path.exists(dump_file):
                         os.remove(dump_file)
                     info_logger.info("Successfully processed Device: "+ device['device_id'])
-                except:
+                except Exception as exc:
+                    device_result = device_sync_result_from_exception(device, exc)
+                    if 'cycle_result' in locals() and device_result:
+                        cycle_result.devices.append(asdict(device_result))
+                        apply_device_result_to_cycle(cycle_result, device_result)
                     error_logger.exception('exception when calling pull_process_and_push_data function for device'+json.dumps(redact_device_config(device), default=str))
                 if _stop_requested(stop_requested):
                     info_logger.info("Synchronization stop requested; no additional devices will be processed")
@@ -146,10 +197,15 @@ def main(stop_requested=None):
                     break
             if stopped_early:
                 info_logger.info("Synchronization cycle stopped early")
+                cycle_result.stopped_early = True
+                cycle_result.completed_at = str(datetime.datetime.now())
+                persist_cycle_result(cycle_result)
                 return
             if hasattr(config,'shift_type_device_mapping'):
                 update_shift_last_sync_timestamp(config.shift_type_device_mapping)
             status.set('mission_accomplished_timestamp', str(datetime.datetime.now()))
+            cycle_result.completed_at = status.get('mission_accomplished_timestamp')
+            persist_cycle_result(cycle_result)
             status.save()
             info_logger.info("Mission Accomplished!")
     except:
@@ -164,6 +220,7 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
     device_attendance_logs: fetching from device is skipped if this param is passed. used to restart failed fetches from previous runs.
     """
     device = normalize_device_config(device)
+    result = DeviceSyncResult(device_id=device['device_id'], outcome=DEVICE_SUCCESS, started_at=str(datetime.datetime.now()))
     attendance_success_log_file = '_'.join(["attendance_success_log", device['device_id']])
     attendance_failed_log_file = '_'.join(["attendance_failed_log", device['device_id']])
     attendance_missing_employee_log_file = '_'.join(["attendance_missing_employee_log", device['device_id']])
@@ -174,9 +231,13 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
     attendance_validation_failure_logger = setup_logger(attendance_validation_failure_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_validation_failure_log_file])+'.log')
     if not device_attendance_logs:
         device_attendance_logs = get_all_attendance_from_device(device['ip'], port=device['port'], password=device['password'], device_id=device['device_id'], clear_from_device_on_fetch=device['clear_from_device_on_fetch'])
+        result.corrupt_record_count = getattr(device_attendance_logs, "corrupt_record_count", 0)
         if not device_attendance_logs:
-            return
+            result.completed_at = str(datetime.datetime.now())
+            result.outcome = classify_completed_device_outcome(result)
+            return result
     device_attendance_logs = normalize_attendance_logs(device_attendance_logs)
+    result.fetched_record_count = len(device_attendance_logs)
     # for finding the last successfull push and restart from that point (or) from a set 'config.IMPORT_START_DATE' (whichever is later)
     index_of_last = -1
     last_line = get_last_line_from_file('/'.join([config.LOGS_DIRECTORY, attendance_success_log_file])+'.log')
@@ -205,7 +266,9 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                     break
         else:
             if last_timestamp and not last_user_id:
-                return
+                result.completed_at = str(datetime.datetime.now())
+                result.outcome = classify_completed_device_outcome(result)
+                return result
 
     for device_attendance_log in device_attendance_logs[index_of_last+1:]:
         punch_direction = device['punch_direction']
@@ -218,16 +281,19 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 punch_direction = None
         outcome = normalize_sync_outcome(send_to_erpnext(device_attendance_log['user_id'], device_attendance_log['timestamp'], device['device_id'], punch_direction, latitude=device.get('latitude'), longitude=device.get('longitude')))
         if outcome.category == SUCCESS:
+            result.successful_record_count += 1
             attendance_success_logger.info("\t".join([outcome.message, str(device_attendance_log['uid']),
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
         elif outcome.category == IDEMPOTENT_SUCCESS:
+            result.duplicate_record_count += 1
             attendance_success_logger.info("\t".join(['DUPLICATE_ALREADY_SYNCED: '+outcome.message, str(device_attendance_log['uid']),
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
         elif outcome.category == TERMINAL_DATA_FAILURE:
+            result.missing_employee_count += 1
             missing_employee_audit = missing_employee_audit_context(device['device_id'], device_attendance_log)
             attendance_missing_employee_logger.warning("\t".join([
                 "MISSING_EMPLOYEE_MAPPING",
@@ -241,6 +307,7 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
         elif outcome.category == VALIDATION_FAILURE:
+            result.validation_failure_count += 1
             validation_audit = validation_failure_audit_context(device['device_id'], device_attendance_log, outcome)
             attendance_validation_failure_logger.warning("\t".join([
                 "VALIDATION_FAILURE",
@@ -255,11 +322,17 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
         else:
+            result.retryable_failure_count += 1
+            result.outcome = DEVICE_RETRYABLE_FAILURE
+            result.completed_at = str(datetime.datetime.now())
             attendance_failed_logger.error("\t".join([str(outcome.status_code), str(device_attendance_log['uid']),
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
-            raise Exception('API Call to ERPNext Failed.')
+            raise RetryableSyncError('API Call to ERPNext Failed.')
+    result.completed_at = str(datetime.datetime.now())
+    result.outcome = classify_completed_device_outcome(result)
+    return result
 
 
 def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, password=DEFAULT_ZK_PASSWORD, device_id=None, clear_from_device_on_fetch=False):
@@ -315,7 +388,79 @@ def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, passwor
             conn.disconnect()
     if enable_failed:
         raise Exception('Device re-enable failed.')
-    return normalize_attendance_logs(list(map(lambda x: x.__dict__, attendances)))
+    normalized_attendances = normalize_attendance_logs(list(map(lambda x: x.__dict__, attendances)))
+    return AttendanceFetchResult(normalized_attendances, getattr(attendances, "corrupt_record_count", 0))
+
+
+def classify_completed_device_outcome(result):
+    if (
+        result.missing_employee_count
+        or result.validation_failure_count
+        or result.corrupt_record_count
+    ):
+        return DEVICE_SUCCESS_WITH_WARNINGS
+    return DEVICE_SUCCESS
+
+
+def normalize_device_sync_result(result, device_id):
+    if isinstance(result, DeviceSyncResult):
+        return result
+    now = str(datetime.datetime.now())
+    return DeviceSyncResult(
+        device_id=str(device_id or ""),
+        outcome=DEVICE_SUCCESS,
+        started_at=now,
+        completed_at=now,
+    )
+
+
+def device_sync_result_from_exception(device, exc):
+    device_id = ""
+    try:
+        device_id = str(device.get('device_id') or "")
+    except Exception:
+        device_id = "UNKNOWN"
+    now = str(datetime.datetime.now())
+    message = str(exc)
+    is_retryable = isinstance(exc, RetryableSyncError) or message in ("Device fetch failed.", "API Call to ERPNext Failed.")
+    return DeviceSyncResult(
+        device_id=device_id,
+        outcome=DEVICE_RETRYABLE_FAILURE if is_retryable else DEVICE_FAILED,
+        started_at=now,
+        completed_at=now,
+        retryable_failure_count=1 if is_retryable else 0,
+        error_category=RETRYABLE_FAILURE if is_retryable else "OPERATIONAL_FAILURE",
+        message=safe_device_result_message(exc),
+    )
+
+
+def safe_device_result_message(exc):
+    if isinstance(exc, RetryableSyncError):
+        return "Retryable synchronization failure."
+    text = str(exc)
+    if text == "Device fetch failed.":
+        return "Device communication failed."
+    if text == "Device re-enable failed.":
+        return "Device re-enable failed."
+    if isinstance(exc, (ValueError, TypeError)):
+        return text
+    return type(exc).__name__
+
+
+def apply_device_result_to_cycle(cycle_result, device_result):
+    if device_result.outcome == DEVICE_SUCCESS:
+        cycle_result.successful += 1
+    elif device_result.outcome == DEVICE_SUCCESS_WITH_WARNINGS:
+        cycle_result.successful_with_warnings += 1
+    elif device_result.outcome == DEVICE_RETRYABLE_FAILURE:
+        cycle_result.retryable_failures += 1
+    else:
+        cycle_result.failed += 1
+
+
+def persist_cycle_result(cycle_result):
+    status.set(LATEST_SYNC_CYCLE_STATUS_KEY, asdict(cycle_result))
+    status.save()
 
 
 def get_attendance_with_corrupt_record_recovery(conn, device_id=None, ip=None):

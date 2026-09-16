@@ -11,6 +11,7 @@ class DeviceHealth:
     port: int
     last_pull: str = ""
     last_push: str = ""
+    sync_outcome: str = ""
 
 
 @dataclass
@@ -18,6 +19,7 @@ class HealthSnapshot:
     last_successful_sync: str = ""
     devices: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
+    cycle_summary: dict = field(default_factory=dict)
     status_file_found: bool = False
 
 
@@ -38,6 +40,7 @@ def get_health_snapshot(config_module=None, sync_module=None):
         config_module = sync_module.config
 
     status_data, found = read_status_data(config_module)
+    cycle_summary = _safe_cycle_summary(status_data)
     devices = []
     for raw_device in getattr(config_module, "devices", []) or []:
         try:
@@ -46,24 +49,30 @@ def get_health_snapshot(config_module=None, sync_module=None):
             devices.append(DeviceHealth(str(raw_device.get("device_id", "Unknown")), "", 0, last_pull="", last_push="Configuration problem: " + str(exc)))
             continue
         device_id = device["device_id"]
+        device_result = _device_result_from_cycle(cycle_summary, device_id)
         devices.append(DeviceHealth(
             device_id=device_id,
             ip=str(device["ip"]),
             port=device["port"],
             last_pull=str(status_data.get(device_id + "_pull_timestamp") or ""),
             last_push=str(status_data.get(device_id + "_push_timestamp") or ""),
+            sync_outcome=str(device_result.get("outcome") or ""),
         ))
 
-    warnings = _sync_warnings(config_module)
+    warnings = _sync_warnings(config_module, status_data)
     return HealthSnapshot(
         last_successful_sync=str(status_data.get("mission_accomplished_timestamp") or ""),
         devices=devices,
         warnings=warnings,
+        cycle_summary=cycle_summary,
         status_file_found=found,
     )
 
 
-def _sync_warnings(config_module):
+def _sync_warnings(config_module, status_data=None):
+    structured_warnings = _structured_sync_warnings(status_data or {})
+    if structured_warnings is not None:
+        return structured_warnings
     logs_folder = get_status_file(config_module).parent
     missing_employee_count = 0
     retryable_failure_count = 0
@@ -103,4 +112,47 @@ def _sync_warnings(config_module):
         warnings.append("Permanent validation/data failures: " + str(validation_failure_count))
     if corrupt_record_count:
         warnings.append("Corrupt attendance records skipped: " + str(corrupt_record_count))
+    return warnings
+
+
+def _safe_cycle_summary(status_data):
+    cycle = status_data.get("latest_sync_cycle") if isinstance(status_data, dict) else None
+    if not isinstance(cycle, dict):
+        return {}
+    return cycle
+
+
+def _device_result_from_cycle(cycle_summary, device_id):
+    for device_result in cycle_summary.get("devices", []) or []:
+        if isinstance(device_result, dict) and str(device_result.get("device_id") or "") == str(device_id):
+            return device_result
+    return {}
+
+
+def _structured_sync_warnings(status_data):
+    cycle = _safe_cycle_summary(status_data)
+    if not cycle:
+        return None
+    missing_employee_count = 0
+    retryable_failure_count = int(cycle.get("retryable_failures") or 0)
+    validation_failure_count = 0
+    corrupt_record_count = 0
+    failed_count = int(cycle.get("failed") or 0)
+    for device_result in cycle.get("devices", []) or []:
+        if not isinstance(device_result, dict):
+            continue
+        missing_employee_count += int(device_result.get("missing_employee_count") or 0)
+        validation_failure_count += int(device_result.get("validation_failure_count") or 0)
+        corrupt_record_count += int(device_result.get("corrupt_record_count") or 0)
+    warnings = []
+    if missing_employee_count:
+        warnings.append("Missing Employee mappings: " + str(missing_employee_count))
+    if retryable_failure_count:
+        warnings.append("Retryable synchronization failures: " + str(retryable_failure_count))
+    if validation_failure_count:
+        warnings.append("Permanent validation/data failures: " + str(validation_failure_count))
+    if corrupt_record_count:
+        warnings.append("Corrupt attendance records skipped: " + str(corrupt_record_count))
+    if failed_count:
+        warnings.append("Device synchronization failures: " + str(failed_count))
     return warnings

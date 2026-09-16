@@ -117,6 +117,56 @@ class ManagerHealthTests(unittest.TestCase):
 
         self.assertEqual(snapshot.warnings, ["Corrupt attendance records skipped: 2"])
 
+    def test_structured_cycle_summary_warnings_are_used_when_available(self):
+        (self.logs_directory / "status.json").write_text(json.dumps({
+            "mission_accomplished_timestamp": "2026-09-12 14:15:26",
+            "latest_sync_cycle": {
+                "started_at": "2026-09-12 14:14:00",
+                "completed_at": "2026-09-12 14:15:26",
+                "total_enabled_devices_attempted": 2,
+                "successful": 1,
+                "successful_with_warnings": 1,
+                "retryable_failures": 1,
+                "failed": 1,
+                "stopped_early": False,
+                "devices": [
+                    {
+                        "device_id": "DEVICE_01",
+                        "outcome": "DEVICE_SUCCESS_WITH_WARNINGS",
+                        "missing_employee_count": 2,
+                        "validation_failure_count": 1,
+                        "corrupt_record_count": 3,
+                    }
+                ],
+            },
+        }), encoding="utf-8")
+        failed_log = self.logs_directory / "attendance_failed_log_DEVICE_01.log"
+        failed_log.write_text("No Employee found for attendance_device_id\n", encoding="utf-8")
+
+        snapshot = get_health_snapshot(self.config, FakeSyncModule)
+
+        self.assertEqual(snapshot.devices[0].sync_outcome, "DEVICE_SUCCESS_WITH_WARNINGS")
+        self.assertEqual(snapshot.cycle_summary["retryable_failures"], 1)
+        self.assertEqual(snapshot.warnings, [
+            "Missing Employee mappings: 2",
+            "Retryable synchronization failures: 1",
+            "Permanent validation/data failures: 1",
+            "Corrupt attendance records skipped: 3",
+            "Device synchronization failures: 1",
+        ])
+
+    def test_legacy_status_without_cycle_summary_remains_readable(self):
+        (self.logs_directory / "status.json").write_text(json.dumps({
+            "mission_accomplished_timestamp": "2026-09-12 14:15:26",
+            "DEVICE_01_pull_timestamp": "2026-09-12 14:15:06",
+        }), encoding="utf-8")
+
+        snapshot = get_health_snapshot(self.config, FakeSyncModule)
+
+        self.assertEqual(snapshot.cycle_summary, {})
+        self.assertEqual(snapshot.last_successful_sync, "2026-09-12 14:15:26")
+        self.assertEqual(snapshot.devices[0].last_pull, "2026-09-12 14:15:06")
+
 
 if __name__ == "__main__":
     unittest.main()
