@@ -17,6 +17,7 @@ import time
 import logging
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass
+from struct import unpack
 from pickledb import PickleDB
 from zk import ZK, const
 
@@ -65,6 +66,21 @@ class SyncOutcome:
     def __iter__(self):
         yield self.status_code
         yield self.message
+
+
+@dataclass
+class DecodedAttendance:
+    user_id: str
+    timestamp: datetime.datetime
+    status: int
+    punch: int = 0
+    uid: int = 0
+
+
+class AttendanceFetchResult(list):
+    def __init__(self, attendances=None, corrupt_record_count=0):
+        super().__init__(attendances or [])
+        self.corrupt_record_count = corrupt_record_count
 
 # possible area of further developemt
     # Real-time events - setup getting events pushed from the machine rather then polling.
@@ -261,11 +277,12 @@ def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, passwor
         device_disabled = True
         # device is disabled when fetching data
         info_logger.info("\t".join((ip, "Device Disable Attempted. Result:", str(x))))
-        attendances = conn.get_attendance()
+        attendances = get_attendance_with_corrupt_record_recovery(conn, device_id, ip)
         info_logger.info("\t".join((ip, "Attendances Fetched:", str(len(attendances)))))
         status.set(f'{device_id}_push_timestamp', None)
         status.set(f'{device_id}_pull_timestamp', str(datetime.datetime.now()))
         status.save()
+        corrupt_record_count = getattr(attendances, "corrupt_record_count", 0)
         if len(attendances):
             # keeping a backup before clearing data incase the programs fails.
             # if everything goes well then this file is removed automatically at the end.
@@ -278,7 +295,9 @@ def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, passwor
                     'fetched_at': datetime.datetime.now(),
                     'attendances': list(map(lambda x: x.__dict__, attendances))
                 }, default=datetime.datetime.timestamp))
-            if clear_from_device_on_fetch:
+            if clear_from_device_on_fetch and corrupt_record_count:
+                info_logger.warning("\t".join((ip, "Attendance Clear Skipped.", "Corrupt attendance records were skipped during fetch.")))
+            elif clear_from_device_on_fetch:
                 x = conn.clear_attendance()
                 info_logger.info("\t".join((ip, "Attendance Clear Attempted. Result:", str(x))))
     except:
@@ -297,6 +316,108 @@ def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, passwor
     if enable_failed:
         raise Exception('Device re-enable failed.')
     return normalize_attendance_logs(list(map(lambda x: x.__dict__, attendances)))
+
+
+def get_attendance_with_corrupt_record_recovery(conn, device_id=None, ip=None):
+    """Read attendance using pyzk's buffer API so one bad timestamp can be skipped.
+
+    Older/fake connection objects used by tests may only expose get_attendance();
+    keep that path untouched. Real pyzk connections expose the lower-level methods
+    used by get_attendance(), which lets us isolate timestamp decode failures per
+    record without modifying site-packages.
+    """
+    required_attrs = ["read_sizes", "get_users", "read_with_buffer", "_ZK__decode_time"]
+    if not all(hasattr(conn, attr) for attr in required_attrs):
+        return conn.get_attendance()
+
+    conn.read_sizes()
+    if getattr(conn, "records", 0) == 0:
+        return []
+    users = conn.get_users()
+    attendances = AttendanceFetchResult()
+    corrupt_record_count = 0
+    attendance_data, size = conn.read_with_buffer(const.CMD_ATTLOG_RRQ)
+    if size < 4:
+        return []
+    total_size = unpack("I", attendance_data[:4])[0]
+    if not getattr(conn, "records", 0):
+        return []
+    record_size = int(total_size / conn.records)
+    attendance_data = attendance_data[4:]
+
+    if record_size == 8:
+        record_index = 0
+        while len(attendance_data) >= 8:
+            raw_record = attendance_data[:8]
+            attendance_data = attendance_data[8:]
+            try:
+                uid, status, timestamp, punch = unpack('HB4sB', raw_record.ljust(8, b'\x00')[:8])
+                tuser = list(filter(lambda x: x.uid == uid, users))
+                user_id = str(uid) if not tuser else tuser[0].user_id
+                timestamp = decode_attendance_timestamp(conn, timestamp)
+                attendances.append(DecodedAttendance(user_id, timestamp, status, punch, uid))
+            except (ValueError, OverflowError, TypeError) as exc:
+                audit_corrupt_attendance_record(device_id, ip, record_index, record_size, raw_record, exc)
+                corrupt_record_count += 1
+            record_index += 1
+    elif record_size == 16:
+        record_index = 0
+        while len(attendance_data) >= 16:
+            raw_record = attendance_data[:16]
+            attendance_data = attendance_data[16:]
+            try:
+                user_id, timestamp, status, punch, reserved, workcode = unpack('<I4sBB2sI', raw_record.ljust(16, b'\x00')[:16])
+                user_id = str(user_id)
+                tuser = list(filter(lambda x: x.user_id == user_id, users))
+                if not tuser:
+                    uid = str(user_id)
+                    tuser = list(filter(lambda x: x.uid == user_id, users))
+                    if tuser:
+                        uid = tuser[0].uid
+                        user_id = tuser[0].user_id
+                else:
+                    uid = tuser[0].uid
+                timestamp = decode_attendance_timestamp(conn, timestamp)
+                attendances.append(DecodedAttendance(user_id, timestamp, status, punch, uid))
+            except (ValueError, OverflowError, TypeError) as exc:
+                audit_corrupt_attendance_record(device_id, ip, record_index, record_size, raw_record, exc)
+                corrupt_record_count += 1
+            record_index += 1
+    else:
+        record_index = 0
+        while len(attendance_data) >= 40:
+            raw_record = attendance_data[:40]
+            attendance_data = attendance_data[40:]
+            try:
+                uid, user_id, status, timestamp, punch, space = unpack('<H24sB4sB8s', raw_record.ljust(40, b'\x00')[:40])
+                user_id = (user_id.split(b'\x00')[0]).decode(errors='ignore')
+                timestamp = decode_attendance_timestamp(conn, timestamp)
+                attendances.append(DecodedAttendance(user_id, timestamp, status, punch, uid))
+            except (ValueError, OverflowError, TypeError) as exc:
+                audit_corrupt_attendance_record(device_id, ip, record_index, 40, raw_record, exc)
+                corrupt_record_count += 1
+            record_index += 1
+    attendances.corrupt_record_count = corrupt_record_count
+    return attendances
+
+
+def decode_attendance_timestamp(conn, raw_timestamp):
+    return getattr(conn, "_ZK__decode_time")(raw_timestamp)
+
+
+def audit_corrupt_attendance_record(device_id, ip, record_index, record_size, raw_record, exc):
+    safe_device_id = str(device_id or "UNKNOWN")
+    corrupt_log_file = '_'.join(["attendance_corrupt_record_log", safe_device_id])
+    corrupt_logger = setup_logger(corrupt_log_file, '/'.join([config.LOGS_DIRECTORY, corrupt_log_file])+'.log')
+    corrupt_logger.warning("\t".join([
+        "CORRUPT_ATTENDANCE_RECORD",
+        safe_device_id,
+        str(ip or ""),
+        str(record_index),
+        str(record_size),
+        bytes(raw_record).hex(),
+        type(exc).__name__,
+    ]))
 
 
 def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):

@@ -105,6 +105,18 @@ class ManagerHealthTests(unittest.TestCase):
             "Permanent validation/data failures: 1",
         ])
 
+    def test_corrupt_attendance_record_warning_count(self):
+        corrupt_log = self.logs_directory / "attendance_corrupt_record_log_DEVICE_01.log"
+        corrupt_log.write_text(
+            "CORRUPT_ATTENDANCE_RECORD\tDEVICE_01\t192.0.2.10\t0\t16\tdeadbeef\tValueError\n"
+            "CORRUPT_ATTENDANCE_RECORD\tDEVICE_01\t192.0.2.10\t1\t16\tcafebabe\tValueError\n",
+            encoding="utf-8",
+        )
+
+        snapshot = get_health_snapshot(self.config, FakeSyncModule)
+
+        self.assertEqual(snapshot.warnings, ["Corrupt attendance records skipped: 2"])
+
 
 if __name__ == "__main__":
     unittest.main()

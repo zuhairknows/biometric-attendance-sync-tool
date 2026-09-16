@@ -68,6 +68,7 @@ def _sync_warnings(config_module):
     missing_employee_count = 0
     retryable_failure_count = 0
     validation_failure_count = 0
+    corrupt_record_count = 0
     for missing_log in logs_folder.glob("attendance_missing_employee_log_*.log"):
         try:
             lines = missing_log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
@@ -80,6 +81,12 @@ def _sync_warnings(config_module):
         except OSError:
             continue
         validation_failure_count += sum("VALIDATION_FAILURE" in line for line in lines)
+    for corrupt_log in logs_folder.glob("attendance_corrupt_record_log_*.log"):
+        try:
+            lines = corrupt_log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+        except OSError:
+            continue
+        corrupt_record_count += sum("CORRUPT_ATTENDANCE_RECORD" in line for line in lines)
     for failed_log in logs_folder.glob("attendance_failed_log_*.log"):
         try:
             lines = failed_log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
@@ -94,4 +101,6 @@ def _sync_warnings(config_module):
         warnings.append("Retryable synchronization failures: " + str(retryable_failure_count))
     if validation_failure_count:
         warnings.append("Permanent validation/data failures: " + str(validation_failure_count))
+    if corrupt_record_count:
+        warnings.append("Corrupt attendance records skipped: " + str(corrupt_record_count))
     return warnings

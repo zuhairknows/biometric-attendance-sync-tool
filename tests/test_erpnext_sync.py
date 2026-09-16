@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import sys
+import struct
 import types
 import unittest
 from pathlib import Path
@@ -55,6 +56,52 @@ class FakeAttendance:
         self.timestamp = timestamp
         self.punch = punch
         self.status = status
+
+
+class LowLevelAttendanceConnection:
+    def __init__(self, raw_records, timestamp_map=None, calls=None):
+        self.raw_records = raw_records
+        self.timestamp_map = timestamp_map or {}
+        self.calls = calls if calls is not None else []
+        self.records = len(raw_records)
+
+    def disable_device(self):
+        self.calls.append("disable")
+        return True
+
+    def read_sizes(self):
+        self.calls.append("read_sizes")
+
+    def get_users(self):
+        self.calls.append("get_users")
+        return []
+
+    def read_with_buffer(self, command):
+        self.calls.append(("read_with_buffer", command))
+        payload = b"".join(self.raw_records)
+        return struct.pack("I", len(payload)) + payload, len(payload) + 4
+
+    def _ZK__decode_time(self, raw_timestamp):
+        self.calls.append(("decode", raw_timestamp))
+        value = self.timestamp_map.get(raw_timestamp)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def enable_device(self):
+        self.calls.append("enable")
+        return True
+
+    def clear_attendance(self):
+        self.calls.append("clear")
+        return True
+
+    def disconnect(self):
+        self.calls.append("disconnect")
+
+
+def make_16_byte_attendance(user_id, raw_timestamp, status=1, punch=0):
+    return struct.pack("<I4sBB2sI", int(user_id), raw_timestamp, status, punch, b"\x00\x00", 0)
 
 
 def erpnext_response(status_code, payload):
@@ -121,7 +168,7 @@ def load_sync_module(logs_directory, import_start_date=None, request_timeout=30,
     FakeZK.attendances = []
     zk_module = types.ModuleType("zk")
     zk_module.ZK = FakeZK
-    zk_module.const = types.SimpleNamespace()
+    zk_module.const = types.SimpleNamespace(CMD_ATTLOG_RRQ=13)
     sys.modules["zk"] = zk_module
 
     programdata = Path(os.environ.get("BIOMETRIC_SYNC_PROGRAMDATA") or (Path(logs_directory).parent / "programdata"))
@@ -823,6 +870,159 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
             sync.get_all_attendance_from_device("192.0.2.10", device_id="DEVICE_01")
 
         self.assertEqual(calls, ["disable", "fetch", "enable", "disconnect"])
+
+    def test_corrupt_timestamp_skips_only_malformed_record(self):
+        sync = load_sync_module(self.logs_directory)
+        sent = []
+
+        def fake_send(user_id, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
+            sent.append((user_id, timestamp))
+            return 200, "CHECKIN-" + str(user_id)
+
+        sync.send_to_erpnext = fake_send
+        records = [
+            make_16_byte_attendance(100, b"OK01"),
+            make_16_byte_attendance(101, b"BAD1"),
+            make_16_byte_attendance(102, b"OK02"),
+        ]
+        timestamp_map = {
+            b"OK01": datetime.datetime(2026, 8, 27, 8, 0),
+            b"BAD1": ValueError("day is out of range for month"),
+            b"OK02": datetime.datetime(2026, 8, 27, 8, 5),
+        }
+        calls = []
+        connection = LowLevelAttendanceConnection(records, timestamp_map, calls)
+
+        class LowLevelZK:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def connect(self):
+                return connection
+
+        sync.ZK = LowLevelZK
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "password": 1234, "punch_direction": None}
+
+        sync.pull_process_and_push_data(device)
+
+        self.assertEqual([row[0] for row in sent], ["100", "102"])
+        self.assertEqual(calls[-2:], ["enable", "disconnect"])
+        corrupt_log = (self.logs_directory / "attendance_corrupt_record_log_DEVICE_01.log").read_text()
+        failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
+        success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
+        self.assertIn("CORRUPT_ATTENDANCE_RECORD", corrupt_log)
+        self.assertIn("DEVICE_01", corrupt_log)
+        self.assertIn("192.0.2.10", corrupt_log)
+        self.assertIn("ValueError", corrupt_log)
+        self.assertNotIn("101", success_log)
+        self.assertEqual(failed_log, "")
+        rendered_logs = corrupt_log + failed_log + success_log
+        self.assertNotIn("1234", rendered_logs)
+        self.assertNotIn("secret", rendered_logs.lower())
+
+    def test_multiple_corrupt_timestamps_are_audited(self):
+        sync = load_sync_module(self.logs_directory)
+        records = [
+            make_16_byte_attendance(100, b"BAD1"),
+            make_16_byte_attendance(101, b"BAD2"),
+        ]
+        timestamp_map = {
+            b"BAD1": ValueError("day is out of range for month"),
+            b"BAD2": ValueError("month must be in 1..12"),
+        }
+        connection = LowLevelAttendanceConnection(records, timestamp_map)
+
+        class LowLevelZK:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def connect(self):
+                return connection
+
+        sync.ZK = LowLevelZK
+
+        attendances = sync.get_all_attendance_from_device("192.0.2.10", device_id="DEVICE_01")
+
+        self.assertEqual(attendances, [])
+        corrupt_log = (self.logs_directory / "attendance_corrupt_record_log_DEVICE_01.log").read_text()
+        self.assertEqual(corrupt_log.count("CORRUPT_ATTENDANCE_RECORD"), 2)
+
+    def test_clear_after_fetch_is_skipped_when_corrupt_records_are_skipped(self):
+        sync = load_sync_module(self.logs_directory)
+        records = [
+            make_16_byte_attendance(100, b"OK01"),
+            make_16_byte_attendance(101, b"BAD1"),
+        ]
+        timestamp_map = {
+            b"OK01": datetime.datetime(2026, 8, 27, 8, 0),
+            b"BAD1": ValueError("day is out of range for month"),
+        }
+        calls = []
+        connection = LowLevelAttendanceConnection(records, timestamp_map, calls)
+
+        class LowLevelZK:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def connect(self):
+                return connection
+
+        sync.ZK = LowLevelZK
+
+        attendances = sync.get_all_attendance_from_device(
+            "192.0.2.10",
+            device_id="DEVICE_01",
+            clear_from_device_on_fetch=True,
+        )
+
+        self.assertEqual([row["user_id"] for row in attendances], ["100"])
+        self.assertNotIn("clear", calls)
+
+    def test_low_level_device_failure_still_fails_and_reenables_device(self):
+        sync = load_sync_module(self.logs_directory)
+        calls = []
+
+        class FailingLowLevelConnection:
+            records = 1
+
+            def disable_device(self):
+                calls.append("disable")
+                return True
+
+            def read_sizes(self):
+                calls.append("read_sizes")
+
+            def get_users(self):
+                calls.append("get_users")
+                return []
+
+            def read_with_buffer(self, command):
+                calls.append("read_with_buffer")
+                raise RuntimeError("device session failed")
+
+            def _ZK__decode_time(self, raw_timestamp):
+                return datetime.datetime(2026, 8, 27)
+
+            def enable_device(self):
+                calls.append("enable")
+                return True
+
+            def disconnect(self):
+                calls.append("disconnect")
+
+        class FailingLowLevelZK:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def connect(self):
+                return FailingLowLevelConnection()
+
+        sync.ZK = FailingLowLevelZK
+
+        with self.assertRaisesRegex(Exception, "Device fetch failed"):
+            sync.get_all_attendance_from_device("192.0.2.10", device_id="DEVICE_01")
+
+        self.assertEqual(calls, ["disable", "read_sizes", "get_users", "read_with_buffer", "enable", "disconnect"])
 
     def test_minimal_legacy_config_without_logs_directory_imports_runtime(self):
         programdata = self.logs_directory.parent / (self._testMethodName + "_programdata")
