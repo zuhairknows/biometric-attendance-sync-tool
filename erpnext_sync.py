@@ -132,8 +132,10 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
     device = normalize_device_config(device)
     attendance_success_log_file = '_'.join(["attendance_success_log", device['device_id']])
     attendance_failed_log_file = '_'.join(["attendance_failed_log", device['device_id']])
+    attendance_missing_employee_log_file = '_'.join(["attendance_missing_employee_log", device['device_id']])
     attendance_success_logger = setup_logger(attendance_success_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_success_log_file])+'.log')
     attendance_failed_logger = setup_logger(attendance_failed_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_failed_log_file])+'.log')
+    attendance_missing_employee_logger = setup_logger(attendance_missing_employee_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_missing_employee_log_file])+'.log')
     if not device_attendance_logs:
         device_attendance_logs = get_all_attendance_from_device(device['ip'], port=device['port'], password=device['password'], device_id=device['device_id'], clear_from_device_on_fetch=device['clear_from_device_on_fetch'])
         if not device_attendance_logs:
@@ -186,6 +188,19 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 json.dumps(device_attendance_log, default=str)]))
         elif is_duplicate_employee_checkin_response(erpnext_status_code, erpnext_message):
             attendance_success_logger.info("\t".join(['DUPLICATE_ALREADY_SYNCED: '+erpnext_message, str(device_attendance_log['uid']),
+                str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
+                str(device_attendance_log['punch']), str(device_attendance_log['status']),
+                json.dumps(device_attendance_log, default=str)]))
+        elif is_missing_employee_response(erpnext_message):
+            missing_employee_audit = missing_employee_audit_context(device['device_id'], device_attendance_log)
+            attendance_missing_employee_logger.warning("\t".join([
+                "MISSING_EMPLOYEE_MAPPING",
+                missing_employee_audit["device_id"],
+                missing_employee_audit["attendance_device_id"],
+                missing_employee_audit["timestamp"],
+                missing_employee_audit["category"],
+            ]))
+            attendance_success_logger.info("\t".join(['MISSING_EMPLOYEE_MAPPING: '+json.dumps(missing_employee_audit, sort_keys=True), str(device_attendance_log['uid']),
                 str(device_attendance_log['user_id']), str(device_attendance_log['timestamp'].timestamp()),
                 str(device_attendance_log['punch']), str(device_attendance_log['status']),
                 json.dumps(device_attendance_log, default=str)]))
@@ -296,6 +311,19 @@ def is_duplicate_employee_checkin_response(status_code, message):
 def is_missing_employee_response(message):
     text = str(message or "")
     return EMPLOYEE_NOT_FOUND_ERROR_MESSAGE in text or EMPLOYEE_NOT_FOUND_ATTENDANCE_DEVICE_ID_MESSAGE in text
+
+def missing_employee_audit_context(device_id, device_attendance_log):
+    timestamp = device_attendance_log.get('timestamp')
+    if hasattr(timestamp, 'isoformat'):
+        timestamp_value = timestamp.isoformat(sep=' ')
+    else:
+        timestamp_value = str(timestamp or "")
+    return {
+        "category": "missing_employee_mapping",
+        "device_id": str(device_id or ""),
+        "attendance_device_id": str(device_attendance_log.get('user_id') or ""),
+        "timestamp": timestamp_value,
+    }
 
 def is_non_retryable_attendance_failure(message):
     text = str(message or "")

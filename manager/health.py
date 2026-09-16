@@ -66,6 +66,12 @@ def get_health_snapshot(config_module=None, sync_module=None):
 def _missing_employee_warnings(config_module):
     logs_folder = get_status_file(config_module).parent
     count = 0
+    for missing_log in logs_folder.glob("attendance_missing_employee_log_*.log"):
+        try:
+            lines = missing_log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+        except OSError:
+            continue
+        count += sum("MISSING_EMPLOYEE_MAPPING" in line for line in lines)
     for failed_log in logs_folder.glob("attendance_failed_log_*.log"):
         try:
             lines = failed_log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
@@ -74,4 +80,4 @@ def _missing_employee_warnings(config_module):
         count += sum("No Employee found" in line for line in lines)
     if not count:
         return []
-    return [str(count) + " attendance records could not be matched to ERPNext employees."]
+    return ["Missing Employee mappings: " + str(count)]

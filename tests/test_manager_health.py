@@ -66,16 +66,24 @@ class ManagerHealthTests(unittest.TestCase):
         self.assertIn("Configuration problem", snapshot.devices[0].last_push)
 
     def test_missing_employee_warning_count(self):
-        failed_log = self.logs_directory / "attendance_failed_log_DEVICE_01.log"
-        failed_log.write_text(
-            "No Employee found for the given employee field value\n"
-            "No Employee found for attendance_device_id\n",
+        missing_log = self.logs_directory / "attendance_missing_employee_log_DEVICE_01.log"
+        missing_log.write_text(
+            "MISSING_EMPLOYEE_MAPPING\tDEVICE_01\t554068\t2026-08-27 08:00:00\tmissing_employee_mapping\n"
+            "MISSING_EMPLOYEE_MAPPING\tDEVICE_01\t554069\t2026-08-27 08:05:00\tmissing_employee_mapping\n",
             encoding="utf-8",
         )
 
         snapshot = get_health_snapshot(self.config, FakeSyncModule)
 
-        self.assertEqual(snapshot.warnings, ["2 attendance records could not be matched to ERPNext employees."])
+        self.assertEqual(snapshot.warnings, ["Missing Employee mappings: 2"])
+
+    def test_legacy_missing_employee_failed_log_still_counts(self):
+        failed_log = self.logs_directory / "attendance_failed_log_DEVICE_01.log"
+        failed_log.write_text("No Employee found for attendance_device_id\n", encoding="utf-8")
+
+        snapshot = get_health_snapshot(self.config, FakeSyncModule)
+
+        self.assertEqual(snapshot.warnings, ["Missing Employee mappings: 1"])
 
 
 if __name__ == "__main__":

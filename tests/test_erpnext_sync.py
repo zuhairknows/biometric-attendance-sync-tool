@@ -310,16 +310,61 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
     def test_missing_employee_attendance_device_id_remains_actionable_failure(self):
         sync = load_sync_module(self.logs_directory)
         sync.requests.request.return_value = erpnext_validation_response(sync.EMPLOYEE_NOT_FOUND_ATTENDANCE_DEVICE_ID_MESSAGE)
-        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "password": 1234, "punch_direction": None}
         logs = [{"uid": 1, "user_id": "missing", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}]
 
         sync.pull_process_and_push_data(device, logs)
 
         failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
+        missing_log = (self.logs_directory / "attendance_missing_employee_log_DEVICE_01.log").read_text()
         success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
-        self.assertIn("417", failed_log)
-        self.assertIn("missing", failed_log)
+        error_log = (self.logs_directory / "error.log").read_text()
+        self.assertEqual(failed_log, "")
+        self.assertIn("MISSING_EMPLOYEE_MAPPING", missing_log)
+        self.assertIn("DEVICE_01", missing_log)
+        self.assertIn("missing", missing_log)
+        self.assertIn("2026-08-27 08:00:00", missing_log)
+        self.assertIn("missing_employee_mapping", success_log)
         self.assertNotIn("DUPLICATE_ALREADY_SYNCED", success_log)
+        rendered_logs = failed_log + missing_log + success_log + error_log
+        self.assertNotIn("1234", rendered_logs)
+        self.assertNotIn("secret", rendered_logs.lower())
+
+    def test_missing_employee_is_not_retried_indefinitely(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.requests.request.return_value = erpnext_validation_response(sync.EMPLOYEE_NOT_FOUND_ERROR_MESSAGE)
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
+        missing_log = {"uid": 1, "user_id": "554068", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}
+
+        sync.pull_process_and_push_data(device, [missing_log])
+        sync.pull_process_and_push_data(device, [missing_log])
+
+        failed_log = (self.logs_directory / "attendance_failed_log_DEVICE_01.log").read_text()
+        audit_log = (self.logs_directory / "attendance_missing_employee_log_DEVICE_01.log").read_text()
+        success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
+        self.assertEqual(failed_log, "")
+        self.assertEqual(sync.requests.request.call_count, 1)
+        self.assertEqual(audit_log.count("MISSING_EMPLOYEE_MAPPING"), 1)
+        self.assertEqual(success_log.count("MISSING_EMPLOYEE_MAPPING"), 1)
+
+    def test_future_punch_processes_after_missing_employee_checkpoint(self):
+        sync = load_sync_module(self.logs_directory)
+        responses = [
+            erpnext_validation_response(sync.EMPLOYEE_NOT_FOUND_ERROR_MESSAGE),
+            erpnext_response(200, {"message": {"name": "CHECKIN-0002"}}),
+        ]
+        sync.requests.request.side_effect = responses
+        device = {"device_id": "DEVICE_01", "ip": "192.0.2.10", "punch_direction": None}
+        missing_log = {"uid": 1, "user_id": "554068", "timestamp": datetime.datetime(2026, 8, 27, 8, 0), "punch": 0, "status": 1}
+        later_log = {"uid": 2, "user_id": "554068", "timestamp": datetime.datetime(2026, 8, 27, 8, 5), "punch": 0, "status": 1}
+
+        sync.pull_process_and_push_data(device, [missing_log])
+        sync.pull_process_and_push_data(device, [missing_log, later_log])
+
+        success_log = (self.logs_directory / "attendance_success_log_DEVICE_01.log").read_text()
+        self.assertEqual(sync.requests.request.call_count, 2)
+        self.assertIn("MISSING_EMPLOYEE_MAPPING", success_log)
+        self.assertIn("CHECKIN-0002", success_log)
 
     def test_unrelated_http_417_remains_failure(self):
         sync = load_sync_module(self.logs_directory)
