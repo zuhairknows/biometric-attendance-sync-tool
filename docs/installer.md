@@ -19,31 +19,29 @@ Mutable runtime data:
 
 ```text
 C:\ProgramData\BiometricAttendanceSync\
+    config.json
     config\
-        local_config.py
-        local_config.py.template
     logs\
     state\
     retry\
+    secrets\
+    backups\
+    diagnostics\
 ```
 
 Never place credentials, logs, `status.json`, or retry dumps under Program Files.
 
 ## First-Time Configuration
 
-The installer creates the ProgramData folder structure and installs a safe template:
+The installer creates the ProgramData folder structure, installs and configures
+the Windows service, and leaves the service stopped when no real configuration
+exists.
 
-```text
-C:\ProgramData\BiometricAttendanceSync\config\local_config.py.template
-```
-
-It does not create a real `local_config.py` automatically. Copy/review the template and create:
-
-```text
-C:\ProgramData\BiometricAttendanceSync\config\local_config.py
-```
-
-If no real config exists, the service is installed and configured but left stopped.
+On first launch, Biometric Attendance Sync opens the Manager and shows the
+first-run setup wizard. The administrator configures ERPNext, biometric
+devices, and synchronization settings there. The Manager writes commercial
+`config.json` and DPAPI-protected secrets under ProgramData; customers do not
+need to edit Python files or JSON manually.
 
 ## Service Setup
 
@@ -55,7 +53,7 @@ sc config ERPNextBiometricPushService start= delayed-auto
 sc failure ERPNextBiometricPushService reset= 86400 actions= restart/60000/restart/60000/restart/60000
 ```
 
-If a real `local_config.py` exists, the installer starts the service. Template-only config is not enough to start the service.
+If a commercial `config.json` or supported legacy `local_config.py` exists, the installer starts the service.
 
 The Windows service name remains:
 
@@ -76,9 +74,13 @@ Before replacing files, the installer stops the service if it is present. It the
 The installer does not delete:
 
 - `local_config.py`
+- `config.json`
+- protected secrets
 - logs
 - `status.json`
 - retry dumps
+- diagnostics
+- backups
 
 Changing `DefaultDirName` does not add custom destructive migration logic. Existing installs should remain upgradeable through the unchanged AppId; test the exact install-location behavior during a controlled upgrade rehearsal.
 
@@ -107,14 +109,20 @@ Runtime compatibility may still read that legacy location when no new config exi
 The installer creates a Start Menu shortcut:
 
 ```text
-Biometric Attendance Sync Manager
+Biometric Attendance Sync
 ```
 
 The desktop shortcut is optional and selected during installation.
 
 ## Build Procedure
 
-Install PyInstaller and Inno Setup 6 on the build machine, then run from the repository root:
+Install PyInstaller and make sure an Inno Setup compiler is available on the
+build machine. The build script prefers the bundled compiler at
+`build\tools\innosetup\package\tools\ISCC.exe`, then checks Inno Setup 7 and
+Inno Setup 6 under Program Files. You can also pass `-InnoCompiler` with an
+explicit `ISCC.exe` path.
+
+Run from the repository root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build\build_release.ps1
@@ -127,7 +135,7 @@ The script:
 3. Builds the packaged Windows service.
 4. Builds the packaged PyQt Manager.
 5. Assembles `release\Biometric Attendance Sync\`.
-6. Invokes Inno Setup when `ISCC.exe` is available.
+6. Compiles the installer with Inno Setup.
 
 Expected final installer:
 
@@ -135,7 +143,9 @@ Expected final installer:
 release\installer\Biometric-Attendance-Sync-Setup-0.1.0.exe
 ```
 
-If Inno Setup is not installed, the staging folder is still created and the script exits with a warning.
+If no Inno Setup compiler is available, the release build stops with a clear
+error before packaging. A successful production release requires the final
+installer, release notes, and SHA256 file.
 
 ## Installer Logging
 
@@ -157,18 +167,22 @@ No custom telemetry is included.
 6. Verify `sc qc ERPNextBiometricPushService`.
 7. Verify startup is delayed automatic.
 8. Verify recovery actions are configured.
-9. Verify Manager opens from Start Menu.
-10. Verify Manager detects the service.
-11. Verify Manager reads existing ProgramData configuration/state.
-12. Verify ERPNext test.
-13. Verify device test.
-14. Verify service starts.
-15. Verify a full sync reaches `Mission Accomplished!`.
-16. Reboot Windows.
-17. Verify service automatically returns to `RUNNING`.
-18. Verify another `Mission Accomplished!` after reboot.
-19. Test Apps & Features uninstall.
-20. Verify service is removed.
-21. Verify ProgramData remains preserved.
+9. Verify Biometric Attendance Sync opens from Start Menu.
+10. On a fresh machine, verify the first-run setup wizard opens.
+11. Complete setup through the Manager and verify the service starts.
+12. On an already configured machine, verify Manager opens the dashboard instead
+    of forcing first-run setup.
+13. Verify Manager detects the service.
+14. Verify Manager reads existing ProgramData configuration/state.
+15. Verify ERPNext test.
+16. Verify device test.
+17. Verify service starts.
+18. Verify a full sync reaches `Mission Accomplished!`.
+19. Reboot Windows.
+20. Verify service automatically returns to `RUNNING`.
+21. Verify another `Mission Accomplished!` after reboot.
+22. Test Apps & Features uninstall.
+23. Verify service is removed.
+24. Verify ProgramData remains preserved.
 
 Do not perform destructive cleanup of existing ProgramData during this validation.

@@ -9,6 +9,13 @@ from pathlib import Path
 from config import paths as config_paths
 from config.loader import load_config
 from config.status import CONFIGURED, LEGACY_CONFIGURED, get_configuration_status
+from manager.health import get_health_snapshot, read_status_data
+from manager import support
+
+try:
+    from version import PRODUCT_VERSION
+except Exception:
+    PRODUCT_VERSION = "unknown"
 
 
 BACKUP_METADATA_NAME = "metadata.json"
@@ -142,10 +149,27 @@ def export_diagnostics_report(paths_module=config_paths, service_status=None, ou
     status = get_configuration_status(paths_module=paths_module)
     summary = get_configuration_summary(paths_module=paths_module, status=status, service_status=service_status)
     raw_config = _read_json_if_present(paths_module.get_config_path())
+    runtime = _load_runtime_if_configured(status, paths_module)
+    health = None
+    if runtime is not None:
+        try:
+            health = get_health_snapshot(runtime)
+        except Exception:
+            health = None
+    status_data, status_file_found = _read_support_status_data(paths_module, runtime)
     report = {
         "created_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat(),
+        "product": {
+            "name": "Biometric Attendance Sync",
+            "version": PRODUCT_VERSION,
+        },
+        "platform": support.platform_summary(),
         "configuration": summary,
         "devices": _safe_devices(raw_config.get("devices", [])),
+        "service": _safe_service_status(service_status),
+        "synchronization": _safe_sync_status(status_data, status_file_found),
+        "device_health": _safe_device_health(getattr(health, "devices", []) if health else [], status_data, raw_config.get("devices", [])),
+        "warnings": _safe_warnings(health),
         "paths": {
             "config": str(paths_module.get_config_path()),
             "logs": str(paths_module.get_logs_dir()),
@@ -159,6 +183,27 @@ def export_diagnostics_report(paths_module=config_paths, service_status=None, ou
     path = output_root / ("BiometricAttendanceSync-Diagnostics-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".json")
     path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def build_diagnostics_summary_text(configuration_status, service_status, health, configuration_summary, erpnext_text="Not tested"):
+    configuration_summary = configuration_summary or {}
+    warnings = list(getattr(health, "warnings", []) or [])
+    enabled = int(configuration_summary.get("enabled_devices") or 0)
+    configured = int(configuration_summary.get("total_devices") or 0)
+    device_count = len(getattr(health, "devices", []) or [])
+    configured = max(configured, device_count)
+    last_sync = getattr(health, "last_successful_sync", "") if health is not None else ""
+    lines = [
+        "Biometric Attendance Sync",
+        "Version: " + str(PRODUCT_VERSION),
+        "Configuration: " + _configuration_label(configuration_status),
+        "Service: " + support.status_label_for_service(service_status),
+        "ERPNext: " + str(erpnext_text or "Not tested"),
+        "Devices: " + str(configured) + " configured / " + str(enabled) + " enabled",
+        "Last Sync: " + (str(last_sync) if last_sync else "No successful synchronization recorded"),
+        "Warnings: " + str(len(warnings)),
+    ]
+    return "\n".join(lines)
 
 
 def build_change_summary(setup_config, paths_module=config_paths):
@@ -223,6 +268,91 @@ def _safe_devices(devices):
             "clear_from_device_on_fetch": device.get("clear_from_device_on_fetch", False),
         })
     return safe
+
+
+def _safe_service_status(service_status):
+    if service_status is None:
+        return {"installed": None, "state": "Unknown", "startup": "Unknown", "recovery": "Unknown"}
+    return {
+        "installed": bool(getattr(service_status, "installed", False)),
+        "state": str(getattr(service_status, "state", "") or "Unknown"),
+        "startup": str(getattr(service_status, "startup", "") or "Unknown"),
+        "recovery": str(getattr(service_status, "recovery", "") or "Unknown"),
+    }
+
+
+def _safe_sync_status(status_data, status_file_found):
+    return {
+        "status_file_found": bool(status_file_found),
+        "last_successful_sync": str(status_data.get("mission_accomplished_timestamp") or ""),
+    }
+
+
+def _read_support_status_data(paths_module, runtime):
+    status_data, found = read_status_data(runtime)
+    if status_data or found:
+        return status_data, found
+    state_path = paths_module.get_state_path()
+    if not state_path.is_file():
+        return {}, False
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}, True
+    except Exception:
+        return {}, True
+
+
+def _safe_device_health(devices, status_data=None, configured_devices=None):
+    status_data = status_data or {}
+    safe = []
+    for device in devices:
+        safe.append({
+            "device_id": str(getattr(device, "device_id", "") or ""),
+            "ip": str(getattr(device, "ip", "") or ""),
+            "port": getattr(device, "port", ""),
+            "last_pull": str(getattr(device, "last_pull", "") or status_data.get(str(getattr(device, "device_id", "")) + "_pull_timestamp") or ""),
+            "last_push": str(getattr(device, "last_push", "") or status_data.get(str(getattr(device, "device_id", "")) + "_push_timestamp") or ""),
+        })
+    if safe:
+        return safe
+    for device in configured_devices if isinstance(configured_devices, list) else []:
+        if not isinstance(device, dict):
+            continue
+        device_id = str(device.get("device_id") or "")
+        safe.append({
+            "device_id": device_id,
+            "ip": str(device.get("ip") or device.get("host") or ""),
+            "port": device.get("port", ""),
+            "last_pull": str(status_data.get(device_id + "_pull_timestamp") or ""),
+            "last_push": str(status_data.get(device_id + "_push_timestamp") or ""),
+        })
+    return safe
+
+
+def _safe_warnings(health):
+    warnings = list(getattr(health, "warnings", []) or []) if health is not None else []
+    missing_employee_count = 0
+    for warning in warnings:
+        text = str(warning)
+        token = text.split(" ", 1)[0]
+        if token.isdigit() and "attendance records could not be matched" in text:
+            missing_employee_count += int(token)
+    return {
+        "count": len(warnings),
+        "missing_employee_count": missing_employee_count,
+        "messages": warnings,
+    }
+
+
+def _configuration_label(configuration_status):
+    if configuration_status is None:
+        return "Unknown"
+    state = getattr(configuration_status, "state", "")
+    if state in (CONFIGURED, LEGACY_CONFIGURED):
+        return "Valid"
+    if state == "INVALID":
+        return "Invalid"
+    return "Not configured"
 
 
 def _validate_backup_archive(archive_path):

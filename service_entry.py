@@ -63,6 +63,7 @@ class BiometricAttendanceSyncService(win32serviceutil.ServiceFramework):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         self.isrunning = False
         log_service_info("Service stop requested")
+        log_service_info("Finishing current device before shutdown")
         win32event.SetEvent(self.hWaitStop)
 
     def SvcDoRun(self):
@@ -104,7 +105,7 @@ class BiometricAttendanceSyncService(win32serviceutil.ServiceFramework):
                 elif service_invalid_configuration:
                     log_service_error("Configuration is invalid. Complete setup or repair protected secrets.")
                 else:
-                    load_sync_runtime().main()
+                    load_sync_runtime().main(stop_requested=self.stop_requested)
             except Exception:
                 if erpnext_sync is not None:
                     erpnext_sync.error_logger.exception("Unexpected service cycle exception")
@@ -114,7 +115,11 @@ class BiometricAttendanceSyncService(win32serviceutil.ServiceFramework):
             if wait_result == win32event.WAIT_OBJECT_0:
                 self.isrunning = False
 
+        log_service_info("Service loop exiting")
         log_service_info("Service stopped")
+
+    def stop_requested(self):
+        return not self.isrunning
 
 
 def run_service_dispatch(argv=None):

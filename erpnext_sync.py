@@ -59,13 +59,16 @@ DEFAULT_ZK_PASSWORD = 0
 #  - <device_id>_push_timestamp
 #  - <shift_type>_sync_timestamp
 
-def main():
+def main(stop_requested=None):
     """Takes care of checking if it is time to pull data based on config,
     then calling the relevent functions to pull data and push to EPRNext.
 
     """
     if getattr(config, 'CONFIG_SOURCE', '') == 'defaults':
         info_logger.info("Product is not configured. Complete first-run setup.")
+        return
+    if _stop_requested(stop_requested):
+        info_logger.info("Synchronization stop requested; ending cycle.")
         return
     try:
         last_lift_off_timestamp = _safe_convert_date(status.get('lift_off_timestamp'), "%Y-%m-%d %H:%M:%S.%f")
@@ -74,6 +77,7 @@ def main():
             status.save()
             info_logger.info("Cleared for lift off!")
             validate_unique_device_ids(config.devices)
+            stopped_early = False
             for device in config.devices:
                 device_attendance_logs = None
                 try:
@@ -81,6 +85,10 @@ def main():
                     if not device['enabled']:
                         info_logger.info("Skipping disabled Device: "+ device['device_id'])
                         continue
+                    if _stop_requested(stop_requested):
+                        info_logger.info("Synchronization stop requested; no additional devices will be processed")
+                        stopped_early = True
+                        break
                     info_logger.info("Processing Device: "+ device['device_id'])
                     dump_file = get_dump_file_name_and_directory(device['device_id'])
                     if os.path.exists(dump_file):
@@ -97,6 +105,13 @@ def main():
                     info_logger.info("Successfully processed Device: "+ device['device_id'])
                 except:
                     error_logger.exception('exception when calling pull_process_and_push_data function for device'+json.dumps(redact_device_config(device), default=str))
+                if _stop_requested(stop_requested):
+                    info_logger.info("Synchronization stop requested; no additional devices will be processed")
+                    stopped_early = True
+                    break
+            if stopped_early:
+                info_logger.info("Synchronization cycle stopped early")
+                return
             if hasattr(config,'shift_type_device_mapping'):
                 update_shift_last_sync_timestamp(config.shift_type_device_mapping)
             status.set('mission_accomplished_timestamp', str(datetime.datetime.now()))
@@ -188,10 +203,13 @@ def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, passwor
     password = validate_password(password)
     zk = ZK(ip, port=port, timeout=timeout, password=password)
     conn = None
+    device_disabled = False
+    enable_failed = False
     attendances = []
     try:
         conn = zk.connect()
         x = conn.disable_device()
+        device_disabled = True
         # device is disabled when fetching data
         info_logger.info("\t".join((ip, "Device Disable Attempted. Result:", str(x))))
         attendances = conn.get_attendance()
@@ -214,14 +232,21 @@ def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, passwor
             if clear_from_device_on_fetch:
                 x = conn.clear_attendance()
                 info_logger.info("\t".join((ip, "Attendance Clear Attempted. Result:", str(x))))
-        x = conn.enable_device()
-        info_logger.info("\t".join((ip, "Device Enable Attempted. Result:", str(x))))
     except:
         error_logger.exception(str(ip)+' exception when fetching from device...')
         raise Exception('Device fetch failed.')
     finally:
         if conn:
+            if device_disabled:
+                try:
+                    x = conn.enable_device()
+                    info_logger.info("\t".join((ip, "Device Enable Attempted. Result:", str(x))))
+                except:
+                    enable_failed = True
+                    error_logger.exception(str(ip)+' exception when re-enabling device...')
             conn.disconnect()
+    if enable_failed:
+        raise Exception('Device re-enable failed.')
     return normalize_attendance_logs(list(map(lambda x: x.__dict__, attendances)))
 
 
@@ -371,6 +396,15 @@ def validate_device_id(device_id):
 
 def validate_unique_device_ids(devices):
     return validate_runtime_unique_device_ids(devices)
+
+def _stop_requested(stop_requested):
+    if stop_requested is None:
+        return False
+    try:
+        return bool(stop_requested())
+    except Exception:
+        error_logger.exception('exception when checking service stop request...')
+        return False
 
 def redact_device_config(device):
     redacted_device = dict(device)

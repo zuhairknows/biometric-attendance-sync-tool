@@ -70,13 +70,19 @@ class WindowsServiceTests(unittest.TestCase):
 
     def test_service_loop_executes_sync_cycle_and_stops_on_signal(self):
         service_module, sync, win32event = load_service_module(self.logs_directory)
-        sync.main = mock.Mock()
+        callback_states = []
+
+        def fake_sync_main(stop_requested=None):
+            callback_states.append(stop_requested())
+
+        sync.main = mock.Mock(side_effect=fake_sync_main)
 
         service = service_module.PythonCornerExample([])
         service.isrunning = True
         service.main()
 
-        sync.main.assert_called_once_with()
+        sync.main.assert_called_once_with(stop_requested=mock.ANY)
+        self.assertEqual(callback_states, [False])
         win32event.WaitForSingleObject.assert_called_once_with(service.hWaitStop, service_module.SERVICE_CHECK_INTERVAL_MS)
         self.assertFalse(service.isrunning)
 
@@ -91,6 +97,16 @@ class WindowsServiceTests(unittest.TestCase):
 
         self.assertEqual(sync.main.call_count, 2)
         self.assertFalse(service.isrunning)
+
+    def test_service_stop_callback_reflects_running_state(self):
+        service_module, _sync, _win32event = load_service_module(self.logs_directory)
+        service = service_module.PythonCornerExample([])
+        service.isrunning = True
+
+        self.assertFalse(service.stop_requested())
+        service.stop()
+
+        self.assertTrue(service.stop_requested())
 
     def test_stop_marks_service_for_shutdown(self):
         service_module, _sync, _win32event = load_service_module(self.logs_directory)

@@ -38,6 +38,9 @@ Name: "{commonappdata}\BiometricAttendanceSync\config"
 Name: "{commonappdata}\BiometricAttendanceSync\logs"
 Name: "{commonappdata}\BiometricAttendanceSync\state"
 Name: "{commonappdata}\BiometricAttendanceSync\retry"
+Name: "{commonappdata}\BiometricAttendanceSync\secrets"
+Name: "{commonappdata}\BiometricAttendanceSync\backups"
+Name: "{commonappdata}\BiometricAttendanceSync\diagnostics"
 
 [Files]
 ; Application binaries only.
@@ -51,8 +54,8 @@ Name: "{commonappdata}\BiometricAttendanceSync\retry"
 Source: "..\release\Biometric Attendance Sync\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Biometric Attendance Sync Manager"; Filename: "{app}\{#ManagerExe}"
-Name: "{autodesktop}\Biometric Attendance Sync Manager"; Filename: "{app}\{#ManagerExe}"; Tasks: desktopicon
+Name: "{group}\Biometric Attendance Sync"; Filename: "{app}\{#ManagerExe}"
+Name: "{autodesktop}\Biometric Attendance Sync"; Filename: "{app}\{#ManagerExe}"; Tasks: desktopicon
 
 [Run]
 ; Register the Windows service on every successful installation.
@@ -78,7 +81,7 @@ Filename: "{sys}\sc.exe"; Parameters: "start {#ServiceName}"; StatusMsg: "Starti
 ;
 ; On an unconfigured machine the Manager automatically opens its first-run
 ; setup wizard. On an upgrade the checkbox remains optional.
-Filename: "{app}\{#ManagerExe}"; Description: "Launch Biometric Attendance Sync Manager"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#ManagerExe}"; Description: "Launch Biometric Attendance Sync"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
@@ -195,7 +198,7 @@ begin
         'Biometric Attendance Sync was installed successfully.' + #13#10 + #13#10 +
         'The Windows service has been installed but has not been started ' +
         'because initial configuration has not been completed.' + #13#10 + #13#10 +
-        'Open Biometric Attendance Sync Manager and complete the setup wizard.',
+        'Open Biometric Attendance Sync and complete the setup wizard.',
         mbInformation,
         MB_OK
       );

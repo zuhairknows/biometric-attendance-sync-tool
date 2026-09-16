@@ -517,6 +517,104 @@ class ERPNextSyncPhaseOneTests(unittest.TestCase):
 
         self.assertEqual(processed_device_ids, ["DEVICE_02"])
 
+    def test_stop_requested_before_cycle_processes_no_devices(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.devices = [
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10"},
+        ]
+        sync.pull_process_and_push_data = mock.Mock()
+
+        sync.main(stop_requested=lambda: True)
+
+        sync.pull_process_and_push_data.assert_not_called()
+
+    def test_stop_requested_after_first_device_does_not_start_second_device(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.devices = [
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10"},
+            {"device_id": "DEVICE_02", "ip": "192.0.2.11"},
+        ]
+        processed_device_ids = []
+        stop = {"requested": False}
+
+        def fake_pull_process_and_push_data(device, device_attendance_logs=None):
+            processed_device_ids.append(device["device_id"])
+            stop["requested"] = True
+
+        sync.pull_process_and_push_data = fake_pull_process_and_push_data
+        sync.main(stop_requested=lambda: stop["requested"])
+
+        self.assertEqual(processed_device_ids, ["DEVICE_01"])
+        self.assertIsNone(sync.status.get("mission_accomplished_timestamp"))
+
+    def test_current_device_completes_before_shutdown(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.devices = [
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10"},
+            {"device_id": "DEVICE_02", "ip": "192.0.2.11"},
+        ]
+        events = []
+        stop = {"requested": False}
+
+        def fake_pull_process_and_push_data(device, device_attendance_logs=None):
+            events.append("start-" + device["device_id"])
+            stop["requested"] = True
+            events.append("finish-" + device["device_id"])
+
+        sync.pull_process_and_push_data = fake_pull_process_and_push_data
+        sync.main(stop_requested=lambda: stop["requested"])
+
+        self.assertEqual(events, ["start-DEVICE_01", "finish-DEVICE_01"])
+
+    def test_manual_main_without_stop_callback_remains_backward_compatible(self):
+        sync = load_sync_module(self.logs_directory)
+        sync.config.devices = [
+            {"device_id": "DEVICE_01", "ip": "192.0.2.10"},
+        ]
+        processed_device_ids = []
+
+        def fake_pull_process_and_push_data(device, device_attendance_logs=None):
+            processed_device_ids.append(device["device_id"])
+
+        sync.pull_process_and_push_data = fake_pull_process_and_push_data
+        sync.main()
+
+        self.assertEqual(processed_device_ids, ["DEVICE_01"])
+
+    def test_disabled_device_is_reenabled_when_fetch_fails(self):
+        sync = load_sync_module(self.logs_directory)
+        calls = []
+
+        class FailingConnection:
+            def disable_device(self):
+                calls.append("disable")
+                return True
+
+            def get_attendance(self):
+                calls.append("fetch")
+                raise RuntimeError("stop requested during active fetch")
+
+            def enable_device(self):
+                calls.append("enable")
+                return True
+
+            def disconnect(self):
+                calls.append("disconnect")
+
+        class FailingZK:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def connect(self):
+                return FailingConnection()
+
+        sync.ZK = FailingZK
+
+        with self.assertRaisesRegex(Exception, "Device fetch failed"):
+            sync.get_all_attendance_from_device("192.0.2.10", device_id="DEVICE_01")
+
+        self.assertEqual(calls, ["disable", "fetch", "enable", "disconnect"])
+
     def test_minimal_legacy_config_without_logs_directory_imports_runtime(self):
         programdata = self.logs_directory.parent / (self._testMethodName + "_programdata")
         if programdata.exists():

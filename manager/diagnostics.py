@@ -13,6 +13,7 @@ except ImportError:
 
 from .health import read_status_data
 from .paths import get_manager_log_file
+from . import support
 
 
 @dataclass
@@ -21,6 +22,23 @@ class DiagnosticResult:
     status: str
     message: str
     details: list = field(default_factory=list)
+    title: str = ""
+    action: str = ""
+    severity: str = ""
+    technical_reference: str = ""
+
+    @classmethod
+    def from_message(cls, ok, status, message, details=None, technical_reference=""):
+        return cls(
+            ok=ok,
+            status=status,
+            message=message.message,
+            details=list(details or message.technical_details),
+            title=message.title,
+            action=message.action,
+            severity=message.severity,
+            technical_reference=technical_reference,
+        )
 
 
 def _get_logger(config_module=None):
@@ -41,10 +59,10 @@ def validate_configuration(sync_module=None):
         import erpnext_sync as sync_module
     try:
         sync_module.validate_runtime_config()
-        return DiagnosticResult(True, "ok", "Configuration is valid.")
+        return DiagnosticResult(True, "ok", "Configuration is valid.", title="Configuration Valid", action="No action required.", severity=support.SUCCESS)
     except Exception as exc:
         errors = _friendly_validation_errors(str(exc))
-        return DiagnosticResult(False, "error", "Configuration problem:", errors)
+        return DiagnosticResult.from_message(False, "error", support.configuration_invalid_message(errors), details=errors, technical_reference="manager.log")
 
 
 def test_erpnext_connection(config_module=None, request_func=None):
@@ -53,7 +71,7 @@ def test_erpnext_connection(config_module=None, request_func=None):
         config_module = erpnext_sync.config
     request_func = request_func or requests.request
     if request_func is None:
-        return DiagnosticResult(False, "error", "ERPNext test failed. The requests package is not installed.")
+        return DiagnosticResult.from_message(False, "error", support.erpnext_unexpected_message(), technical_reference="manager.log")
     logger = _get_logger(config_module)
     base_url = str(getattr(config_module, "ERPNEXT_URL", "")).rstrip("/")
     timeout = getattr(config_module, "ERPNEXT_REQUEST_TIMEOUT", getattr(config_module, "REQUEST_TIMEOUT", 30))
@@ -68,22 +86,22 @@ def test_erpnext_connection(config_module=None, request_func=None):
         response = request_func("GET", url, headers=headers, timeout=timeout, verify=verify_ssl)
     except requests.exceptions.Timeout:
         logger.exception("ERPNext connection timed out")
-        return DiagnosticResult(False, "error", "ERPNext server could not be reached.")
+        return DiagnosticResult.from_message(False, "error", support.erpnext_timeout_message(), technical_reference="manager.log")
     except ssl_error:
         logger.exception("ERPNext SSL validation failed")
-        return DiagnosticResult(False, "error", "SSL certificate validation failed.")
+        return DiagnosticResult.from_message(False, "error", support.erpnext_ssl_message(), technical_reference="manager.log")
     except requests.exceptions.ConnectionError:
         logger.exception("ERPNext connection failed")
-        return DiagnosticResult(False, "error", "ERPNext server could not be reached.")
+        return DiagnosticResult.from_message(False, "error", support.erpnext_unreachable_message(), technical_reference="manager.log")
     except Exception:
         logger.exception("Unexpected ERPNext diagnostic failure")
-        return DiagnosticResult(False, "error", "ERPNext test failed.")
+        return DiagnosticResult.from_message(False, "error", support.erpnext_unexpected_message(), technical_reference="manager.log")
 
     if response.status_code == 200:
-        return DiagnosticResult(True, "ok", "Connection successful.")
+        return DiagnosticResult.from_message(True, "ok", support.erpnext_success_message())
     if response.status_code in (401, 403):
-        return DiagnosticResult(False, "error", "Authentication failed. Check API credentials.")
-    return DiagnosticResult(False, "error", "ERPNext returned HTTP " + str(response.status_code) + ".")
+        return DiagnosticResult.from_message(False, "error", support.erpnext_authentication_message(), technical_reference="manager.log")
+    return DiagnosticResult.from_message(False, "error", support.erpnext_http_error_message(response.status_code), technical_reference="manager.log")
 
 
 def test_devices(config_module=None, sync_module=None, zk_class=None):
@@ -123,8 +141,10 @@ def test_devices(config_module=None, sync_module=None, zk_class=None):
                 except Exception:
                     logger.exception("Device disconnect failed")
     status = "ok" if all_ok else "warning"
-    message = "All devices connected." if all_ok else "One or more devices failed."
-    return DiagnosticResult(all_ok, status, message, results)
+    if all_ok:
+        message = support.device_connected_message()
+        return DiagnosticResult.from_message(True, status, message, details=results)
+    return DiagnosticResult.from_message(False, status, support.device_unreachable_message(), details=results, technical_reference="manager.log")
 
 
 def run_one_sync(sync_module=None):
@@ -135,12 +155,12 @@ def run_one_sync(sync_module=None):
         sync_module.main()
     except Exception:
         _get_logger(sync_module.config).exception("Manual sync failed")
-        return DiagnosticResult(False, "error", "Manual sync failed.")
+        return DiagnosticResult(False, "error", "Synchronization could not be completed.", title="Synchronization Failed", action="Open Logs, fix the reported issue, then retry synchronization.", severity=support.ERROR, technical_reference="manager.log")
 
     after_timestamp = _read_mission_accomplished_timestamp(sync_module.config)
     if _timestamp_advanced(before_timestamp, after_timestamp):
-        return DiagnosticResult(True, "ok", "Manual sync completed.")
-    return DiagnosticResult(False, "error", "Manual sync did not complete successfully. Check logs.")
+        return DiagnosticResult(True, "ok", "Manual sync completed.", title="Synchronization Completed", action="No action required.", severity=support.SUCCESS)
+    return DiagnosticResult(False, "error", "Manual sync did not complete successfully. Check logs.", title="Synchronization Not Confirmed", action="Open Logs and verify whether attendance records were imported.", severity=support.ERROR, technical_reference="manager.log")
 
 
 def _read_mission_accomplished_timestamp(config_module):

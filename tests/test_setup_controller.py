@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import shutil
 import sys
@@ -11,9 +12,10 @@ from config.loader import load_config
 from config.schema import validate_runtime_config
 from config.secrets import SecretStore
 from config.status import CONFIGURED, INVALID, LEGACY_CONFIGURED, UNCONFIGURED, get_configuration_status, is_configured
-from manager.setup.controller import SetupController
+from manager.setup.controller import SetupController, SetupServiceError
 from manager.setup.model import DeviceSetup, ERPNextSetup, SetupConfiguration, SyncSetup
 from manager.setup.validation import safe_review_summary
+from manager.service_controller import ActionResult, ServiceStatus
 from tests.test_config_loader import valid_json_config
 from tests.test_config_loader import FakeProtector
 
@@ -246,6 +248,10 @@ class SetupControllerTests(unittest.TestCase):
         self.controller = SetupController(paths_module=self.paths, secret_store=self.secret_store)
 
     def tearDown(self):
+        logger = logging.getLogger("manager")
+        for handler in list(logger.handlers):
+            handler.close()
+            logger.removeHandler(handler)
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)
 
@@ -545,6 +551,187 @@ class SetupControllerTests(unittest.TestCase):
             self.controller.write_config_atomic(valid_setup_config())
 
         replace.assert_called_once()
+
+    def test_erpnext_connection_success_marks_customer_friendly_success(self):
+        response = types.SimpleNamespace(status_code=200)
+        controller = SetupController(paths_module=self.paths, secret_store=self.secret_store, request_func=mock.Mock(return_value=response))
+
+        result = controller.test_erpnext(valid_setup_config())
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.title, "ERPNext Connected")
+        self.assertIn("successfully", result.message)
+
+    def test_erpnext_connection_failure_is_friendly(self):
+        response = types.SimpleNamespace(status_code=401)
+        controller = SetupController(paths_module=self.paths, secret_store=self.secret_store, request_func=mock.Mock(return_value=response))
+
+        result = controller.test_erpnext(valid_setup_config())
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.title, "ERPNext Authentication Failed")
+        self.assertIn("API Key", result.action)
+
+    def test_api_secret_is_not_displayed_after_save_and_reload(self):
+        self.controller.write_config_atomic(valid_setup_config())
+
+        loaded = self.controller.load_existing_setup_config()
+        summary = safe_review_summary(loaded)
+
+        self.assertEqual(loaded.erpnext.api_secret, "")
+        self.assertNotIn('"secret"', json.dumps(summary).lower())
+
+    def test_add_one_device_validation(self):
+        setup = valid_setup_config()
+        setup.devices = [setup.devices[0]]
+
+        config_dict = self.controller.validate(setup)
+
+        self.assertEqual(len(config_dict["devices"]), 1)
+        self.assertEqual(config_dict["devices"][0]["device_id"], "DEVICE_01")
+
+    def test_device_connection_test_success_for_selected_device(self):
+        class FakeConnection:
+            def get_serialnumber(self):
+                return "SERIAL"
+
+            def disconnect(self):
+                pass
+
+        class FakeZK:
+            def __init__(self, ip, port=4370, timeout=10, password=0):
+                pass
+
+            def connect(self):
+                return FakeConnection()
+
+        sync_module = types.SimpleNamespace(
+            config=types.SimpleNamespace(LOGS_DIRECTORY=str(self.paths.get_logs_dir())),
+            DEFAULT_ZK_PORT=4370,
+            normalize_device_config=lambda device: dict(device, ip=device.get("ip"), port=int(device.get("port", 4370)), password=int(device.get("password", 0))),
+        )
+        controller = SetupController(paths_module=self.paths, secret_store=self.secret_store, zk_class=FakeZK)
+
+        result = controller.test_device(valid_setup_config(), "DEVICE_01", sync_module)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.details, ["DEVICE_01 (192.0.2.10:4370) - Connected"])
+
+    def test_device_connection_test_failure_for_selected_device(self):
+        class FakeZK:
+            def __init__(self, ip, port=4370, timeout=10, password=0):
+                pass
+
+            def connect(self):
+                raise RuntimeError("offline")
+
+        sync_module = types.SimpleNamespace(
+            config=types.SimpleNamespace(LOGS_DIRECTORY=str(self.paths.get_logs_dir())),
+            DEFAULT_ZK_PORT=4370,
+            normalize_device_config=lambda device: dict(device, ip=device.get("ip"), port=int(device.get("port", 4370)), password=int(device.get("password", 0))),
+        )
+        controller = SetupController(paths_module=self.paths, secret_store=self.secret_store, zk_class=FakeZK)
+
+        result = controller.test_device(valid_setup_config(), "DEVICE_01", sync_module)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.details, ["DEVICE_01 (192.0.2.10:4370) - Connection failed"])
+
+    def test_review_page_summary_keeps_untested_items_unverified(self):
+        setup = valid_setup_config()
+        setup.erpnext_tested = True
+        setup.erpnext_ok = True
+        setup.device_test_states = {"DEVICE_01": "Connected"}
+
+        summary = self.controller.review_summary(setup)
+
+        self.assertTrue(summary["erpnext_ok"])
+        self.assertEqual(summary["devices"][0]["test_state"], "Connected")
+        self.assertEqual(summary["devices"][1]["test_state"], "Not tested")
+
+    def test_configuration_save_succeeds(self):
+        target = self.controller.write_config_atomic(valid_setup_config())
+
+        self.assertTrue(target.is_file())
+
+    def test_complete_setup_restarts_running_service_successfully(self):
+        service = FakeServiceController(ServiceStatus(installed=True, state="Running", startup="Automatic"))
+
+        with mock.patch("config.schema._default_secret_store", return_value=self.secret_store):
+            result = self.controller.complete_setup(valid_setup_config(), service_controller=service)
+
+        self.assertTrue(result.service_running)
+        self.assertEqual(service.restart_calls, 1)
+
+    def test_complete_setup_starts_stopped_service_successfully(self):
+        service = FakeServiceController(ServiceStatus(installed=True, state="Stopped", startup="Automatic"))
+
+        with mock.patch("config.schema._default_secret_store", return_value=self.secret_store):
+            result = self.controller.complete_setup(valid_setup_config(), service_controller=service)
+
+        self.assertTrue(result.service_running)
+        self.assertEqual(service.start_calls, 1)
+
+    def test_service_start_failure_does_not_report_setup_complete(self):
+        service = FakeServiceController(ServiceStatus(installed=True, state="Stopped", startup="Automatic"), start_success=False)
+
+        with mock.patch("config.schema._default_secret_store", return_value=self.secret_store):
+            with self.assertRaisesRegex(SetupServiceError, "could not be started"):
+                self.controller.complete_setup(valid_setup_config(), service_controller=service)
+
+        self.assertTrue(self.paths.get_config_path().is_file())
+
+    def test_service_start_failure_preserves_admin_requirement(self):
+        service = FakeServiceController(ServiceStatus(installed=True, state="Stopped", startup="Automatic"), start_success=False, requires_admin=True)
+
+        with mock.patch("config.schema._default_secret_store", return_value=self.secret_store):
+            with self.assertRaises(SetupServiceError) as caught:
+                self.controller.complete_setup(valid_setup_config(), service_controller=service)
+
+        self.assertTrue(caught.exception.requires_admin)
+        self.assertTrue(self.paths.get_config_path().is_file())
+
+    def test_existing_configuration_remains_compatible_after_setup_completion(self):
+        self.paths.get_config_path().write_text(json.dumps(valid_json_config()), encoding="utf-8")
+        setup = self.controller.load_existing_setup_config()
+        setup.erpnext.api_key = "new-key"
+        setup.erpnext.api_secret = "new-secret"
+        service = FakeServiceController(ServiceStatus(installed=True, state="Stopped", startup="Automatic"))
+
+        with mock.patch("config.schema._default_secret_store", return_value=self.secret_store):
+            self.controller.complete_setup(setup, service_controller=service)
+
+        runtime_config = load_config(paths_module=self.paths, secret_store=self.secret_store)
+        self.assertEqual(runtime_config.ERPNEXT_API_KEY, "new-key")
+        self.assertTrue(validate_runtime_config(runtime_config))
+
+
+class FakeServiceController:
+    def __init__(self, initial_status, start_success=True, requires_admin=False):
+        self.status = initial_status
+        self.start_success = start_success
+        self.requires_admin = requires_admin
+        self.start_calls = 0
+        self.restart_calls = 0
+
+    def get_status(self):
+        return self.status
+
+    def start_service(self):
+        self.start_calls += 1
+        if self.start_success:
+            self.status = ServiceStatus(installed=True, state="Running", startup=self.status.startup)
+            return ActionResult(True, "Service started successfully.")
+        self.status = ServiceStatus(installed=True, state="Stopped", startup=self.status.startup)
+        return ActionResult(False, "Could not start the service.", requires_admin=self.requires_admin)
+
+    def restart_service(self):
+        self.restart_calls += 1
+        if self.start_success:
+            self.status = ServiceStatus(installed=True, state="Running", startup=self.status.startup)
+            return ActionResult(True, "Service restarted successfully.")
+        self.status = ServiceStatus(installed=True, state="Stopped", startup=self.status.startup)
+        return ActionResult(False, "Could not restart the service.", requires_admin=self.requires_admin)
 
 
 if __name__ == "__main__":

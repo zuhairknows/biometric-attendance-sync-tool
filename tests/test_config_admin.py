@@ -156,14 +156,30 @@ class ConfigAdminTests(unittest.TestCase):
 
     def test_diagnostics_report_is_sanitized(self):
         self.controller.write_config_atomic(valid_setup_config())
+        self.paths.get_state_path().write_text(json.dumps({
+            "mission_accomplished_timestamp": "2026-09-15 14:30:00",
+            "DEVICE_01_pull_timestamp": "2026-09-15 14:25:00",
+            "DEVICE_01_push_timestamp": "2026-09-15 14:29:00",
+        }), encoding="utf-8")
 
         with mock.patch("config.schema._default_secret_store", return_value=self.secret_store):
-            report_path = config_admin.export_diagnostics_report(paths_module=self.paths)
+            report_path = config_admin.export_diagnostics_report(
+                paths_module=self.paths,
+                service_status=ServiceStatus(installed=True, state="Running", startup="Automatic"),
+            )
 
         report_text = report_path.read_text(encoding="utf-8")
+        report = json.loads(report_text)
         self.assertIn("configuration", report_text)
         self.assertIn("DEVICE_01", report_text)
+        self.assertEqual(report["product"]["name"], "Biometric Attendance Sync")
+        self.assertIn("platform", report)
+        self.assertEqual(report["service"]["state"], "Running")
+        self.assertEqual(report["synchronization"]["last_successful_sync"], "2026-09-15 14:30:00")
+        self.assertEqual(report["device_health"][0]["last_pull"], "2026-09-15 14:25:00")
+        self.assertIn("credentials_configured", report["configuration"])
         self.assertNotIn('"api_secret":', report_text)
+        self.assertNotIn('"api_key":', report_text)
         self.assertNotIn("1234", report_text)
 
     def test_change_summary_reports_safe_edits_and_not_secret_values(self):

@@ -51,11 +51,14 @@ def validate_setup_config(setup_config):
 
 def safe_review_summary(setup_config):
     enabled_devices = [device for device in setup_config.devices if device.enabled]
+    device_test_states = getattr(setup_config, "device_test_states", {}) or {}
     return {
         "erpnext_url": setup_config.erpnext.url.strip(),
         "api_key": _mask_identifier(setup_config.erpnext.api_key),
         "api_secret": SECRET_MASK if setup_config.erpnext.api_secret else "",
         "verify_ssl": bool(setup_config.erpnext.verify_ssl),
+        "erpnext_tested": bool(getattr(setup_config, "erpnext_tested", False)),
+        "erpnext_ok": bool(getattr(setup_config, "erpnext_ok", False)),
         "device_count": len(setup_config.devices),
         "enabled_device_count": len(enabled_devices),
         "devices": [
@@ -66,6 +69,7 @@ def safe_review_summary(setup_config):
                 "port": int(device.port),
                 "enabled": bool(device.enabled),
                 "password": SECRET_MASK if str(device.password) not in ("", "0") else "",
+                "test_state": device_test_states.get(device.device_id.strip(), "Not tested"),
             }
             for device in setup_config.devices
         ],

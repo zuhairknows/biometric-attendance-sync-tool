@@ -40,3 +40,15 @@ class SetupConfiguration:
     sync: SyncSetup = field(default_factory=SyncSetup)
     logging_level: str = "INFO"
     logging_retention_days: int = 30
+    erpnext_tested: bool = False
+    erpnext_ok: bool = False
+    device_test_states: dict = field(default_factory=dict)
+
+
+@dataclass
+class SetupCompletion:
+    erpnext_configured: bool
+    devices_configured: bool
+    configuration_saved: bool
+    service_running: bool
+    service_message: str

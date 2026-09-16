@@ -14,6 +14,10 @@ from unittest import mock
 class FakeServiceFramework:
     def __init__(self, args):
         self.args = args
+        self.reported_statuses = []
+
+    def ReportServiceStatus(self, status):
+        self.reported_statuses.append(status)
 
 
 def load_service_entry_with_fakes():
@@ -212,6 +216,36 @@ class ServiceEntryDispatchTests(unittest.TestCase):
         service_entry.servicemanager.LogErrorMsg.assert_any_call(
             "Configuration is invalid. Complete setup or repair protected secrets."
         )
+
+    def test_configured_service_passes_stop_callback_to_sync_cycle(self):
+        service_entry = load_service_entry_with_fakes()
+        status = types.SimpleNamespace(state="CONFIGURED")
+        callback_states = []
+        sys.modules["erpnext_sync"].main.side_effect = lambda stop_requested=None: callback_states.append(stop_requested())
+        with mock.patch.object(service_entry, "get_configuration_status", return_value=status):
+            service = service_entry.BiometricAttendanceSyncService([])
+            service.SvcDoRun()
+
+        sync_module = sys.modules["erpnext_sync"]
+        sync_module.main.assert_called_once_with(stop_requested=mock.ANY)
+        self.assertEqual(callback_states, [False])
+        service_entry.win32event.WaitForSingleObject.assert_called_once_with(
+            service.hWaitStop,
+            service_entry.SERVICE_CHECK_INTERVAL_MS,
+        )
+        self.assertFalse(service.isrunning)
+
+    def test_svc_stop_sets_stop_pending_and_wakes_service_loop(self):
+        service_entry = load_service_entry_with_fakes()
+        service = service_entry.BiometricAttendanceSyncService([])
+        service.isrunning = True
+
+        service.SvcStop()
+
+        self.assertFalse(service.isrunning)
+        self.assertEqual(service.reported_statuses, [service_entry.win32service.SERVICE_STOP_PENDING])
+        service_entry.win32event.SetEvent.assert_called_once_with(service.hWaitStop)
+        self.assertTrue(service.stop_requested())
 
     def test_packaged_service_commercial_config_does_not_require_local_config(self):
         programdata = self.test_dir / "programdata"
