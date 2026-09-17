@@ -45,7 +45,7 @@ Expected service output:
 dist\Biometric-Attendance-Sync-Service\Biometric-Attendance-Sync-Service.exe
 ```
 
-The service spec includes pywin32 service modules, including `win32timezone`, plus the sync engine dependencies `requests`, `zk`, and `pickledb`.
+The service spec includes pywin32 service modules, including `win32timezone`, plus the sync engine dependencies `requests` and `zk`.
 
 Commercial secret protection uses Windows DPAPI through the standard Windows API, so no extra Python package is required for the secret store.
 

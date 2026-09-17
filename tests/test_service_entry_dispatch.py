@@ -82,7 +82,6 @@ def load_service_entry_with_real_runtime():
         "erpnext_sync",
         "local_config",
         "requests",
-        "pickledb",
         "zk",
     ]:
         sys.modules.pop(module_name, None)
@@ -114,10 +113,6 @@ def load_service_entry_with_real_runtime():
     requests_module = types.ModuleType("requests")
     requests_module.request = mock.Mock()
     sys.modules["requests"] = requests_module
-
-    pickledb_module = types.ModuleType("pickledb")
-    pickledb_module.PickleDB = lambda _path: types.SimpleNamespace(get=lambda _key: None, set=lambda _key, _value: None, save=lambda: None)
-    sys.modules["pickledb"] = pickledb_module
 
     zk_module = types.ModuleType("zk")
     zk_module.ZK = mock.Mock()

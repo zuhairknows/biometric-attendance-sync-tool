@@ -1,5 +1,4 @@
 requests
-pickledb
 pyzk
 PyQt5
 pywin32; platform_system == "Windows"

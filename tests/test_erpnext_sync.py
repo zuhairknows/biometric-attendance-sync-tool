@@ -12,21 +12,6 @@ from pathlib import Path
 from unittest import mock
 
 
-class FakePickleDB:
-    def __init__(self, path):
-        self.path = path
-        self.data = {}
-
-    def get(self, key):
-        return self.data.get(key)
-
-    def set(self, key, value):
-        self.data[key] = value
-
-    def save(self):
-        pass
-
-
 class FakeResponse:
     status_code = 200
     _content = b'{"message": {"name": "CHECKIN-0001"}}'
@@ -134,7 +119,7 @@ class FakeZK:
 
 
 def load_sync_module(logs_directory, import_start_date=None, request_timeout=30, include_logs_directory=True):
-    for module_name in ["erpnext_sync", "local_config", "requests", "pickledb", "zk"]:
+    for module_name in ["erpnext_sync", "local_config", "requests", "zk"]:
         sys.modules.pop(module_name, None)
     for logger_name in ["error_logger", "info_logger"]:
         logger = logging.getLogger(logger_name)
@@ -159,10 +144,6 @@ def load_sync_module(logs_directory, import_start_date=None, request_timeout=30,
     requests_module = types.ModuleType("requests")
     requests_module.request = mock.Mock(return_value=FakeResponse())
     sys.modules["requests"] = requests_module
-
-    pickledb_module = types.ModuleType("pickledb")
-    pickledb_module.PickleDB = FakePickleDB
-    sys.modules["pickledb"] = pickledb_module
 
     FakeZK.instances = []
     FakeZK.attendances = []

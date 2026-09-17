@@ -1,7 +1,12 @@
 """Configuration status helpers for first-run setup and service safety."""
 
 from dataclasses import dataclass, field
+import json
+import logging
+import os
+from pathlib import Path
 import sys
+import tempfile
 
 from . import paths
 from .loader import load_config
@@ -11,6 +16,68 @@ UNCONFIGURED = "UNCONFIGURED"
 CONFIGURED = "CONFIGURED"
 LEGACY_CONFIGURED = "LEGACY_CONFIGURED"
 INVALID = "INVALID"
+
+
+class StatusStoreError(ValueError):
+    """Raised when the persisted synchronization state cannot be read."""
+
+
+class JsonStatusStore:
+    """Small synchronous JSON-backed replacement for the runtime state store."""
+
+    def __init__(self, path, logger=None):
+        self.path = Path(path)
+        self.logger = logger or logging.getLogger(__name__)
+        self._data = self._load()
+
+    def _load(self):
+        if not self.path.is_file():
+            return {}
+        try:
+            with self.path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            message = "Unable to read synchronization state from %s: %s" % (self.path, exc)
+            self.logger.error(message)
+            raise StatusStoreError(message) from exc
+        if not isinstance(data, dict):
+            message = "Synchronization state in %s must be a JSON object." % self.path
+            self.logger.error(message)
+            raise StatusStoreError(message)
+        return data
+
+    def get(self, key):
+        return self._data.get(key)
+
+    def set(self, key, value):
+        self._data[key] = value
+        return self
+
+    def save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=str(self.path.parent),
+                prefix=self.path.name + ".",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary_path = handle.name
+                json.dump(self._data, handle, ensure_ascii=True, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, self.path)
+        except OSError:
+            if temporary_path:
+                try:
+                    os.unlink(temporary_path)
+                except OSError:
+                    pass
+            raise
 
 
 @dataclass(frozen=True)

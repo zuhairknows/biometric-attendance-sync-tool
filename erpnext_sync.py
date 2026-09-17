@@ -18,8 +18,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 from dataclasses import asdict, dataclass
 from struct import unpack
-from pickledb import PickleDB
 from zk import ZK, const
+from config.status import JsonStatusStore
 
 try:
     from service_runtime import get_loaded_runtime_config
@@ -890,7 +890,7 @@ if retry_directory and not os.path.exists(retry_directory):
     os.makedirs(retry_directory)
 error_logger = setup_logger('error_logger', '/'.join([config.LOGS_DIRECTORY, 'error.log']), logging.ERROR)
 info_logger = setup_logger('info_logger', '/'.join([config.LOGS_DIRECTORY, 'logs.log']))
-status = PickleDB(state_file_path)
+status = JsonStatusStore(state_file_path, logger=error_logger)
 
 def infinite_loop(sleep_time=15):
     print("Service Running...")
