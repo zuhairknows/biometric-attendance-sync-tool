@@ -1,4 +1,8 @@
 local_config.py
+# Keep local credential-bearing config copies out of normal Git staging.
+local_config*.py
+local_config*.py.*
+!local_config.py.template
 .vscode
 logs/
 .test-logs/

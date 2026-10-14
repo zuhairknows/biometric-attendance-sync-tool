@@ -72,6 +72,7 @@ class Ledger:
             versions = self.db.execute('SELECT version FROM schema_version').fetchall()
             if len(versions) != 1 or versions[0][0] != SCHEMA_VERSION:
                 raise RuntimeError('Unsupported SQLite schema version; database left unchanged')
+            self._validate_schema()
         elif self.readonly:
             raise RuntimeError('Database has no ledger schema')
         else:
@@ -85,6 +86,34 @@ class Ledger:
             # with one delivery worker and avoids copying an incomplete database without its WAL.
             self.db.execute('PRAGMA journal_mode=DELETE')
             self.db.execute('PRAGMA synchronous=FULL')
+
+    def _validate_schema(self):
+        # Version alone is insufficient: a missing table, uniqueness constraint or queue
+        # index can otherwise be accepted as healthy. Compare against our schema in memory.
+        reference = sqlite3.connect(':memory:')
+        try:
+            for sql in SCHEMA:
+                reference.execute(sql)
+            expected = reference.execute("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL").fetchall()
+            for kind, name, definition in expected:
+                actual = self.db.execute('SELECT sql FROM sqlite_master WHERE type=? AND name=?', (kind, name)).fetchone()
+                # Preserve string-literal case: CHECK(state IN ('pending')) differs from 'PENDING'.
+                canonical = lambda sql: ''.join(sql.split())
+                if actual is None or canonical(actual[0]) != canonical(definition):
+                    raise RuntimeError('Corrupted or unrecognized ledger schema; database left unchanged')
+            rows = self.db.execute('SELECT id,cooldown_until,prefer_retry,prefer_recent FROM destination_state').fetchall()
+            if len(rows) != 1 or rows[0]['id'] != 1:
+                raise RuntimeError('Corrupted ledger destination state; database left unchanged')
+        finally:
+            reference.close()
+
+    def verify_integrity(self):
+        # Full scans are an explicit operator check, not an expensive per-tick operation.
+        if any(row[0] != 'ok' for row in self.db.execute('PRAGMA integrity_check')):
+            raise RuntimeError('SQLite integrity check failed')
+        if self.db.execute('PRAGMA foreign_key_check').fetchone() is not None:
+            raise RuntimeError('SQLite foreign key check failed')
+        return {'integrity': 'ok', 'schema_version': SCHEMA_VERSION}
 
     def close(self):
         self.db.close()
@@ -101,6 +130,15 @@ class Ledger:
             self.db.execute('INSERT INTO device_state(device_id,last_fetch_attempt,fetch_ok) VALUES(?,?,0) '
                             'ON CONFLICT(device_id) DO UPDATE SET last_fetch_attempt=excluded.last_fetch_attempt, fetch_ok=0',
                             (device_id, started_at))
+
+    def polling_due(self, device_ids, frequency_minutes, now):
+        attempts = []
+        for device_id in device_ids:
+            row = self.db.execute('SELECT last_fetch_attempt FROM device_state WHERE device_id=?', (device_id,)).fetchone()
+            if not row or not row[0]:
+                return True
+            attempts.append(dt.datetime.fromisoformat(row[0]))
+        return bool(attempts) and max(attempts) < now - dt.timedelta(minutes=frequency_minutes)
 
     def ingest(self, rows, device_id, fetched_at=None, legacy=None):
         now = time.time()

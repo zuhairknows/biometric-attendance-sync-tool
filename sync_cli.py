@@ -17,6 +17,7 @@ def main(argv=None):
     parser.add_argument('--db', required=True, help='Explicit absolute database path; never inferred from production config')
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('status', help='Open an existing database read-only; print aggregate counts only')
+    sub.add_parser('verify', help='Read-only full SQLite integrity and foreign-key checks')
     backup = sub.add_parser('backup', help='Use SQLite online backup; source is opened read-only')
     backup.add_argument('--output', required=True)
     migration = sub.add_parser('import-legacy', help='Preview by default; source dumps always retained')
@@ -28,9 +29,9 @@ def main(argv=None):
     if not path.is_absolute():
         parser.error('--db must be absolute')
     try:
-        if args.command == 'status':
+        if args.command in ('status', 'verify'):
             with Ledger(path, readonly=True) as ledger:
-                print(json.dumps(ledger.diagnostics(), indent=2))
+                print(json.dumps(ledger.diagnostics() if args.command == 'status' else ledger.verify_integrity(), indent=2))
         elif args.command == 'backup':
             output = Path(args.output)
             if not output.is_absolute() or output.exists() or output.resolve() == path.resolve():

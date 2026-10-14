@@ -1,6 +1,7 @@
 """Sequential device capture and bounded delivery, callable from the existing service."""
 import datetime as dt
 import math
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -9,6 +10,28 @@ import time
 from durable_delivery import FrappeClient, deliver_batch
 from punch_normalization import import_boundary, normalize
 from sync_ledger import Ledger
+
+
+class LegacyStatusSnapshot:
+    """Read a legacy shift floor once; never let a broken status file block queue recovery."""
+    def __init__(self, path, logger):
+        self.data = {}
+        self.usable = True
+        path = Path(path)
+        try:
+            if path.exists():
+                if path.stat().st_size > 1024 * 1024:
+                    raise ValueError('Oversized legacy status')
+                self.data = json.loads(path.read_text(encoding='utf-8'))
+                if not isinstance(self.data, dict):
+                    raise ValueError('Invalid legacy status')
+        except (OSError, ValueError):
+            self.data = {}
+            self.usable = False
+            logger.error('Legacy status unavailable; delivery continues, Shift Type updates require status audit')
+
+    def get(self, key):
+        return self.data.get(key)
 
 
 def database_path(config):
@@ -59,8 +82,8 @@ def capture(ledger, engine, device, records=None):
     return ledger.ingest(rows, device['device_id'], fetched_at=started)
 
 
-def update_shifts(ledger, engine):
-    if ledger.destination_cooldown() > time.time():
+def update_shifts(ledger, engine, stop_requested=lambda: False):
+    if not getattr(engine.status, 'usable', True) or ledger.destination_cooldown() > time.time():
         return
     for mapping in getattr(engine.config, 'shift_type_device_mapping', []):
         watermark = ledger.safe_watermark(mapping['related_device_id'])
@@ -68,6 +91,8 @@ def update_shifts(ledger, engine):
             continue
         shifts = mapping['shift_type_name']
         for shift in [shifts] if isinstance(shifts, str) else shifts:
+            if stop_requested():
+                return
             previous = ledger.shift_watermark(shift)
             # Retain the legacy local watermark as a floor during cutover, never as evidence
             # that pending punches were delivered. Remote state must be audited before cutover.
@@ -92,8 +117,7 @@ def run(engine, stop_requested=lambda: False):
     options = delivery_options(config)
     with Ledger(database_path(config)) as ledger:
         # This flag gates only polling. Delivery runs every service tick, including restarts.
-        last = engine._safe_convert_date(engine.status.get('lift_off_timestamp'), '%Y-%m-%d %H:%M:%S.%f')
-        polling_due = last is None or last < dt.datetime.now() - dt.timedelta(minutes=config.PULL_FREQUENCY)
+        polling_due = ledger.polling_due([device.get('device_id') for device in config.devices], config.PULL_FREQUENCY, dt.datetime.now())
         if polling_due:
             for original in config.devices:
                 if stop_requested():
@@ -110,10 +134,8 @@ def run(engine, stop_requested=lambda: False):
                     # Even a configuration failure must invalidate a previous successful scan.
                     ledger.begin_fetch(device_id, str(dt.datetime.now()))
                     engine.error_logger.error('Durable device capture failed: device=%s category=%s', device_id, type(exc).__name__)
-            engine.status.set('lift_off_timestamp', str(dt.datetime.now()))
-            engine.status.save()
         client = FrappeClient(config, engine.requests.request)
         deliver_batch(ledger, client, **options, stop_requested=stop_requested, logger=engine.info_logger)
         if not stop_requested():
-            update_shifts(ledger, engine)
+            update_shifts(ledger, engine, stop_requested)
         engine.info_logger.info('Durable ledger health: %s', ledger.diagnostics())

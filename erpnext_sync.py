@@ -43,16 +43,23 @@ DEVICE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]+$')
 #  - <device_id>_push_timestamp
 #  - <shift_type>_sync_timestamp
 
-def main():
+def main(stop_requested=None):
     """Takes care of checking if it is time to pull data based on config,
     then calling the relevent functions to pull data and push to EPRNext.
 
     """
-    if getattr(config, 'DURABLE_SYNC_ENABLED', False):
+    stop_requested = stop_requested or (lambda: False)
+    enabled = getattr(config, 'DURABLE_SYNC_ENABLED', False)
+    if not isinstance(enabled, bool):
+        error_logger.critical('DURABLE_SYNC_ENABLED must be a Python boolean; synchronization stopped')
+        return
+    if stop_requested():
+        return
+    if enabled:
         # Import lazily: inspecting the module or running legacy tests must not open a real DB.
         from durable_sync import run
         try:
-            run(sys.modules[__name__])
+            run(sys.modules[__name__], stop_requested=stop_requested)
         except Exception as exc:
             # Database/configuration failures are visible and never become a successful cycle.
             error_logger.critical('Durable synchronization stopped: category=%s; investigate storage/configuration', type(exc).__name__)
@@ -65,6 +72,8 @@ def main():
             info_logger.info("Cleared for lift off!")
             validate_unique_device_ids(config.devices)
             for device in config.devices:
+                if stop_requested():
+                    return
                 device_attendance_logs = None
                 try:
                     device = normalize_device_config(device)
@@ -473,7 +482,11 @@ if not os.path.exists(config.LOGS_DIRECTORY):
     os.makedirs(config.LOGS_DIRECTORY)
 error_logger = setup_logger('error_logger', '/'.join([config.LOGS_DIRECTORY, 'error.log']), logging.ERROR)
 info_logger = setup_logger('info_logger', '/'.join([config.LOGS_DIRECTORY, 'logs.log']))
-status = PickleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']))
+if getattr(config, 'DURABLE_SYNC_ENABLED', False) is True:
+    from durable_sync import LegacyStatusSnapshot
+    status = LegacyStatusSnapshot(os.path.join(config.LOGS_DIRECTORY, 'status.json'), error_logger)
+else:
+    status = PickleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']))
 
 def infinite_loop(sleep_time=15):
     print("Service Running...")

@@ -430,6 +430,7 @@ class EngineIntegrationTests(unittest.TestCase):
     def test_existing_main_routes_to_durable_and_resumes_between_poll_cycles(self):
         self.sync.status.set('lift_off_timestamp', str(dt.datetime.now()))
         with Ledger(Path(self.sync.config.DURABLE_DB_PATH)) as ledger:
+            ledger.begin_fetch(DEVICE['device_id'], str(dt.datetime.now()))
             ledger.ingest([normalize(record(), DEVICE)], DEVICE['device_id'])
         self.sync.main()
         with Ledger(Path(self.sync.config.DURABLE_DB_PATH), readonly=True) as ledger:
@@ -510,16 +511,19 @@ class EngineIntegrationTests(unittest.TestCase):
         fake_manager = types.ModuleType('servicemanager')
         fake_base = types.ModuleType('SMWinservice')
         fake_base.SMWinservice = type('SMWinservice', (), {})
-        with mock.patch.dict(sys.modules, {'servicemanager': fake_manager, 'SMWinservice': fake_base}):
+        fake_event = types.ModuleType('win32event')
+        fake_event.WaitForSingleObject = mock.Mock()
+        with mock.patch.dict(sys.modules, {'servicemanager': fake_manager, 'SMWinservice': fake_base, 'win32event': fake_event}):
             spec = importlib.util.spec_from_file_location('offline_service_wrapper', ROOT / 'erpnext_sync_win.py')
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
         service = module.PythonCornerExample()
         service.start()
-        module.main = mock.Mock(side_effect=service.stop)
-        with mock.patch.object(module.time, 'sleep'):
-            service.main()
-        module.main.assert_called_once_with()
+        module.main = mock.Mock(side_effect=lambda **kwargs: service.stop())
+        service.main()
+        module.main.assert_called_once()
+        self.assertTrue(module.main.call_args.kwargs['stop_requested']())
+        fake_event.WaitForSingleObject.assert_not_called()
         self.assertEqual(service._svc_name_, 'ERPNextBiometricPushService')
         self.assertEqual(service._exe_name_, sys.executable)
 

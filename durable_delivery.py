@@ -100,7 +100,15 @@ def deliver_batch(ledger, client, batch_size=100, rate=2, base=30, maximum=3600,
         if stop_requested():
             break
         if last_request is not None:
-            sleep(max(0, 1 / rate - (clock() - last_request)))
+            remaining = max(0, 1 / rate - (clock() - last_request))
+            while remaining > 0:
+                if stop_requested():
+                    return processed
+                chunk = min(remaining, 0.5)
+                sleep(chunk)
+                remaining -= chunk
+        if stop_requested():
+            break
         row = ledger.claim(clock(), lease_seconds)
         if row is None:
             break
