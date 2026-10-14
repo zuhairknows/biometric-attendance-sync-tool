@@ -1,17 +1,13 @@
-# ============================================================
 # ERPNext Connection
 # ============================================================
 
 # API credentials for the dedicated ERPNext integration user.
-# Replace the placeholders with the real credentials for your
-# ERPNext site, and keep them only in this local file.
-# The live configuration file (local_config.py) is not tracked
-# by Git and must never be committed or shared.
-ERPNEXT_API_KEY = 'YOUR_API_KEY'
-ERPNEXT_API_SECRET = 'YOUR_API_SECRET'
+# Keep these credentials only in the local_config.py file.
+ERPNEXT_API_KEY = 'YOUR_REAL_API_KEY'
+ERPNEXT_API_SECRET = 'YOUR_REAL_API_SECRET'
 
-# Web address of your ERPNext site.
-ERPNEXT_URL = 'https://erp.example.com'
+# Production ERPNext site.
+ERPNEXT_URL = 'https://erp.myfpf.com'
 
 # ERPNext / HRMS major version.
 ERPNEXT_VERSION = 15
@@ -22,17 +18,19 @@ ERPNEXT_VERSION = 15
 # ============================================================
 
 # Poll biometric devices every 5 minutes.
-# This is a good starting interval for production attendance.
 PULL_FREQUENCY = 5
 
-# Local directory used for application logs, device status,
-# synchronization checkpoints, and retry dumps.
+# IMPORTANT FOR WINDOWS SERVICE:
+# In local_config.py, use an absolute path on the production PC, for example:
+# LOGS_DIRECTORY = r'C:\\GitHub\\biometric-attendance-sync-tool\\logs'
+#
+# The template keeps a relative path so the repository remains portable.
 LOGS_DIRECTORY = 'logs'
 
-# Replace this with the actual production go-live date.
+# Production go-live date.
 # Any biometric punches before this date will not be imported.
-# Format must remain a STRING in YYYYMMDD format.
-IMPORT_START_DATE = 'YYYYMMDD'
+# Format: YYYYMMDD
+IMPORT_START_DATE = '20260910'
 
 # Maximum number of seconds to wait for an ERPNext API response.
 ERPNEXT_REQUEST_TIMEOUT = 30
@@ -41,32 +39,134 @@ ERPNEXT_REQUEST_TIMEOUT = 30
 # ============================================================
 # ZKTeco Biometric Devices
 # ============================================================
+#
+# Device inventory from the project sources:
+#
+# FP1
+#   01 - uFace800    - 10.0.0.20 - 4371
+#   02 - MB2000/ID   - 10.0.0.11 - 4372
+#   03 - MB2000/ID   - 10.0.0.12 - 4373
+#   04 - MB2000      - 10.0.0.13 - 4374
+#   05 - MB2000      - 10.0.0.14 - 4375
+#   06 - MB2000      - 10.0.0.15 - 4376
+#   07 - MB2000      - 10.0.0.16 - 4377
+#
+# FP2
+#   08 - SpeedFace-V5L - 10.0.1.23  - 4378
+#   09 - SpeedFace-V5L - 10.0.1.24  - 4379
+#   10 - SpeedFace-V5L - 10.0.1.25  - 4380
+#   11 - SpeedFace-V5L - 10.0.1.26  - 4381
+#   12 - MB1000/ID     - 10.0.1.251 - 4382
+#
+# Rules:
+# - device_id is the permanent identifier used in ERPNext Employee Checkin.
+# - Keep device_id stable even if IP/port changes.
+# - password = 0 means no ZKTeco communication password.
+# - punch_direction = None lets ERPNext Auto Attendance determine IN/OUT.
+# - clear_from_device_on_fetch MUST remain False in production.
 
 devices = [
+    # ----------------------------
+    # FP1
+    # ----------------------------
     {
-        # Permanent device identity.
-        # Do not change this when the device IP or port changes.
-        'device_id': 'DEVICE_01',
-
-        # Device IP address or hostname on your network.
-        'ip': '192.0.2.10',
-
-        # ZKTeco TCP port. 4370 is the common default on ZKTeco
-        # devices, but use the port actually configured on yours.
-        'port': 4370,
-
-        # ZKTeco communication password.
-        # 0 means no connection password.
+        'device_id': 'FP1_DEVICE_01',
+        'ip': '10.0.0.20',
+        'port': 4371,
         'password': 0,
-
-        # Leave as None to let ERPNext Auto Attendance determine
-        # IN/OUT from the employee's assigned Shift Type.
-        # Allowed values: 'IN', 'OUT', 'AUTO', or None.
         'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
+    {
+        'device_id': 'FP1_DEVICE_02',
+        'ip': '10.0.0.11',
+        'port': 4372,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
+    {
+        'device_id': 'FP1_DEVICE_03',
+        'ip': '10.0.0.12',
+        'port': 4373,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
+    {
+        'device_id': 'FP1_DEVICE_04',
+        'ip': '10.0.0.13',
+        'port': 4374,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
+    {
+        'device_id': 'FP1_DEVICE_05',
+        'ip': '10.0.0.14',
+        'port': 4375,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
+    {
+        'device_id': 'FP1_DEVICE_06',
+        'ip': '10.0.0.15',
+        'port': 4376,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
+    {
+        'device_id': 'FP1_DEVICE_07',
+        'ip': '10.0.0.16',
+        'port': 4377,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
 
-        # IMPORTANT:
-        # Never automatically delete punches from the device.
-        # Keep this False in production.
+    # ----------------------------
+    # FP2
+    # ----------------------------
+    {
+        'device_id': 'FP2_DEVICE_08',
+        'ip': '10.0.1.23',
+        'port': 4378,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
+    {
+        'device_id': 'FP2_DEVICE_09',
+        'ip': '10.0.1.24',
+        'port': 4379,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
+    {
+        'device_id': 'FP2_DEVICE_10',
+        'ip': '10.0.1.25',
+        'port': 4380,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
+    {
+        'device_id': 'FP2_DEVICE_11',
+        'ip': '10.0.1.26',
+        'port': 4381,
+        'password': 0,
+        'punch_direction': None,
+        'clear_from_device_on_fetch': False
+    },
+    {
+        'device_id': 'FP2_DEVICE_12',
+        'ip': '10.0.1.251',
+        'port': 4382,
+        'password': 0,
+        'punch_direction': None,
         'clear_from_device_on_fetch': False
     }
 ]
@@ -75,28 +175,57 @@ devices = [
 # ============================================================
 # ERPNext Shift Type Synchronization
 # ============================================================
-
-# Map the biometric devices to the ERPNext Shift Types whose
-# employees use them.
 #
-# - 'shift_type_name' entries must exactly match the Shift Type
-#   names configured in your ERPNext site.
-# - 'related_device_id' entries must match the 'device_id' values
-#   defined in the devices list above.
-# - One device may be related to multiple Shift Types when
-#   employees on different shifts use the same device.
+# last_sync_of_checkin advances only after ALL devices listed in
+# related_device_id have been processed successfully.
 #
-# last_sync_of_checkin will advance only after the related
-# biometric device has been processed successfully.
+# IMPORTANT:
+# If a production PC can reach only one branch, keep only the devices
+# reachable from that PC in BOTH:
+#   1. devices
+#   2. related_device_id
+#
+# Do not leave unreachable devices in related_device_id, otherwise
+# Last Sync of Checkin may stop advancing.
 
 shift_type_device_mapping = [
     {
         'shift_type_name': [
-            'Morning Shift',
-            'Night Shift'
+            'صباحي 1',
+            'ليلي',
+            'صباحي 2',
+            'إداري 1',
+            'إداري 2',
+            'إداري 3',
+            'إداري 4',
+            'الصحة والسلامة المهنية 1',
+            'الصحة والسلامة المهنية 2',
+            'الصحة والسلامة المهنية 3',
+            'الصحة والسلامة المهنية 4',
+            'الصيانة',
+            'الادارة العامة 1',
+            'الادارة العامة 2',
+            'الادارة العامة 3',
+            'الادارة العامة 4',
+            'الادارة العامة 5',
+            'الادارة العامة 6',
+            'مرن',
+            'ليلي 2',
+            'مندوبين المشتريات'
         ],
         'related_device_id': [
-            'DEVICE_01'
+            'FP1_DEVICE_01',
+            'FP1_DEVICE_02',
+            'FP1_DEVICE_03',
+            'FP1_DEVICE_04',
+            'FP1_DEVICE_05',
+            'FP1_DEVICE_06',
+            'FP1_DEVICE_07',
+            'FP2_DEVICE_08',
+            'FP2_DEVICE_09',
+            'FP2_DEVICE_10',
+            'FP2_DEVICE_11',
+            'FP2_DEVICE_12'
         ]
     }
 ]
@@ -105,12 +234,15 @@ shift_type_device_mapping = [
 # ============================================================
 # Allowed ERPNext Exceptions
 # ============================================================
-
+#
 # These known conditions must not stop synchronization of
 # subsequent biometric punches:
 #
 # 1 = No Employee found for Attendance Device ID
 # 2 = Employee is inactive
 # 3 = Duplicate Employee Checkin
+#
+# Duplicate Employee Checkins are additionally handled by the
+# customized integration as idempotent/already synchronized.
 
 allowed_exceptions = [1, 2, 3]
