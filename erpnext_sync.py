@@ -48,6 +48,15 @@ def main():
     then calling the relevent functions to pull data and push to EPRNext.
 
     """
+    if getattr(config, 'DURABLE_SYNC_ENABLED', False):
+        # Import lazily: inspecting the module or running legacy tests must not open a real DB.
+        from durable_sync import run
+        try:
+            run(sys.modules[__name__])
+        except Exception as exc:
+            # Database/configuration failures are visible and never become a successful cycle.
+            error_logger.critical('Durable synchronization stopped: category=%s; investigate storage/configuration', type(exc).__name__)
+        return
     try:
         last_lift_off_timestamp = _safe_convert_date(status.get('lift_off_timestamp'), "%Y-%m-%d %H:%M:%S.%f")
         if (last_lift_off_timestamp and last_lift_off_timestamp < datetime.datetime.now() - datetime.timedelta(minutes=config.PULL_FREQUENCY)) or not last_lift_off_timestamp:
@@ -162,22 +171,28 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
 
 def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, password=DEFAULT_ZK_PASSWORD, device_id=None, clear_from_device_on_fetch=False):
     #  Sample Attendance Logs [{'punch': 255, 'user_id': '22', 'uid': 12349, 'status': 1, 'timestamp': datetime.datetime(2019, 2, 26, 20, 31, 29)},{'punch': 255, 'user_id': '7', 'uid': 7, 'status': 1, 'timestamp': datetime.datetime(2019, 2, 26, 20, 31, 36)}]
+    durable = getattr(config, 'DURABLE_SYNC_ENABLED', False)
+    if durable and clear_from_device_on_fetch:
+        raise ValueError('Durable synchronization prohibits device attendance deletion')
     port = validate_port(port)
     password = validate_password(password)
     zk = ZK(ip, port=port, timeout=timeout, password=password)
     conn = None
     attendances = []
+    device_disabled = False
     try:
         conn = zk.connect()
         x = conn.disable_device()
+        device_disabled = True
         # device is disabled when fetching data
         info_logger.info("\t".join((ip, "Device Disable Attempted. Result:", str(x))))
         attendances = conn.get_attendance()
         info_logger.info("\t".join((ip, "Attendances Fetched:", str(len(attendances)))))
-        status.set(f'{device_id}_push_timestamp', None)
-        status.set(f'{device_id}_pull_timestamp', str(datetime.datetime.now()))
-        status.save()
-        if len(attendances):
+        if not durable:
+            status.set(f'{device_id}_push_timestamp', None)
+            status.set(f'{device_id}_pull_timestamp', str(datetime.datetime.now()))
+            status.save()
+        if len(attendances) and not durable:
             # keeping a backup before clearing data incase the programs fails.
             # if everything goes well then this file is removed automatically at the end.
             dump_file_name = get_dump_file_name_and_directory(device_id)
@@ -193,14 +208,25 @@ def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, passwor
                 x = conn.clear_attendance()
                 info_logger.info("\t".join((ip, "Attendance Clear Attempted. Result:", str(x))))
         x = conn.enable_device()
+        device_disabled = False
         info_logger.info("\t".join((ip, "Device Enable Attempted. Result:", str(x))))
-    except:
-        error_logger.exception(str(ip)+' exception when fetching from device...')
+    except Exception as exc:
+        if durable:
+            error_logger.error('Durable device fetch failed: device=%s category=%s', device_id, type(exc).__name__)
+        else:
+            error_logger.exception(str(ip)+' exception when fetching from device...')
         raise Exception('Device fetch failed.')
     finally:
         if conn:
-            conn.disconnect()
-    return normalize_attendance_logs(list(map(lambda x: x.__dict__, attendances)))
+            try:
+                # A failed fetch must not leave a production terminal disabled.
+                if device_disabled:
+                    conn.enable_device()
+            finally:
+                conn.disconnect()
+    records = [x if isinstance(x, dict) else x.__dict__ for x in attendances]
+    # Durable normalization validates each record independently before attempting any sort.
+    return records if durable else normalize_attendance_logs(records)
 
 
 def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):
@@ -289,11 +315,17 @@ def send_shift_sync_to_erpnext(shift_type_name, sync_timestamp):
         if response.status_code == 200:
             info_logger.info("\t".join(['Shift Type last_sync_of_checkin Updated', str(shift_type_name), str(sync_timestamp.timestamp())]))
         else:
-            error_str = _safe_get_error_str(response)
-            error_logger.error('\t'.join(['Error during ERPNext Shift Type API Call.', str(shift_type_name), str(sync_timestamp.timestamp()), error_str]))
+            if getattr(config, 'DURABLE_SYNC_ENABLED', False):
+                error_logger.error('Durable Shift Type update failed: http=%s', response.status_code)
+            else:
+                error_str = _safe_get_error_str(response)
+                error_logger.error('\t'.join(['Error during ERPNext Shift Type API Call.', str(shift_type_name), str(sync_timestamp.timestamp()), error_str]))
         return response.status_code
-    except:
-        error_logger.exception("\t".join(['exception when updating last_sync_of_checkin in Shift Type', str(shift_type_name), str(sync_timestamp.timestamp())]))
+    except Exception as exc:
+        if getattr(config, 'DURABLE_SYNC_ENABLED', False):
+            error_logger.error('Durable Shift Type transport failed: category=%s', type(exc).__name__)
+        else:
+            error_logger.exception("\t".join(['exception when updating last_sync_of_checkin in Shift Type', str(shift_type_name), str(sync_timestamp.timestamp())]))
 
 def get_last_line_from_file(file):
     # concerns to address(may be much later):

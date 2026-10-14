@@ -109,3 +109,15 @@ venv.bak/
 .mypy_cache/
 .venv-old/
 local_config_test.py
+
+# Durable state and operator backups must never be committed.
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-journal
+*.sqlite3-journal
+*.db-journal
+*-wal
+*-shm
+*.backup
+*_last_fetch_dump.json

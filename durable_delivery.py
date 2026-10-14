@@ -33,12 +33,16 @@ def classify(http_status, data):
         return ('retry', http_status, 'authentication', 'Destination credentials or permissions require correction', None)
     if http_status in (408, 429) or 500 <= http_status <= 599 or not http_status:
         return ('retry', http_status, 'transient', 'Transient destination or transport failure', None)
-    if http_status == 417 and DUPLICATE_MESSAGE in text:
-        return ('duplicate', http_status, 'already_exists', 'Confirmed existing Employee Checkin', None)
     if http_status in (400, 417) and any(message in text for message in MISSING_MESSAGES):
         return ('unmatched_employee', http_status, 'employee_mapping', 'Employee mapping was not found', None)
     if http_status in (400, 417) and INACTIVE_MESSAGE in text:
         return ('rejected', http_status, 'inactive_employee', 'Employee is inactive', None)
+    if http_status == 417 and DUPLICATE_MESSAGE in text:
+        # Employee errors can echo a supplied ID. Those errors take precedence above so
+        # an echoed duplicate phrase in a missing employee ID cannot become success.
+        error_type = data.get('exc_type')
+        if error_type is None or error_type in ('ValidationError', 'DuplicateEntryError'):
+            return ('duplicate', http_status, 'already_exists', 'Confirmed existing Employee Checkin', None)
     if http_status in (400, 417, 422):
         return ('rejected', http_status, 'business_validation', 'Destination rejected punch validation; inspect source and server logs', None)
     # An unfamiliar 404/redirect/etc. may mean broken routing, not a permanently bad punch.

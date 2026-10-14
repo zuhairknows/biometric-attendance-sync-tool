@@ -9,6 +9,9 @@ SCHEMA_VERSION = 1
 STATES = ('pending', 'delivering', 'retry', 'synced', 'duplicate',
           'unmatched_employee', 'rejected', 'invalid_record')
 COMPLETED = ('synced', 'duplicate')
+CAPTURE_FIELDS = ('identity_key', 'device_id', 'user_id', 'device_uid', 'punch_timestamp',
+                  'punch_code', 'status_code', 'source_evidence', 'payload', 'state',
+                  'error_category', 'error_message')
 
 SCHEMA = [
     'CREATE TABLE schema_version (version INTEGER NOT NULL)',
@@ -108,8 +111,8 @@ class Ledger:
                 if row is None:
                     report['excluded'] += 1
                     continue
-                fields = tuple(row) + ('first_captured', 'last_observed', 'created_at', 'updated_at')
-                values = tuple(row.values()) + (now, now, now, now)
+                fields = CAPTURE_FIELDS + ('first_captured', 'last_observed', 'created_at', 'updated_at')
+                values = tuple(row[key] for key in CAPTURE_FIELDS) + (now, now, now, now)
                 inserted = self.db.execute(
                     'INSERT INTO punches(' + ','.join(fields) + ') VALUES(' + ','.join('?' for _ in fields) + ') '
                     'ON CONFLICT(identity_key) DO NOTHING', values).rowcount
@@ -190,7 +193,10 @@ class Ledger:
                 return None
             candidate = dt.datetime.fromisoformat(device['last_successful_fetch'])
             if unresolved[0]:
-                candidate = min(candidate, dt.datetime.fromisoformat(unresolved[0]) - dt.timedelta(seconds=1))
+                earliest = dt.datetime.fromisoformat(unresolved[0])
+                if earliest < dt.datetime.min + dt.timedelta(seconds=1):
+                    return None
+                candidate = min(candidate, earliest - dt.timedelta(seconds=1))
             candidates.append(candidate)
         # Frappe stores second-resolution watermarks; always round down.
         return min(candidates).replace(microsecond=0)
@@ -202,6 +208,13 @@ class Ledger:
     def save_shift_watermark(self, shift, value):
         with self.db:
             self.db.execute('INSERT INTO shift_state VALUES(?,?) ON CONFLICT(shift_name) DO UPDATE SET watermark=excluded.watermark', (shift, str(value)))
+
+    def destination_cooldown(self):
+        return self.db.execute('SELECT cooldown_until FROM destination_state WHERE id=1').fetchone()[0]
+
+    def pause_destination(self, until):
+        with self.db:
+            self.db.execute('UPDATE destination_state SET cooldown_until=MAX(cooldown_until,?) WHERE id=1', (until,))
 
     def diagnostics(self):
         counts = dict.fromkeys(STATES, 0)

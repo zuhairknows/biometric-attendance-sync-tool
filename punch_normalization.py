@@ -13,14 +13,18 @@ def import_boundary(value):
 
 
 def timestamp(value):
-    if isinstance(value, dt.datetime):
-        result = value
-    elif isinstance(value, (int, float)) and not isinstance(value, bool):
-        result = dt.datetime.fromtimestamp(value)
-    elif isinstance(value, str):
-        result = dt.datetime.fromisoformat(value)
-    else:
-        raise ValueError('Invalid source timestamp')
+    try:
+        if isinstance(value, dt.datetime):
+            result = value
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            result = dt.datetime.fromtimestamp(value)
+        elif isinstance(value, str):
+            result = dt.datetime.fromisoformat(value)
+        else:
+            raise ValueError
+    except (ValueError, OverflowError, OSError):
+        # datetime's default error includes the supplied input; keep errors fixed and safe.
+        raise ValueError('Invalid source timestamp') from None
     # ZKTeco timestamps are local wall-clock values, as in the existing payload.
     if result.tzinfo is not None:
         raise ValueError('Timezone-aware source timestamp is unsupported')
