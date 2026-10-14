@@ -224,9 +224,11 @@ def get_all_attendance_from_device(ip, port=DEFAULT_ZK_PORT, timeout=30, passwor
                     conn.enable_device()
             finally:
                 conn.disconnect()
-    records = [x if isinstance(x, dict) else x.__dict__ for x in attendances]
     # Durable normalization validates each record independently before attempting any sort.
-    return records if durable else normalize_attendance_logs(records)
+    if durable:
+        return attendances
+    records = [x if isinstance(x, dict) else x.__dict__ for x in attendances]
+    return normalize_attendance_logs(records)
 
 
 def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=None, latitude=None, longitude=None):

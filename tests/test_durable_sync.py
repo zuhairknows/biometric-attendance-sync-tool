@@ -108,7 +108,7 @@ class DurableSyncTests(unittest.TestCase):
             with self.subTest(code=code):
                 self.ledger.db.execute('DELETE FROM delivery_attempts')
                 self.ledger.db.execute('DELETE FROM punches')
-                self.ledger.db.execute('UPDATE destination_state SET cooldown_until=0')
+                self.ledger.db.execute('UPDATE destination_state SET cooldown_until=0,prefer_retry=0,prefer_recent=0')
                 self.ledger.db.commit()
                 self.ingest([record(), record(uid=2)])
                 self.request.reset_mock()
@@ -151,9 +151,11 @@ class DurableSyncTests(unittest.TestCase):
                     self.assertEqual(restarted.db.execute('SELECT cooldown_until FROM destination_state').fetchone()[0], 1900)
 
     def test_unmatched_and_inactive_employee_quarantine_does_not_halt_later_record(self):
-        self.ingest([record(), record(uid=2), record(uid=3)])
-        self.request.side_effect = [response(417, 'No Employee found for attendance_device_id: 100'),
-                                   response(417, 'Transactions cannot be created for an Inactive Employee'), response()]
+        self.ingest([record(user_id='unmatched'), record(uid=2, user_id='inactive'), record(uid=3, user_id='later')])
+        outcomes = {'unmatched': response(417, 'No Employee found for attendance_device_id: unmatched'),
+                    'inactive': response(417, 'Transactions cannot be created for an Inactive Employee'),
+                    'later': response()}
+        self.request.side_effect = lambda *args, **kwargs: outcomes[kwargs['json']['employee_field_value']]
         self.assertEqual(self.batch(), 3)
         self.assertEqual([self.punch(i)['state'] for i in range(3)], ['unmatched_employee', 'rejected', 'synced'])
 
@@ -224,7 +226,17 @@ class DurableSyncTests(unittest.TestCase):
             row = self.ledger.claim(now=1000)
             claims.append(row['id'])
             self.ledger.finish(row, ('synced', 200, None, None, 'TEST'), now=1000)
-        self.assertEqual(claims, [5, 1, 6, 2])
+        self.assertEqual(claims, [5, 1, 8, 2])
+
+    def test_fresh_pending_captures_progress_in_an_untouched_outage_backlog(self):
+        self.ingest([record(uid=i) for i in range(8)])
+        self.ingest([record(uid=9, timestamp=PUNCH_TIME + dt.timedelta(hours=1))])
+        claims = []
+        for _ in range(4):
+            row = self.ledger.claim(now=1000)
+            claims.append(row['id'])
+            self.ledger.finish(row, ('synced', 200, None, None, 'TEST'), now=1000)
+        self.assertEqual(claims, [1, 9, 2, 8])
 
     def test_legacy_migration_is_idempotent_nondestructive_and_date_filtered(self):
         path = Path(self.temp.name) / 'FP1_DEVICE_01_last_fetch_dump.json'
@@ -434,6 +446,13 @@ class EngineIntegrationTests(unittest.TestCase):
             self.assertEqual(ledger.diagnostics()['states']['invalid_record'], 1)
             self.assertEqual(ledger.diagnostics()['states']['synced'], 1)
         self.assertIsNone(self.sync.status.get('FP1_DEVICE_01_push_timestamp'))
+
+    def test_nonrecord_device_entry_does_not_prevent_later_capture(self):
+        FakeZK.attendances = [None, FakeAttendance(2, '100', PUNCH_TIME)]
+        self.sync.main()
+        with Ledger(Path(self.sync.config.DURABLE_DB_PATH), readonly=True) as ledger:
+            self.assertEqual(ledger.diagnostics()['states']['invalid_record'], 1)
+            self.assertEqual(ledger.diagnostics()['states']['synced'], 1)
 
     def test_prohibits_device_deletion_before_connecting(self):
         with self.assertRaises(ValueError):

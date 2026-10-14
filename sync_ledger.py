@@ -37,7 +37,8 @@ SCHEMA = [
         latest_observed_punch TEXT, last_successful_delivery REAL, last_fetch_attempt TEXT,
         fetch_ok INTEGER NOT NULL DEFAULT 0)""",
     """CREATE TABLE destination_state (id INTEGER PRIMARY KEY CHECK(id=1),
-        cooldown_until REAL NOT NULL DEFAULT 0, prefer_retry INTEGER NOT NULL DEFAULT 0)""",
+        cooldown_until REAL NOT NULL DEFAULT 0, prefer_retry INTEGER NOT NULL DEFAULT 0,
+        prefer_recent INTEGER NOT NULL DEFAULT 0)""",
     'INSERT INTO destination_state(id) VALUES(1)',
     'CREATE TABLE shift_state (shift_name TEXT PRIMARY KEY, watermark TEXT NOT NULL)',
     """CREATE TABLE legacy_imports (source_path TEXT PRIMARY KEY, source_sha256 TEXT NOT NULL,
@@ -146,7 +147,10 @@ class Ledger:
             states = ('retry', 'pending') if destination['prefer_retry'] else ('pending', 'retry')
             row = None
             for state in states:
-                row = self.db.execute('SELECT * FROM punches WHERE state=? AND next_retry<=? ORDER BY next_retry,id LIMIT 1', (state, now)).fetchone()
+                # An outage leaves many untouched rows pending, not just retrying. Alternate
+                # oldest/newest pending work too, so fresh captures can progress in that backlog.
+                order = 'next_retry DESC,id DESC' if state == 'pending' and destination['prefer_recent'] else 'next_retry,id'
+                row = self.db.execute('SELECT * FROM punches WHERE state=? AND next_retry<=? ORDER BY ' + order + ' LIMIT 1', (state, now)).fetchone()
                 if row:
                     break
             if row is None:
@@ -154,6 +158,8 @@ class Ledger:
             self.db.execute("UPDATE punches SET state='delivering', attempt_count=attempt_count+1,last_attempt=?,lease_until=?,updated_at=? WHERE id=?",
                             (now, now + lease_seconds, now, row['id']))
             self.db.execute('UPDATE destination_state SET prefer_retry=? WHERE id=1', (int(row['state'] != 'retry'),))
+            if row['state'] == 'pending':
+                self.db.execute('UPDATE destination_state SET prefer_recent=1-prefer_recent WHERE id=1')
             return dict(self.db.execute('SELECT * FROM punches WHERE id=?', (row['id'],)).fetchone())
 
     def finish(self, row, outcome, now=None, retry_at=0, cooldown_until=0):
