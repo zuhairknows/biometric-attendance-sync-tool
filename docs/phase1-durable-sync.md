@@ -16,7 +16,9 @@ The existing template edit was committed to local `main` as `974a565`, then appl
 on the verified remote main ancestry and pushed as **4858432bf424a08bd437cf7d55027ea249712bc1**.
 This preserved its exact content without publishing 41 unrelated local main commits.
 Local main and remote main remain divergent; do not force-push local main.
-Phase 1 commits remain local and are not pushed, merged, or tagged.
+Release preparation publishes only `feature/phase1-durable-sync` after local review
+and tests, as separately authorized. No Phase 1 merge, tag or production deployment.
+See [release review](phase1-release-review.md) and the [controlled cutover runbook](phase1-cutover-runbook.md).
 
 ## Assessment of the actual baseline
 
@@ -29,9 +31,9 @@ Phase 1 commits remain local and are not pushed, merged, or tagged.
 | Checkin | POST `hrms.hr.doctype.employee_checkin.employee_checkin.add_log_based_on_employee_field` for version >13, otherwise `erpnext` | Same endpoint selection, six payload fields, request timeout and local timestamp semantics |
 | Duplicate | HTTP 417 plus exact known Checkin duplicate message; write successful checkpoint | Same specific recognition; completed `duplicate` state, never every 417 |
 | Unmatched/inactive | Default allowlist `[1,2,3]` continues after these errors without successful delivery | Durable `unmatched_employee` / `rejected`; not successful and not automatically retried |
-| Status | PickleDB `status.json`: pull/push, lift-off, mission-accomplished, Shift Type timestamps | PickleDB remains only for poll scheduling and legacy compatibility; authoritative capture/delivery/watermarks are SQLite |
+| Status | PickleDB `status.json`: pull/push, lift-off, mission-accomplished, Shift Type timestamps | Durable polling/capture/delivery use SQLite; legacy JSON is a read-only shift-floor snapshot, not a recovery dependency |
 | Shift Type | Earliest mapped-device pull timestamp if each push timestamp is nonempty | Latest successful scan must exist for every mapped device, capped before every unresolved punch |
-| Windows | `ERPNextBiometricPushService`, direct Python interpreter hosting, wrapper calls `main()` then sleeps 15 seconds | Service name, hosting, entry point and installation remain unchanged |
+| Windows | `ERPNextBiometricPushService`, direct Python interpreter hosting, wrapper calls `main()` then sleeps 15 seconds | Same name/hosting/install; optional stop callback and interruptible existing stop-event wait |
 
 The baseline's allowlisted permanent failures are especially dangerous: a later
 successful punch moves the log checkpoint beyond an earlier unresolved punch.
@@ -76,8 +78,11 @@ existing sequential ZK connector
 ## SQLite schema and durability
 
 Schema version **1** is stored in `schema_version`. Initialization is transactional.
-An unknown database or unsupported version is refused without rebuilding,
-overwriting or upgrading it. Future changes require an explicit reviewed migration.
+An unknown database, altered/missing schema structure or unsupported version is
+refused without rebuilding, overwriting or upgrading it. Table/index definitions
+and the destination singleton are checked before work. `sync_cli.py verify` runs
+read-only full integrity and foreign-key checks. Future schema changes require an
+explicit reviewed migration; this release preserves schema version 1 and existing valid rows.
 
 * `punches`: immutable integer ID and unique SHA-256 source identity; device ID,
   original user ID, UID, source timestamp, punch/status, whitelisted source evidence,
@@ -188,7 +193,9 @@ Any destination-wide failure stops the batch after one request and persists its
 cooldown; captured punches are retained. Shift Type requests respect that cooldown,
 and failed Shift Type requests also pause the destination. Defaults: 100 punches
 per tick and 2 requests/second inside a batch; the 15-second service sleep adds
-spacing between batches. Keep lease >= `2 * request timeout + 30` seconds.
+spacing between batches via the existing Windows stop event. Keep lease >=
+`2 * request timeout + 30` seconds. Stop requests are checked between work items and
+in 0.5-second rate-wait slices; in-flight calls/ingestion finish before shutdown.
 
 ## Shift Type policy
 
@@ -203,6 +210,8 @@ all block progress past themselves. Fetching alone never proves delivery.
 
 Successful deliveries and confirmed duplicates are the only completed states.
 The legacy local shift timestamp is only a monotonic floor, not proof of delivery.
+In durable mode it is read once without modifying `status.json`; an unreadable or
+malformed snapshot blocks Shift Type updates pending audit while deliveries resume.
 Previously confirmed SQLite watermarks prevent repeated writes. Failed remote
 updates do not save a watermark. This does not retroactively undo a production
 watermark already advanced by the old engine. Audit existing remote watermarks and
@@ -295,7 +304,7 @@ newer SQLite schema in place. No rollback command is run by this task.
 * Review local Phase 1 commits and the offline verification report.
 * Verify actual service account ACLs, Python/sqlite versions and installed pyzk
   SpeedFace patch on a staging host. This task does not patch dependencies.
-* Exercise the unchanged Windows wrapper under SCM in staging: restart during
+* Exercise the same Windows service hosting with its updated stop callback under SCM in staging: restart during
   delivery, storage failure, backup, graceful stop and recovery.
 * With a nonproduction Frappe instance, verify actual duplicate/missing/inactive
   response formats, payload mapping, geolocation and Shift Type watermark behavior.

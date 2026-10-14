@@ -5,7 +5,7 @@ Branch: `feature/phase1-durable-sync`, based directly on verified service commit
 See [the full assessment and operator guide](phase1-durable-sync.md) for the missing
 baseline branch discrepancy, schema, all changed files, cutover and rollback.
 
-## Results
+## Initial development results (before release review)
 
 * Baseline suite: **27/27 passed** before edits; retained unchanged.
 * Final combined suite: **74/74 passed** (27 existing + 47 new), 25.585 seconds.
@@ -90,5 +90,27 @@ instance were contacted. Production configuration, service and records were
 untouched. Only the earlier explicitly authorized template change was pushed to
 remote main; durable code remains a reviewable local development branch.
 
-Complete the staging and separately approved production checklist in the operator
-guide before considering deployment. Phase 2 remains separately scoped.
+## Final release-preparation verification
+
+The independent review found and corrected schema-version-only validation, integer
+truncation/invalid-evidence identity collisions, permissive short import dates,
+truthy nonboolean activation, unpropagated service stop requests and legacy status
+dependency during pending recovery. See [the release review](phase1-release-review.md).
+
+Current suite: **92/92 passed** in **16.607 seconds**, including 18 additional tests
+beyond the 74-test initial suite. The standalone loopback harness also passed all
+**10 real HTTP fixture scenarios** and created 9 fake Checkins. **19 Python files**
+compile successfully; the PowerShell inventory helper parses without execution and
+its embedded config inspector is tested only on credential/syntax-error fixtures.
+The original 27 regression tests remain unchanged.
+
+The wrapper now passes an optional stop callback and waits on the existing stop
+event; service name/interpreter hosting/base class/install model remain preserved.
+SQLite schema remains 1; valid existing ledgers are supported without an upgrade,
+and altered/unsupported schemas fail closed. In durable mode legacy status is only
+a protected read-only floor; polling and automatic delivery no longer write it.
+
+Hardware, real staging Frappe and Windows SCM tests are **NOT EXECUTED**. Production
+PC verification commands and the [cutover runbook](phase1-cutover-runbook.md) were
+prepared, not executed. Outcome: **A. Development verified, ready for controlled
+staging**. Production readiness is not established. Phase 2 remains separately scoped.

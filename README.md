@@ -5,6 +5,9 @@ Python Scripts to poll your biometric attendance system _(BAS)_ for logs and syn
 Phase 1 durable synchronization is available on the development branch, disabled
 until an explicit cutover. Read the [assessment, migration, backup and rollback guide](docs/phase1-durable-sync.md)
 and [offline verification report](docs/phase1-verification.md) before enabling it.
+Release preparation adds a [review report](docs/phase1-release-review.md),
+[nonproduction integration procedure](docs/phase1-integration-tests.md), and
+[controlled production cutover runbook](docs/phase1-cutover-runbook.md).
 
 
 ## Table of Contents
