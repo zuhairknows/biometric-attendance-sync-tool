@@ -2,6 +2,10 @@
 
 Python Scripts to poll your biometric attendance system _(BAS)_ for logs and sync with your ERPNext instance
 
+Phase 1 durable synchronization is available on the development branch, disabled
+until an explicit cutover. Read the [assessment, migration, backup and rollback guide](docs/phase1-durable-sync.md)
+and [offline verification report](docs/phase1-verification.md) before enabling it.
+
 
 ## Table of Contents
  - [Pre-requisites](#pre-requisites)
