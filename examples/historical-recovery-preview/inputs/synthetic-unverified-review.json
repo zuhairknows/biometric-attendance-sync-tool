@@ -1,0 +1,40 @@
+{
+  "schema": "attendance-recovery-review-v1",
+  "capture_summary_sha256": "2c8b07cb74a6c42cf4df903faf55b26020944c14ad6e77a76da6738890e20bbf",
+  "exports_manifest_sha256": "416b30da691d80bfbdc3a6ac423cb49afcffa32a7a53fa0542517342aea1d846",
+  "range_start": "2026-10-11 00:00:00",
+  "range_end": "2026-10-15 23:59:59.999999",
+  "site_timezone": "Asia/Riyadh",
+  "baseline_details": {
+    "file": "synthetic-baseline.csv",
+    "sha256": "d7c8a7198874216db6bef53691512c263c66d43054896e2134b7ad5c9ab2bd95"
+  },
+  "approved_source_records": [
+    {
+      "device_id": "FP2_DEVICE_08",
+      "source_sha256": "cd4004bd02ab108e70feceb322d3f9713de954c3287e062df48245b13aaf31ab",
+      "source_order_index": 0
+    },
+    {
+      "device_id": "FP2_DEVICE_08",
+      "source_sha256": "cd4004bd02ab108e70feceb322d3f9713de954c3287e062df48245b13aaf31ab",
+      "source_order_index": 1
+    }
+  ],
+  "log_type_storage": {
+    "file": "synthetic-log-type-storage.json",
+    "sha256": "63b8db882dfec00be11bda575606d7e09199352527b728faaf1077a22fd5ee7c"
+  },
+  "verified_at": "2026-10-16T00:00:10+03:00",
+  "verification": {},
+  "snapshot": {
+    "id": "SYNTHETIC-SNAPSHOT",
+    "started_at": "2026-10-16T00:00:00+03:00",
+    "completed_at": "2026-10-16T00:00:00+03:00",
+    "independent_counts": {
+      "checkins": 1,
+      "lookup_keys": 6,
+      "mapping_matches": 6
+    }
+  }
+}

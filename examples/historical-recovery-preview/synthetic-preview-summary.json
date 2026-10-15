@@ -1,0 +1,156 @@
+{
+  "schema": "attendance-recovery-preview-v1",
+  "mode": "offline_dry_run",
+  "execution_supported": false,
+  "recovery_authorized": false,
+  "approval_required": true,
+  "provisional": true,
+  "review_fingerprint": "c957b53da745ccf9930d448893ca552a73b338f5e6dd4facddb5b020ee95164e",
+  "created_at": "2026-10-16T00:00:10+03:00",
+  "maximum_snapshot_age_seconds": 900,
+  "matching_policy": {
+    "employee_field": "attendance_device_id",
+    "duplicate_key": "employee_time_log_type",
+    "timestamp_precision": "seconds",
+    "source_client_log_type": null,
+    "expected_storage_log_type": "",
+    "sql_null_equals_empty_string": false
+  },
+  "blockers": [],
+  "inputs": [
+    {
+      "role": "capture_summary",
+      "sha256": "2c8b07cb74a6c42cf4df903faf55b26020944c14ad6e77a76da6738890e20bbf"
+    },
+    {
+      "role": "FP2_DEVICE_08",
+      "sha256": "cd4004bd02ab108e70feceb322d3f9713de954c3287e062df48245b13aaf31ab"
+    },
+    {
+      "role": "FP2_DEVICE_11",
+      "sha256": "1a1a560e97f8f8b71f03a283c84196f831135008b309799ee3bdc974c5387f87"
+    },
+    {
+      "role": "export_manifest",
+      "sha256": "416b30da691d80bfbdc3a6ac423cb49afcffa32a7a53fa0542517342aea1d846"
+    },
+    {
+      "role": "employee_mappings",
+      "sha256": "b034adc942c8efe5b9837f7cb199592f6425ea3e1992986fc4e5acd8e111a22f"
+    },
+    {
+      "role": "employee_checkins",
+      "sha256": "2f209bd2010263ffa23d382060c7783bda4f69084441b2d20d0c718376ecd0f9"
+    },
+    {
+      "role": "review_manifest",
+      "sha256": "9d7a8f50bb5be90cdf5171e0c3f7e4f497f97dcef00cfcd02b7f5cef0a2562ef"
+    },
+    {
+      "role": "baseline_details",
+      "sha256": "d7c8a7198874216db6bef53691512c263c66d43054896e2134b7ad5c9ab2bd95"
+    },
+    {
+      "role": "log_type_storage",
+      "sha256": "63b8db882dfec00be11bda575606d7e09199352527b728faaf1077a22fd5ee7c"
+    }
+  ],
+  "counts": {
+    "already_matched": 1,
+    "ambiguous": 1,
+    "eligible_for_review": 1,
+    "excluded": 4
+  },
+  "scoped_counts": {
+    "already_matched": 1,
+    "eligible_for_review": 1
+  },
+  "per_device": {
+    "FP2_DEVICE_08": {
+      "already_matched": 1,
+      "eligible_for_review": 1,
+      "excluded": 2
+    },
+    "FP2_DEVICE_11": {
+      "ambiguous": 1,
+      "excluded": 2
+    }
+  },
+  "per_day": {
+    "2026-10-14": {
+      "already_matched": 1,
+      "eligible_for_review": 1,
+      "excluded": 3
+    },
+    "2026-10-15": {
+      "ambiguous": 1,
+      "excluded": 1
+    }
+  },
+  "comparison": {
+    "schema": "attendance-reconciliation-report-v1",
+    "mode": "offline_read_only",
+    "range_start": "2026-10-11 00:00:00",
+    "range_end": "2026-10-15 23:59:59.999999",
+    "site_timezone": "Asia/Riyadh",
+    "source_records": 7,
+    "excluded_valid_out_of_range": 0,
+    "recovery_authorized": false,
+    "all_missing_require_review": true,
+    "duplicate_key": "employee_time_log_type",
+    "timestamp_precision": "seconds",
+    "totals": {
+      "records": 7,
+      "matched": 1,
+      "missing": 2,
+      "unmatched_employee": 1,
+      "ambiguous": 1,
+      "duplicate_source": 2
+    },
+    "per_device": {
+      "FP2_DEVICE_08": {
+        "records": 4,
+        "matched": 1,
+        "missing": 1,
+        "unmatched_employee": 1,
+        "ambiguous": 0,
+        "duplicate_source": 1,
+        "excluded_valid_out_of_range": 0
+      },
+      "FP2_DEVICE_11": {
+        "records": 3,
+        "matched": 0,
+        "missing": 1,
+        "unmatched_employee": 0,
+        "ambiguous": 1,
+        "duplicate_source": 1,
+        "excluded_valid_out_of_range": 0
+      }
+    },
+    "per_day": {
+      "2026-10-14": {
+        "records": 5,
+        "matched": 1,
+        "missing": 1,
+        "unmatched_employee": 1,
+        "ambiguous": 0,
+        "duplicate_source": 2
+      },
+      "2026-10-15": {
+        "records": 2,
+        "matched": 0,
+        "missing": 1,
+        "unmatched_employee": 0,
+        "ambiguous": 1,
+        "duplicate_source": 0
+      }
+    },
+    "uncertain_existing_checkin_employees": 0
+  },
+  "reports": [
+    {
+      "file": "synthetic-preview.csv",
+      "sha256": "3fb192a533166ab2eaf5dfe857da55990a90c45337ed7e2a39bdade5c1ef421c"
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "schema": "frappe-employee-lookups-v1",
+  "lookups": [
+    {
+      "user_id": "001",
+      "matches": [
+        {
+          "employee": "SYNTH-EMP-001",
+          "attendance_device_id": "001",
+          "status": "Active"
+        }
+      ]
+    },
+    {
+      "user_id": "002",
+      "matches": [
+        {
+          "employee": "SYNTH-EMP-002",
+          "attendance_device_id": "002",
+          "status": "Active"
+        }
+      ]
+    },
+    {
+      "user_id": "003",
+      "matches": []
+    },
+    {
+      "user_id": "004",
+      "matches": [
+        {
+          "employee": "SYNTH-EMP-004",
+          "attendance_device_id": "004",
+          "status": "Active"
+        }
+      ]
+    },
+    {
+      "user_id": "005",
+      "matches": [
+        {
+          "employee": "SYNTH-EMP-005",
+          "attendance_device_id": "005",
+          "status": "Active"
+        },
+        {
+          "employee": "SYNTH-ALTERNATIVE",
+          "attendance_device_id": "005",
+          "status": "Active"
+        }
+      ]
+    },
+    {
+      "user_id": "006",
+      "matches": [
+        {
+          "employee": "SYNTH-EMP-006",
+          "attendance_device_id": "006",
+          "status": "Active"
+        }
+      ]
+    }
+  ]
+}

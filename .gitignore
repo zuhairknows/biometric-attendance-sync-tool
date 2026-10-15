@@ -145,3 +145,9 @@ db-profile.json
 effective-hooks.json
 .export-validation-*.part
 internal-profile.json
+
+# Real recovery previews contain employee information; synthetic examples use other names.
+recovery_preview_*.csv
+recovery_preview_*.json
+recovery-review.json
+employee-checkin-log-type-storage.json

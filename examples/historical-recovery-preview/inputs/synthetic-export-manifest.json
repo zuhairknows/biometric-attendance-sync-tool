@@ -1,0 +1,53 @@
+{
+  "schema": "frappe-offline-reconciliation-v1",
+  "site_timezone": "Asia/Riyadh",
+  "exported_at": "2026-10-16T00:00:00+03:00",
+  "coverage_start": "2026-10-11 00:00:00",
+  "coverage_end": "2026-10-15 23:59:59.999999",
+  "exports_complete": true,
+  "consistent_snapshot": true,
+  "checkins_all_devices": true,
+  "checkins_all_employees": true,
+  "mapping_all_statuses": true,
+  "server_semantics_verified": true,
+  "no_identity_mutating_hooks": true,
+  "server_source_reference": "SYNTHETIC TEST CONTRACT - not a production attestation",
+  "employee_field": "attendance_device_id",
+  "mapping_resolution": "frappe.db.get_values",
+  "duplicate_key": "employee_time_log_type",
+  "timestamp_precision": "seconds",
+  "device_policies": {
+    "FP2_DEVICE_08": {
+      "punch_direction": null,
+      "in_codes": [
+        0,
+        4
+      ],
+      "out_codes": [
+        1,
+        5
+      ]
+    },
+    "FP2_DEVICE_11": {
+      "punch_direction": null,
+      "in_codes": [
+        0,
+        4
+      ],
+      "out_codes": [
+        1,
+        5
+      ]
+    }
+  },
+  "employee_mappings": {
+    "file": "synthetic-employee-mappings.json",
+    "sha256": "b034adc942c8efe5b9837f7cb199592f6425ea3e1992986fc4e5acd8e111a22f",
+    "rows": 6
+  },
+  "employee_checkins": {
+    "file": "synthetic-checkins.csv",
+    "sha256": "2f209bd2010263ffa23d382060c7783bda4f69084441b2d20d0c718376ecd0f9",
+    "rows": 1
+  }
+}

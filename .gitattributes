@@ -1,3 +1,7 @@
 # Synthetic evidence hashes are over exact bytes, including original line endings.
 examples/reconciliation/*.json -text whitespace=trailing-space,space-before-tab,cr-at-eol
 examples/reconciliation/*.csv -text whitespace=trailing-space,space-before-tab,cr-at-eol
+
+# Recovery fixtures also pin hashes across nested input files and generated reports.
+examples/historical-recovery-preview/**/*.json -text whitespace=trailing-space,space-before-tab,cr-at-eol
+examples/historical-recovery-preview/**/*.csv -text whitespace=trailing-space,space-before-tab,cr-at-eol

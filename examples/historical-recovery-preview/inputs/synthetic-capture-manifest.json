@@ -1,0 +1,58 @@
+{
+  "mode": "capture",
+  "status": "complete",
+  "devices": [
+    {
+      "device_id": "FP2_DEVICE_08",
+      "host": "192.0.2.1",
+      "port": 4370,
+      "status": "captured",
+      "capture_started_at": "2026-10-15T19:58:19.966070+03:00",
+      "cleanup": {
+        "reenable": "not_requested",
+        "disconnect": "confirmed"
+      },
+      "fetched_count_from_sdk": 4,
+      "total_fetched": 4,
+      "valid": 4,
+      "invalid": 0,
+      "raw_incomplete": 0,
+      "validation_counts": {},
+      "valid_in_requested_range": 4,
+      "oldest_valid_punch": "2026-10-14 08:00:00.000000",
+      "newest_valid_punch": "2026-10-14 11:00:00.000000",
+      "oldest_valid_in_range": "2026-10-14 08:00:00.000000",
+      "newest_valid_in_range": "2026-10-14 11:00:00.000000",
+      "evidence_file": "synthetic-device-08.json",
+      "sha256": "cd4004bd02ab108e70feceb322d3f9713de954c3287e062df48245b13aaf31ab",
+      "capture_finished_at": "2026-10-15T19:58:19.980227+03:00"
+    },
+    {
+      "device_id": "FP2_DEVICE_11",
+      "host": "192.0.2.2",
+      "port": 4370,
+      "status": "captured",
+      "capture_started_at": "2026-10-15T19:58:19.981341+03:00",
+      "cleanup": {
+        "reenable": "not_requested",
+        "disconnect": "confirmed"
+      },
+      "fetched_count_from_sdk": 3,
+      "total_fetched": 3,
+      "valid": 3,
+      "invalid": 0,
+      "raw_incomplete": 0,
+      "validation_counts": {},
+      "valid_in_requested_range": 3,
+      "oldest_valid_punch": "2026-10-14 11:00:00.000000",
+      "newest_valid_punch": "2026-10-15 09:00:00.000000",
+      "oldest_valid_in_range": "2026-10-14 11:00:00.000000",
+      "newest_valid_in_range": "2026-10-15 09:00:00.000000",
+      "evidence_file": "synthetic-device-11.json",
+      "sha256": "1a1a560e97f8f8b71f03a283c84196f831135008b309799ee3bdc974c5387f87",
+      "capture_finished_at": "2026-10-15T19:58:20.000501+03:00"
+    }
+  ],
+  "all_selected_devices_captured": true,
+  "date_filter_affects_summary_only": true
+}

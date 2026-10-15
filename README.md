@@ -21,6 +21,10 @@ Export defaults to an offline plan; a live export requires separate approval and
 For approved hosting-administrator execution without external database access, use
 the [server-side export procedure](docs/phase1-server-frappe-export.md).
 
+For a standalone, offline recovery **preview only**, see the
+[historical attendance recovery safety design and runbook](docs/historical-attendance-recovery-preview.md).
+It requires reviewed evidence and fresh complete exports; recovery execution is unavailable.
+
 
 ## Table of Contents
  - [Pre-requisites](#pre-requisites)

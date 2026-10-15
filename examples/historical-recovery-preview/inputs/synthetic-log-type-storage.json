@@ -1,0 +1,10 @@
+{
+  "schema": "employee-checkin-log-type-storage-v1",
+  "snapshot_id": "SYNTHETIC-SNAPSHOT",
+  "states": [
+    {
+      "name": "SYNTH-CHECKIN-001",
+      "state": "empty"
+    }
+  ]
+}
