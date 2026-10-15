@@ -1,0 +1,7 @@
+{
+  "host": "REPLACE-with-approved-database-TLS-hostname",
+  "port": 3306,
+  "database": "REPLACE_with_site_database",
+  "user": "REPLACE_with_existing_select_only_account",
+  "tls_ca": "C:\\protected\\frappe-export\\review\\approved-db-ca.pem"
+}

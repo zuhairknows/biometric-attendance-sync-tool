@@ -1,0 +1,33 @@
+{
+  "schema": "frappe-export-review-v1",
+  "authoritative_url": "https://erp.myfpf.com",
+  "route_to_database_verified": false,
+  "deployment_sources_verified": false,
+  "deployment_frozen_for_export": false,
+  "production_policy_verified": false,
+  "lookup_sql_equivalence_reviewed": false,
+  "all_validation_paths_reviewed": false,
+  "no_identity_mutating_hooks": false,
+  "evidence_reference": "REPLACE with approved restricted incident/review record",
+  "reviewed_at": "REPLACE with aware ISO datetime",
+  "expires_at": "REPLACE with aware ISO datetime",
+  "site_timezone": "REPLACE with verified System Settings timezone",
+  "integration_policy_sha256": "REPLACE",
+  "database_identity_sha256": "REPLACE",
+  "database_profile_sha256": "REPLACE with fingerprint of the approved non-secret profile",
+  "tls_ca_sha256": "REPLACE with SHA-256 of the approved CA file bytes",
+  "server_scripts_sha256": "REPLACE",
+  "endpoint_path": "REPLACE with verified actual integration endpoint",
+  "semantics": {
+    "employee_field": "REPLACE",
+    "duplicate_key": "REPLACE",
+    "timestamp_precision": "REPLACE"
+  },
+  "files": {
+    "employee_checkin": {"file": "reviewed-employee-checkin.py", "sha256": "REPLACE"},
+    "effective_hooks": {"file": "reviewed-effective-hooks.json", "sha256": "REPLACE"},
+    "frappe_database": {"file": "reviewed-frappe-database.py", "sha256": "REPLACE"},
+    "frappe_query": {"file": "reviewed-frappe-query.py", "sha256": "REPLACE"},
+    "integration_engine": {"file": "reviewed-integration-engine.py", "sha256": "REPLACE"}
+  }
+}

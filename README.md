@@ -16,6 +16,9 @@ For offline comparison with separately prepared Frappe exports, see the
 [Phase 1 attendance reconciliation runbook](docs/phase1-attendance-reconciliation.md).
 The reconciliation tool creates reports only; it never creates Employee Checkins.
 
+Prepare its inputs with the [read-only Frappe export procedure](docs/phase1-frappe-export-procedure.md).
+Export defaults to an offline plan; a live export requires separate approval and verified site/source evidence.
+
 
 ## Table of Contents
  - [Pre-requisites](#pre-requisites)

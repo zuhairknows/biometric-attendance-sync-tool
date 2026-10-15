@@ -140,3 +140,7 @@ reconciliation_summary_*.json
 employee-mappings.json
 employee-checkins.csv
 export-manifest.json
+frappe-export-verification.json
+db-profile.json
+effective-hooks.json
+.export-validation-*.part
