@@ -176,7 +176,8 @@ class Ledger:
         now = time.time() if now is None else now
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            self.db.execute("UPDATE punches SET state='retry',next_retry=?,lease_until=NULL,updated_at=? "
+            self.db.execute("UPDATE punches SET state='retry',next_retry=?,lease_until=NULL,updated_at=?, "
+                            "error_category='uncertain_submission',error_message='Expired submission lease requires destination confirmation' "
                             "WHERE state='delivering' AND lease_until<=?", (now, now, now))
             destination = self.db.execute('SELECT * FROM destination_state WHERE id=1').fetchone()
             if destination['cooldown_until'] > now:
@@ -256,6 +257,14 @@ class Ledger:
     def destination_cooldown(self):
         return self.db.execute('SELECT cooldown_until FROM destination_state WHERE id=1').fetchone()[0]
 
+    def has_uncertain_peer(self, row):
+        # Different SDK UIDs/devices can describe the same destination identity. Conservatively
+        # hold the same biometric ID/second across all directions while a peer is uncertain.
+        return self.db.execute("SELECT 1 FROM punches WHERE id!=? AND user_id=? "
+            "AND substr(punch_timestamp,1,19)=? AND (state='delivering' OR "
+            "(state='retry' AND COALESCE(error_category,'') NOT IN ('authentication','rate_limited','peer_uncertain'))) LIMIT 1",
+            (row['id'], row['user_id'], row['punch_timestamp'][:19])).fetchone() is not None
+
     def pause_destination(self, until):
         with self.db:
             self.db.execute('UPDATE destination_state SET cooldown_until=MAX(cooldown_until,?) WHERE id=1', (until,))
@@ -265,7 +274,17 @@ class Ledger:
         counts.update({r[0]: r[1] for r in self.db.execute('SELECT state,COUNT(*) FROM punches GROUP BY state')})
         pending = self.db.execute("SELECT MIN(punch_timestamp) FROM punches WHERE state IN ('pending','retry','delivering')").fetchone()[0]
         devices = {r[0]: r[1] for r in self.db.execute("SELECT device_id,COUNT(*) FROM punches WHERE state IN ('pending','retry','delivering') GROUP BY device_id")}
+        oldest_capture = self.db.execute("SELECT MIN(first_captured) FROM punches WHERE state IN ('pending','retry','delivering')").fetchone()[0]
+        quarantine = self.db.execute("SELECT COUNT(*) FROM punches WHERE state IN ('unmatched_employee','rejected','invalid_record')").fetchone()[0]
+        held = self.db.execute("SELECT COUNT(*) FROM punches WHERE error_category='cutover_hold'").fetchone()[0]
+        uncertain = self.db.execute("SELECT COUNT(*) FROM punches WHERE state='retry' AND "
+                                    "COALESCE(error_category,'') NOT IN ('authentication','rate_limited','peer_uncertain')").fetchone()[0]
+        related = self.db.execute("SELECT COUNT(*) FROM punches WHERE state='retry' AND error_category='peer_uncertain'").fetchone()[0]
+        failed = self.db.execute('SELECT COUNT(*) FROM device_state WHERE fetch_ok=0').fetchone()[0]
         return dict(schema_version=SCHEMA_VERSION, total=sum(counts.values()), states=counts,
+                    backlog_age_seconds=max(0, time.time() - oldest_capture) if oldest_capture is not None else 0,
+                    failed_scans=failed, quarantined=quarantine, held_historical=held, uncertain_submissions=uncertain,
+                    held_related_records=related,
                     oldest_pending_timestamp=pending, pending_per_device=devices,
                     last_successful_delivery=self.db.execute('SELECT MAX(last_successful_delivery) FROM device_state').fetchone()[0],
                     destination_cooldown_until=self.db.execute('SELECT cooldown_until FROM destination_state WHERE id=1').fetchone()[0])

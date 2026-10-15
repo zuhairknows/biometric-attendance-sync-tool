@@ -27,6 +27,13 @@ PUNCH_TIME = dt.datetime(2026, 10, 13, 8)
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def provision_test_engine(sync):
+    from durable_startup import provision
+    provision(Path(sync.config.DURABLE_DB_PATH), sync.config.ERPNEXT_URL, sync.config.ERPNEXT_VERSION,
+              '2026-10-13 00:00:00', 'SYNTHETIC TEST ACTIVATION', storage_check=lambda _: None,
+              now=dt.datetime(2026, 10, 12))
+
+
 def record(uid=1, **changes):
     result = dict(user_id='100', timestamp=PUNCH_TIME, punch=0, status=1, uid=uid)
     result.update(changes)
@@ -98,6 +105,7 @@ class DurableSyncTests(unittest.TestCase):
     def test_recognized_duplicate_is_complete_but_unrelated_417_is_rejected(self):
         self.ingest([record(), record(uid=2)])
         self.request.side_effect = [response(417, 'This employee already has a log with the same timestamp'), response(417, 'Invalid log type')]
+        self.client.confirm = mock.Mock(return_value='CHECKIN-EXISTING')
         self.assertEqual(self.batch(), 2)
         self.assertEqual(self.punch()['state'], 'duplicate')
         self.assertEqual(self.punch(1)['state'], 'rejected')
@@ -418,6 +426,10 @@ class EngineIntegrationTests(unittest.TestCase):
         self.sync.config.DURABLE_SYNC_ENABLED = True
         self.sync.config.DURABLE_DB_PATH = str(Path(self.temp.name) / 'queue.sqlite3')
         self.sync.config.devices = [DEVICE]
+        provision_test_engine(self.sync)
+        self.storage = mock.patch('durable_sync.private_storage')
+        self.storage.start()
+        self.addCleanup(self.storage.stop)
 
     def tearDown(self):
         import logging

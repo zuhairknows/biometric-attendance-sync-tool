@@ -1,5 +1,9 @@
 # Controlled Phase 1 cutover runbook — not executed
 
+**Hardening candidate notice:** this runbook's commit pin and activation steps predate
+the mandatory ledger provisioning/cutover guards. For the reviewed service-hardening
+candidate, review [the hardening requirements](phase1-service-hardening.md) first.
+
 **Production deployment is NOT authorized by release preparation.** Execute the
 mutation sections only after separate approval and completed staging evidence.
 Outcome today: development verified, ready for controlled staging; live hardware,

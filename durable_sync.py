@@ -10,6 +10,7 @@ import time
 from durable_delivery import FrappeClient, deliver_batch
 from punch_normalization import import_boundary, normalize
 from sync_ledger import Ledger
+from durable_startup import private_storage, worker_lock, validate_activation, cutover_time
 
 
 class LegacyStatusSnapshot:
@@ -70,6 +71,8 @@ def capture(ledger, engine, device, records=None):
     if device.get('clear_from_device_on_fetch'):
         raise ValueError('Durable synchronization prohibits device attendance deletion')
     boundary = import_boundary(engine.config.IMPORT_START_DATE)
+    activation = validate_activation(ledger.path, engine.config)
+    cutover = max(filter(None, (boundary, cutover_time(activation['cutover_time']))))
     started = str(dt.datetime.now())
     ledger.begin_fetch(device['device_id'], started)
     if records is None:
@@ -77,8 +80,15 @@ def capture(ledger, engine, device, records=None):
             engine.info_logger.warning('Legacy dump retained for device=%s; use explicit import-legacy procedure', device['device_id'])
         records = engine.get_all_attendance_from_device(device['ip'], port=device['port'],
                     password=device['password'], device_id=device['device_id'], clear_from_device_on_fetch=False)
-    rows = (normalize(record, device, boundary, engine.device_punch_values_IN,
-                      engine.device_punch_values_OUT) for record in records)
+    def retained_rows():
+        for record in records:
+            # Keep historical evidence, including pre-import-date records. Holding is NOT delivery.
+            row = normalize(record, device, None, engine.device_punch_values_IN, engine.device_punch_values_OUT)
+            if row['state'] == 'pending' and dt.datetime.fromisoformat(row['punch_timestamp']) < cutover:
+                row.update(state='rejected', error_category='cutover_hold',
+                           error_message='Historical punch retained outside approved live cutover scope')
+            yield row
+    rows = retained_rows()
     return ledger.ingest(rows, device['device_id'], fetched_at=started)
 
 
@@ -111,6 +121,14 @@ def update_shifts(ledger, engine, stop_requested=lambda: False):
 
 
 def run(engine, stop_requested=lambda: False):
+    path = database_path(engine.config)
+    private_storage(path)
+    with worker_lock(path):
+        validate_activation(path, engine.config)
+        return _run_locked(engine, stop_requested)
+
+
+def _run_locked(engine, stop_requested):
     config = engine.config
     engine.validate_unique_device_ids(config.devices)
     import_boundary(config.IMPORT_START_DATE)
@@ -125,7 +143,7 @@ def run(engine, stop_requested=lambda: False):
                 try:
                     device = engine.normalize_device_config(original)
                     report = capture(ledger, engine, device)
-                    engine.info_logger.info('Durable capture: device=%s counts=%s', device['device_id'], report)
+                    engine.info_logger.info(json.dumps(dict(event='durable_capture', device_id=device['device_id'], counts=report)))
                 except (sqlite3.Error, OSError):
                     # Disk-full/corruption errors must stop the cycle, never report a healthy fetch.
                     raise
@@ -133,9 +151,13 @@ def run(engine, stop_requested=lambda: False):
                     device_id = str(original.get('device_id', 'unknown'))
                     # Even a configuration failure must invalidate a previous successful scan.
                     ledger.begin_fetch(device_id, str(dt.datetime.now()))
-                    engine.error_logger.error('Durable device capture failed: device=%s category=%s', device_id, type(exc).__name__)
+                    engine.error_logger.error(json.dumps(dict(event='durable_scan_failed', device_id=device_id,
+                                                               category=type(exc).__name__)))
         client = FrappeClient(config, engine.requests.request)
-        deliver_batch(ledger, client, **options, stop_requested=stop_requested, logger=engine.info_logger)
+        activation = validate_activation(ledger.path, config)
+        live_boundary = max(filter(None, (import_boundary(config.IMPORT_START_DATE), cutover_time(activation['cutover_time']))))
+        deliver_batch(ledger, client, **options, stop_requested=stop_requested, logger=engine.info_logger,
+                      not_before=live_boundary)
         if not stop_requested():
             update_shifts(ledger, engine, stop_requested)
-        engine.info_logger.info('Durable ledger health: %s', ledger.diagnostics())
+        engine.info_logger.info(json.dumps(dict(event='durable_health', **ledger.diagnostics()), sort_keys=True))

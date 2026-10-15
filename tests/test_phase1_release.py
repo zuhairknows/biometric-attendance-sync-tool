@@ -25,6 +25,9 @@ class ReleaseReviewTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='phase1-release-review-')
         self.path = Path(self.temp.name) / 'review.sqlite3'
         self.ledger = Ledger(self.path)
+        self.storage = mock.patch('durable_sync.private_storage')
+        self.storage.start()
+        self.addCleanup(self.storage.stop)
 
     def tearDown(self):
         import logging
@@ -138,6 +141,7 @@ db.ingest(rows(),'FP1_DEVICE_01',fetched_at='2026-10-13 09:00:00')
         sync = load_sync_module(Path(self.temp.name) / 'logs', '20261013')
         sync.config.DURABLE_SYNC_ENABLED = True
         sync.config.DURABLE_DB_PATH = str(self.path)
+        fixtures.provision_test_engine(sync)
         sync.config.devices = [fixtures.DEVICE]
         stopped = [False]
         def fetch(*args, **kwargs):
@@ -160,6 +164,7 @@ db.ingest(rows(),'FP1_DEVICE_01',fetched_at='2026-10-13 09:00:00')
         sync = load_sync_module(logs, '20261013')
         sync.config.DURABLE_SYNC_ENABLED = True
         sync.config.DURABLE_DB_PATH = str(self.path)
+        fixtures.provision_test_engine(sync)
         sync.config.devices = [fixtures.DEVICE]
         (logs / 'status.json').write_bytes(b'{broken')
         self.ledger.begin_fetch(fixtures.DEVICE['device_id'], str(dt.datetime.now()))
@@ -180,6 +185,7 @@ db.ingest(rows(),'FP1_DEVICE_01',fetched_at='2026-10-13 09:00:00')
         sync = load_sync_module(Path(self.temp.name) / 'logs', '20261013')
         sync.config.DURABLE_SYNC_ENABLED = True
         sync.config.DURABLE_DB_PATH = str(self.path)
+        fixtures.provision_test_engine(sync)
         sync.config.DURABLE_BATCH_SIZE = 200
         sync.config.DURABLE_REQUESTS_PER_SECOND = 100000
         sync.config.devices = [fixtures.DEVICE]

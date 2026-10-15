@@ -145,3 +145,7 @@ db-profile.json
 effective-hooks.json
 .export-validation-*.part
 internal-profile.json
+
+# Private durable activation metadata and portable worker locks belong outside Git.
+*.activation.json
+*.worker.lock

@@ -62,7 +62,10 @@ def main(stop_requested=None):
             run(sys.modules[__name__], stop_requested=stop_requested)
         except Exception as exc:
             # Database/configuration failures are visible and never become a successful cycle.
-            error_logger.critical('Durable synchronization stopped: category=%s; investigate storage/configuration', type(exc).__name__)
+            from durable_startup import StartupError
+            error_logger.critical(json.dumps(dict(event='durable_critical', category=type(exc).__name__,
+                                                 reason=str(exc) if isinstance(exc, StartupError) else 'storage_or_configuration_failure',
+                                                 synchronization='blocked', action='inspect_storage_activation_and_configuration')))
         return
     try:
         last_lift_off_timestamp = _safe_convert_date(status.get('lift_off_timestamp'), "%Y-%m-%d %H:%M:%S.%f")
@@ -489,13 +492,21 @@ else:
     status = PickleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']))
 
 def infinite_loop(sleep_time=15):
+    from durable_startup import worker_session
     print("Service Running...")
-    while True:
-        try:
-            main()
-            time.sleep(sleep_time)
-        except BaseException as e:
-            print(e)
+    with worker_session(config):
+        while True:
+            try:
+                main()
+                time.sleep(sleep_time)
+            except BaseException as e:
+                if getattr(config, 'DURABLE_SYNC_ENABLED', False) is True:
+                    if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                        raise  # Release the lifetime mutex; uncertain sends stay in the ledger.
+                    error_logger.critical(json.dumps(dict(event='durable_critical', category=type(e).__name__,
+                                                         synchronization='blocked', action='inspect_console_worker')))
+                else:
+                    print(e)
 
 if __name__ == "__main__":
     infinite_loop()

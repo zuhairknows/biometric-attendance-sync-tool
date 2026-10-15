@@ -18,6 +18,13 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('status', help='Open an existing database read-only; print aggregate counts only')
     sub.add_parser('verify', help='Read-only full SQLite integrity and foreign-key checks')
+    provisioning = sub.add_parser('provision', help='Offline explicit activation of a new/empty ledger; no network')
+    provisioning.add_argument('--destination-url', required=True)
+    provisioning.add_argument('--erpnext-version', type=int, default=14)
+    provisioning.add_argument('--cutover-time', required=True, help='Approved local YYYY-MM-DD HH:MM:SS; never inferred')
+    provisioning.add_argument('--review-reference', required=True)
+    provisioning.add_argument('--service-sid', help='Existing custom service-account SID, for administrator ACL verification only')
+    provisioning.add_argument('--acknowledge-cutover', action='store_true', required=True)
     backup = sub.add_parser('backup', help='Use SQLite online backup; source is opened read-only')
     backup.add_argument('--output', required=True)
     migration = sub.add_parser('import-legacy', help='Preview by default; source dumps always retained')
@@ -29,9 +36,18 @@ def main(argv=None):
     if not path.is_absolute():
         parser.error('--db must be absolute')
     try:
-        if args.command in ('status', 'verify'):
+        if args.command == 'provision':
+            from durable_startup import provision, private_storage
+            provision(path, args.destination_url, args.erpnext_version, args.cutover_time, args.review_reference,
+                      storage_check=lambda p: private_storage(p, args.service_sid))
+            print(json.dumps(dict(event='durable_provisioned', recovery_authorized=False)))
+        elif args.command in ('status', 'verify'):
             with Ledger(path, readonly=True) as ledger:
-                print(json.dumps(ledger.diagnostics() if args.command == 'status' else ledger.verify_integrity(), indent=2))
+                result = ledger.diagnostics() if args.command == 'status' else ledger.verify_integrity()
+                if args.command == 'status':
+                    from durable_startup import activation_path
+                    result['activation_present'] = activation_path(path).is_file()
+                print(json.dumps(result, indent=2))
         elif args.command == 'backup':
             output = Path(args.output)
             if not output.is_absolute() or output.exists() or output.resolve() == path.resolve():

@@ -1,3 +1,6 @@
 # Synthetic evidence hashes are over exact bytes, including original line endings.
 examples/reconciliation/*.json -text whitespace=trailing-space,space-before-tab,cr-at-eol
 examples/reconciliation/*.csv -text whitespace=trailing-space,space-before-tab,cr-at-eol
+
+# Keep the standalone diagnostic's independently approved transfer hash stable.
+scripts/diagnose_windows_integration.py -text whitespace=trailing-space,space-before-tab,cr-at-eol

@@ -23,11 +23,13 @@ from punch_normalization import normalize
 from sync_ledger import Ledger
 
 
-def loopback_request(method, url, headers, json=None, timeout=1):
+def loopback_request(method, url, headers, json=None, timeout=1, params=None, allow_redirects=False):
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1':
         raise ValueError('Harness only permits 127.0.0.1 HTTP')
-    request = urllib.request.Request(url, data=jsonlib.dumps(json).encode(),
+    if params:
+        url += '?' + urllib.parse.urlencode(params)
+    request = urllib.request.Request(url, data=jsonlib.dumps(json).encode() if method == 'POST' else None,
                                      headers=dict(headers, **{'Content-Type': 'application/json'}), method=method)
     # Disable environment proxies, so loopback fixtures can never be sent through a proxy.
     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -100,6 +102,22 @@ class FakeFrappeServer:
                     return
                 return self.reply(200, {'message': {'name': name}})
 
+            def do_GET(self):
+                parsed = urllib.parse.urlparse(self.path)
+                query = urllib.parse.parse_qs(parsed.query)
+                filters = jsonlib.loads(query['filters'][0])
+                if parsed.path.endswith('/Employee'):
+                    user = filters[0][2]
+                    return self.reply(200, {'data': [dict(name='EMP-' + user, status='Active', attendance_device_id=user)]})
+                if parsed.path.endswith('/Employee%20Checkin'):
+                    values = {field: value for field, operator, value in filters}
+                    user = values['employee'][4:]
+                    doc = owner.documents.get((user, values['time']))
+                    rows = [dict(name=doc['name'], employee=values['employee'], time=doc['timestamp'],
+                                 log_type=doc['log_type'] or '')] if doc else []
+                    return self.reply(200, {'data': rows})
+                return self.reply(404, {})
+
         self.server = HTTPServer(('127.0.0.1', 0), Handler)
         self.url = 'http://127.0.0.1:' + str(self.server.server_port)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -125,7 +143,8 @@ def run_scenarios():
     with tempfile.TemporaryDirectory(prefix='phase1-loopback-') as directory, FakeFrappeServer() as server:
         path = Path(directory) / 'fixture.sqlite3'
         config = types.SimpleNamespace(ERPNEXT_URL=server.url, ERPNEXT_VERSION=15,
-            ERPNEXT_API_KEY='fixture-key', ERPNEXT_API_SECRET='fixture-secret', ERPNEXT_REQUEST_TIMEOUT=1)
+            ERPNEXT_API_KEY='fixture-key', ERPNEXT_API_SECRET='fixture-secret', ERPNEXT_REQUEST_TIMEOUT=1,
+            DURABLE_CONFIRM_READS_VERIFIED=True, DURABLE_SERVER_REVIEW_REFERENCE='SYNTHETIC LOOPBACK ONLY')
         client = FrappeClient(config, loopback_request)
         tick = [1000.0]
         device = {'device_id': 'FIXTURE_DEVICE', 'punch_direction': None}
@@ -163,7 +182,15 @@ def run_scenarios():
                     client.timeout = 1
                 server.mode = 'normal'
                 tick[0] += 20
-                require(deliver() == 1 and state(user) == 'synced')
+                require(deliver() == 1 and state(user) == ('retry' if mode in ('down', 'slow') else 'synced'))
+                if mode in ('down', 'slow'):
+                    # No match is not proof of no remote commit. Retain uncertainty, then
+                    # supply synthetic positive remote evidence to exercise safe resolution.
+                    require(ledger.db.execute('SELECT error_category FROM punches WHERE user_id=?', (user,)).fetchone()[0] == 'confirmation_pending')
+                    server.documents[(user, '2026-10-13 08:00:00')] = dict(name='FIXTURE-CONFIRMED-' + mode,
+                        timestamp='2026-10-13 08:00:00', log_type=None)
+                    tick[0] += 20
+                    require(deliver() == 1 and state(user) == 'duplicate')
                 results.append(mode + '_cooldown_recovery')
 
             for user, expected in (('fixture-missing', 'unmatched_employee'), ('fixture-inactive', 'rejected')):

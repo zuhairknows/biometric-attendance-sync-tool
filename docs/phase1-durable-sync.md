@@ -1,5 +1,10 @@
 # Phase 1: durable capture and delivery recovery
 
+**Service-hardening candidate:** the implementation on `feature/phase1-service-hardening`
+adds mandatory offline provisioning, cutover holds and conservative destination confirmation.
+Its [hardening runbook](phase1-service-hardening.md) supersedes the startup/retry assumptions
+below for that candidate. No production activation is authorized.
+
 Development only. No deployment or Windows service operation was performed.
 `DURABLE_SYNC_ENABLED = False` is intentional until the controlled cutover below.
 
