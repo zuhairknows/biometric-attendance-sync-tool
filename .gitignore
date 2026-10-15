@@ -132,3 +132,11 @@ FP2_DEVICE_11_[0-9]*.json
 capture_summary_*.json
 .capture-*.part
 .capture-probe-*.part
+
+# Offline reconciliation reports/exports contain protected employee information.
+reconciliation_details_*.csv
+reconciliation_summary_*.json
+.reconciliation-*.part
+employee-mappings.json
+employee-checkins.csv
+export-manifest.json

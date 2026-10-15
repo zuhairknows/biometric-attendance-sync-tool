@@ -12,6 +12,10 @@ For incident evidence collection without synchronization, use the
 [safe historical capture procedure](docs/phase1-live-capture-procedure.md).
 Live capture requires separate maintenance-window approval; dry-run is the default.
 
+For offline comparison with separately prepared Frappe exports, see the
+[Phase 1 attendance reconciliation runbook](docs/phase1-attendance-reconciliation.md).
+The reconciliation tool creates reports only; it never creates Employee Checkins.
+
 
 ## Table of Contents
  - [Pre-requisites](#pre-requisites)

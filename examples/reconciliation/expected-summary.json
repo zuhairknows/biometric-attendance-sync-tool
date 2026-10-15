@@ -1,0 +1,108 @@
+{
+  "schema": "attendance-reconciliation-report-v1",
+  "mode": "offline_read_only",
+  "range_start": "2026-10-11 00:00:00",
+  "range_end": "2026-10-15 23:59:59.999999",
+  "site_timezone": "Asia/Riyadh",
+  "source_records": 9,
+  "excluded_valid_out_of_range": 1,
+  "recovery_authorized": false,
+  "all_missing_require_review": true,
+  "duplicate_key": "employee_time",
+  "timestamp_precision": "microseconds",
+  "totals": {
+    "records": 8,
+    "matched": 1,
+    "missing": 1,
+    "unmatched_employee": 1,
+    "ambiguous": 3,
+    "duplicate_source": 2
+  },
+  "per_device": {
+    "FP2_DEVICE_08": {
+      "records": 6,
+      "matched": 1,
+      "missing": 1,
+      "unmatched_employee": 1,
+      "ambiguous": 2,
+      "duplicate_source": 1,
+      "excluded_valid_out_of_range": 0
+    },
+    "FP2_DEVICE_11": {
+      "records": 2,
+      "matched": 0,
+      "missing": 0,
+      "unmatched_employee": 0,
+      "ambiguous": 1,
+      "duplicate_source": 1,
+      "excluded_valid_out_of_range": 1
+    }
+  },
+  "per_day": {
+    "2026-10-14": {
+      "records": 5,
+      "matched": 1,
+      "missing": 0,
+      "unmatched_employee": 1,
+      "ambiguous": 1,
+      "duplicate_source": 2
+    },
+    "2026-10-15": {
+      "records": 1,
+      "matched": 0,
+      "missing": 1,
+      "unmatched_employee": 0,
+      "ambiguous": 0,
+      "duplicate_source": 0
+    },
+    "2099-01-01": {
+      "records": 1,
+      "matched": 0,
+      "missing": 0,
+      "unmatched_employee": 0,
+      "ambiguous": 1,
+      "duplicate_source": 0
+    },
+    "unknown": {
+      "records": 1,
+      "matched": 0,
+      "missing": 0,
+      "unmatched_employee": 0,
+      "ambiguous": 1,
+      "duplicate_source": 0
+    }
+  },
+  "uncertain_existing_checkin_employees": 0,
+  "inputs": [
+    {
+      "role": "capture_summary",
+      "sha256": "c0b233f2b9604ae71d5b0dfe76e14a9ab1b7b8c7d3bc73790b9e973e64e5a879"
+    },
+    {
+      "role": "FP2_DEVICE_08",
+      "sha256": "d7211802449fa8d032e1b63acb3f6a136d85c39dfffc8784b995204521f04809"
+    },
+    {
+      "role": "FP2_DEVICE_11",
+      "sha256": "625c87d2350885cc5c55094d4c0d6e94aa83bb7e5846b58be7708e531359a7d8"
+    },
+    {
+      "role": "export_manifest",
+      "sha256": "b16fb4a85a7add49f82a529e7c98bb89c0a458e04447aa2df5ceea56ce7f3439"
+    },
+    {
+      "role": "employee_mappings",
+      "sha256": "da0682010201e83c9ba56b3d9b78179d735e2da0f70a56133980fc56a6dc6329"
+    },
+    {
+      "role": "employee_checkins",
+      "sha256": "a35e573eb4ca7edb9061383e95d0ab20f1892570c954878c1fded3ca28ae21ee"
+    }
+  ],
+  "reports": [
+    {
+      "file": "expected-details.csv",
+      "sha256": "b5a5e2a00bca2ba5e5b05614d45ee3c8aeb7d93ec480322f2db0c7eb163d39b5"
+    }
+  ]
+}
