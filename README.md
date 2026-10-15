@@ -8,6 +8,9 @@ and [offline verification report](docs/phase1-verification.md) before enabling i
 Release preparation adds a [review report](docs/phase1-release-review.md),
 [nonproduction integration procedure](docs/phase1-integration-tests.md), and
 [controlled production cutover runbook](docs/phase1-cutover-runbook.md).
+For incident evidence collection without synchronization, use the
+[safe historical capture procedure](docs/phase1-live-capture-procedure.md).
+Live capture requires separate maintenance-window approval; dry-run is the default.
 
 
 ## Table of Contents

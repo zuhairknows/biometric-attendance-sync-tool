@@ -125,3 +125,10 @@ local_config_test.py
 *-shm
 *.backup
 *_last_fetch_dump.json
+
+# Offline attendance capture evidence must stay in protected storage, not Git.
+FP2_DEVICE_08_[0-9]*.json
+FP2_DEVICE_11_[0-9]*.json
+capture_summary_*.json
+.capture-*.part
+.capture-probe-*.part
