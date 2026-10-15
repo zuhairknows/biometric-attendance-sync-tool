@@ -69,7 +69,8 @@ def csv_export(stream, rows):
     writer.writerows(rows)
 
 
-def main(argv=None, *, connector=connect, password_reader=getpass.getpass, acl_check=check_directory_acl):
+def main(argv=None, *, connector=connect, password_reader=getpass.getpass, acl_check=check_directory_acl,
+         server_transport=None):
     parser = SafeParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--capture-summary', required=True)
     parser.add_argument('--capture-summary-sha256', required=True)
@@ -96,11 +97,15 @@ def main(argv=None, *, connector=connect, password_reader=getpass.getpass, acl_c
         review, semantics, hooks, review_sha, review_paths = load_review(args.verification, args.verification_sha256, policy)
         profile = None
         if args.db_profile:
-            profile = database_profile(args.db_profile)
-            require(fingerprint(profile) == review.get('database_profile_sha256'), 'database_profile_not_approved')
-            require(hashlib.sha256(Path(profile['tls_ca']).read_bytes()).hexdigest() == review.get('tls_ca_sha256'), 'database_tls_ca_not_approved')
+            if server_transport is None:
+                profile = database_profile(args.db_profile)
+                require(fingerprint(profile) == review.get('database_profile_sha256'), 'database_profile_not_approved')
+                require(hashlib.sha256(Path(profile['tls_ca']).read_bytes()).hexdigest() == review.get('tls_ca_sha256'), 'database_tls_ca_not_approved')
+            else:
+                profile = server_transport.load_profile(args.db_profile, review, hooks)
         users, uncertain = selected_users(captures, args.start, args.end, review['site_timezone'])
-        directory = preflight_output(args.output, live=False, acl_check=acl_check)
+        directory = (preflight_output(args.output, live=False, acl_check=acl_check) if server_transport is None
+                     else server_transport.preflight_output(args.output))
         paths += review_paths + [Path(args.integration_config).resolve()]
         if args.db_profile:
             paths.append(Path(args.db_profile).resolve())
@@ -124,7 +129,9 @@ def main(argv=None, *, connector=connect, password_reader=getpass.getpass, acl_c
         with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
             connection = connector(profile, password)
             password = None
-            snapshot = Snapshot(connection, profile['database'], review, semantics, hooks, args.page_size)
+            snapshot = (Snapshot(connection, profile['database'], review, semantics, hooks, args.page_size)
+                        if server_transport is None else server_transport.snapshot(
+                            connection, profile['database'], review, semantics, hooks, args.page_size))
             snapshot.begin()
             require(all(dt.datetime.fromisoformat(c['capture_finished_at']) <= snapshot.timestamp for c, _ in captures), 'snapshot_predates_capture')
             mappings, total_matches = snapshot.mappings(users)
@@ -137,6 +144,10 @@ def main(argv=None, *, connector=connect, password_reader=getpass.getpass, acl_c
             snapshot.close()
             snapshot = connection = None
         require(dt.datetime.now(dt.timezone.utc) <= dt.datetime.fromisoformat(review['expires_at']), 'review_expired_during_export')
+        if server_transport is not None:
+            # Recheck deployed bytes/private storage after the read, before any final certificate.
+            server_transport.validate_runtime()
+            server_transport.preflight_output(directory)
         # All verification flags below follow completed checks (plus hash-pinned administrator
         # provenance review). No certificate is emitted when any check/cleanup fails.
         mapping_spec = publish(directory, 'employee-mappings.json', lambda s: json.dump(
@@ -159,6 +170,8 @@ def main(argv=None, *, connector=connect, password_reader=getpass.getpass, acl_c
                 snapshot_started_not_before=export_timestamp, snapshot_started_not_after=snapshot_upper_bound,
                 lookup_equivalence_basis='reviewed database column equality, no ORM permission filtering'),
             capture_inputs=sources, verification_sha256=review_sha)
+        if server_transport is not None:
+            manifest['transport_evidence'] = server_transport.evidence
         # Snapshot metadata must survive closing the connection without any further query.
         manifest['completeness']['column_metadata_sha256'] = column_evidence
         candidate = publish(directory, '.export-validation-' + uuid.uuid4().hex + '.part', lambda s: json.dump(manifest, s, indent=2))

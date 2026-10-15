@@ -8,6 +8,7 @@ from scripts.frappe_export_review import fingerprint
 
 TABLES = ('tabEmployee', 'tabEmployee Checkin', 'tabSingles', 'tabServer Script', 'tabDefaultValue')
 SQL = {
+    'server_version': 'SELECT VERSION() AS server_version',
     'grants': 'SHOW GRANTS FOR CURRENT_USER()',
     'tls': "SHOW SESSION STATUS LIKE 'Ssl_cipher'",
     'identity': 'SELECT DATABASE() AS database_name, @@hostname AS server_hostname, @@server_id AS server_id',
@@ -90,9 +91,13 @@ class Snapshot:
         require(state['isolation_level'].upper().replace('_', '-') == 'REPEATABLE-READ'
                 and state['read_only'] == 1 and state['in_transaction'] == 1, 'snapshot_not_readonly_repeatable_read')
 
+    def verify_transport(self):
+        """Default transport stays TLS-only; server-local subclasses supply a separate proof."""
+        require(bool(self.one('tls')['Value']), 'database_tls_not_active')
+
     def begin(self):
         validate_grants(self.query('grants'), self.database)
-        require(bool(self.one('tls')['Value']), 'database_tls_not_active')
+        self.verify_transport()
         identity = self.one('identity')
         require(identity['database_name'] == self.database and fingerprint(identity) == self.review['database_identity_sha256'], 'authoritative_database_mismatch')
         self.query('isolation')

@@ -144,3 +144,4 @@ frappe-export-verification.json
 db-profile.json
 effective-hooks.json
 .export-validation-*.part
+internal-profile.json

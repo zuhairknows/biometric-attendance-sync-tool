@@ -18,6 +18,8 @@ The reconciliation tool creates reports only; it never creates Employee Checkins
 
 Prepare its inputs with the [read-only Frappe export procedure](docs/phase1-frappe-export-procedure.md).
 Export defaults to an offline plan; a live export requires separate approval and verified site/source evidence.
+For approved hosting-administrator execution without external database access, use
+the [server-side export procedure](docs/phase1-server-frappe-export.md).
 
 
 ## Table of Contents

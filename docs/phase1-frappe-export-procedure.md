@@ -4,8 +4,11 @@ This standalone utility produces `employee-mappings.json`, `employee-checkins.cs
 and `export-manifest.json` for the existing [offline reconciliation CLI](phase1-attendance-reconciliation.md).
 No exporter, site verification, or production evidence processing was run during
 development. Neither `erp.myfpf.com` nor `myfpf.v.frappe.cloud` was queried.
-Their database relationship remains **unverified** until the procedure below is
-performed under separate operator authorization.
+The operator subsequently confirmed both hostnames refer to the same site. That
+confirmation is accepted; approved backend/source binding is still required. For
+server-local operation without external DB access, use the separate
+[server-side procedure](phase1-server-frappe-export.md). The instructions below
+continue to describe the original external TLS transport.
 
 Default mode is an offline plan: no database driver import, connection, password
 prompt or output writes. `--live-export --operator-authorized` enables a future

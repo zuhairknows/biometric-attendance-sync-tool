@@ -23,6 +23,7 @@
     "duplicate_key": "REPLACE",
     "timestamp_precision": "REPLACE"
   },
+  "server_internal": null,
   "files": {
     "employee_checkin": {"file": "reviewed-employee-checkin.py", "sha256": "REPLACE"},
     "effective_hooks": {"file": "reviewed-effective-hooks.json", "sha256": "REPLACE"},

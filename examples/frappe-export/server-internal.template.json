@@ -1,0 +1,13 @@
+{
+  "transport": "local_unix_socket",
+  "bench_root": "/REPLACE/with/canonical/frappe-bench",
+  "site": "REPLACE-with-approved-Bench-site-directory",
+  "confirmed_aliases": ["erp.myfpf.com", "myfpf.v.frappe.cloud"],
+  "frappe_major": 0,
+  "runtime_hooks_reviewed": false,
+  "internal_profile_sha256": "REPLACE with fingerprint of the approved internal profile",
+  "version_source_sha256": "REPLACE with deployed frappe/__init__.py SHA-256",
+  "hook_file_sha256": {
+    "REPLACE_each_installed_app": "REPLACE with deployed app hooks.py SHA-256"
+  }
+}
