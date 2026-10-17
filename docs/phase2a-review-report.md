@@ -1,5 +1,58 @@
 # Phase 2A fixes and revalidation report
 
+## Production compatibility safety extension
+
+Extension base: `459bff1ee5fc0873aa9749699b9356488dd5cce8`.
+The only known live site is `https://erp.myfpf.com`; no staging environment is
+assumed. The production synchronization service remains running. No live
+verification has been executed as part of this extension.
+
+Minimal safety changes: configurable CLI GET budget (default 32), inactivity
+timeout (10 seconds), isolated-process investigation/report deadline (120 seconds),
+explicit production flag plus matching-origin acknowledgement, and a production
+contract labelled with the destination environment. The known production hostname
+cannot omit acknowledgement merely by omitting the environment label.
+
+Production mode additionally requires independently evidenced
+`read_only_api_verified`. It can read without falsely attesting the original seven
+deployment claims, but forcibly blocks reconciliation and retains every false
+claim. It never produces potentially-missing or already-existing decisions; source
+rows remain unable-to-verify/invalid and all eligibility flags stay disabled.
+Even consistent successful API reads return `status=unverified`,
+`compatibility_status=reads_complete`, exit 2. Quiescence is not fabricated.
+
+The supervisor bounds source SQLite validation/reading, GETs (including stalled
+bodies), reconciliation/report processing and publication. It terminates a stalled
+worker instead of leaving a background request thread alive. Local input/ACL
+preflight precedes the budget; termination allows up to two seconds cleanup.
+Artifacts from a failed/deadline/interrupted run are not accepted without a
+completed terminal receipt. Process IPC files inherit private output-directory
+protection and are removed by the supervisor.
+
+Current validation: 59 focused Phase 2A tests (48 existing plus 11 new production
+safety tests); expanded relevant Phase 1/Phase 2A suite: **332 passed in 42.437s**.
+Only synthetic SQLite, mocked HTTP and isolated local worker processes were used.
+New cases cover required acknowledgement, environment labelling, read-only endpoint
+evidence, no false quiescence claim, no production reconciliation even with every
+claim true, a hard one-GET cap, invalid limits, failed deadline/no receipt, sanitized
+worker errors, actual termination of a stalled mocked GET and a complete spawned
+CLI/report path with no network. Phase 1 synchronization modules remain unchanged.
+
+GO only to prepare the limited production read-only probe. Execution is NO-GO
+until independent endpoint-safety evidence, approved backup/range/account/contract
+and explicit execution approval exist. Remaining independent claims are database
+lookup equality, complete permission visibility, duplicate/NULL semantics,
+timezone/precision, historical payload settings, relevant destination stability
+and effective identity-mutating hooks. Consistent API observations cannot prove
+those claims. The running service can legitimately change production; site-wide
+unchanged-record counts are not promised.
+
+Operator procedure: `phase2a-production-read-only-verification.md`.
+Contract: `phase2a-production-contract.template.json`.
+No push, merge, deployment, production/device access or Phase 2B work is authorized.
+
+## Prior reconciliation implementation and fix evidence
+
 Base: `release/phase1` at `8eaa5729697c812f61ee06d3659a58cec2c0ee25`.
 Development branch: `feature/phase2-historical-recovery`.
 Fix starting point: `1047a5fae78faba05be39969cfc4f7d04c32c9cf`.
@@ -87,6 +140,11 @@ Review limitations before operational use:
   execution, deployment, merge and Phase 2B are outside this review.
 
 ## Recommendation
+
+The following recommendation applies only to a separately verified nonproduction
+destination if one becomes available. It does not imply such a site exists or
+authorize reconciliation against the current live site; use the production-only
+compatibility procedure above for the current environment.
 
 GO for controlled read-only staging verification, with a separately reviewed
 contract and unrestricted read visibility, including database equality semantics.

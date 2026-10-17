@@ -5,6 +5,11 @@ ledger copy and a reviewed ERPNext destination. Do not run this milestone on the
 production Windows PC. It never submits Employee Checkins, fetches devices, changes
 holds, imports configuration, or starts/stops the service.
 
+For explicitly approved GET-only compatibility checks against the existing
+production site while its service stays running, use
+`phase2a-production-read-only-verification.md` and its separate production contract.
+That mode never reconciles or certifies recovery, and never assumes staging exists.
+
 ## Run an investigation
 
 1. Obtain a consistent ledger backup through your existing approved backup process.
@@ -77,7 +82,9 @@ limitations, matching policy, input observation fingerprints and a CSV SHA256.
 Destination counts distinguish distinct employee lookups from returned mapping
 matches; one employee may appear in more than one lookup under database equality.
 Publication never overwrites existing files. The JSON is published last and is
-the completion marker; orphan CSV/`.part` files do not constitute a completed run.
+the report completion marker, but the bounded CLI must also return its terminal
+receipt. Files left after deadline/failure/interruption are not completed runs,
+even if a JSON file was published just before termination.
 After interruption rerun the full investigation; there is no automatic resume.
 
 ## Implementation and review boundaries
@@ -93,8 +100,10 @@ and checkout roots, source separation and non-overwriting publication. The CLI
 uses the same `validate_output` before API reads; export rechecks before writing.
 Keep the default ACL validator in application code; the override is a test seam.
 Wire the same callback into `ReadOnlyFrappeClient(cancelled=...)` to check between
-HTTP requests. A request already in progress ends on response/timeout; cancellation
-does not interrupt SQLite's integrity check. No delivery component is imported.
+HTTP requests. The CLI runs the investigation and report publication in a spawned
+worker with a hard wall deadline, terminating that worker on deadline/interruption.
+Direct library cancellation does not interrupt SQLite's integrity check; use the
+bounded runner for an application-level hard deadline. No delivery component is imported.
 
 The repository reuses `Ledger(readonly=True)` with `query_only`, a read transaction
 and Phase 1 schema/integrity validation. Source validation reuses
@@ -135,9 +144,12 @@ Only ledger-available punches are covered; unknown timestamps/evidence remain
 visible regardless of range. Current employee mapping does not prove historical
 mapping. The engine scans selected devices' ledger history to validate date
 exclusion and holds the selected evidence and destination observations in memory.
-Use smaller ranges for large ledgers; requests have a 30-second timeout and a
-10,000-page per-scan safety bound, 1,000 distinct lookup IDs and 20,000 total GETs
-across both passes. Default pages contain up to 200 records; lookups run
+Use smaller ranges for large ledgers. The CLI defaults to 10-second connect/read
+timeouts, a 120-second investigation/report deadline and 32 total GET attempts
+across both passes. Its `--request-timeout-seconds`, `--deadline-seconds` and
+`--max-get-requests` flags set those limits explicitly. The library retains its
+10,000-page per-scan bound, 1,000 distinct lookup IDs and configurable request cap.
+Default pages contain up to 200 records; lookups run
 sequentially with no unbounded concurrency or automatic retries. Limit exhaustion
 produces an unverified report; split larger ranges rather than silently truncating.
 The client limits are constructor options for controlled use. REST read consistency and historical source policy need
@@ -148,7 +160,7 @@ site-specific verification before operational use.
 ```powershell
 py -B -m unittest discover -s tests -p test_historical_investigation.py -v
 $env:PYTHONPATH = 'tests'
-py -B -m unittest test_historical_investigation test_durable_sync test_erpnext_sync test_service_hardening test_phase1_release test_phase1_remaining test_two_uncertain_confirmation test_attendance_reconciliation test_frappe_attendance_export test_frappe_server_export -q
+py -B -m unittest test_historical_investigation test_phase2a_production_verification test_durable_sync test_erpnext_sync test_service_hardening test_phase1_release test_phase1_remaining test_two_uncertain_confirmation test_attendance_reconciliation test_frappe_attendance_export test_frappe_server_export -q
 ```
 
 Tests use synthetic databases and mocked HTTP. They assert unchanged source bytes

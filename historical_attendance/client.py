@@ -110,3 +110,7 @@ class ReadOnlyFrappeClient:
         if employees != lookups() or checkins != self.scan('Employee Checkin', filters):
             raise VerificationError('destination_changed_during_investigation')
         return employees, checkins
+
+    @property
+    def requests_made(self):
+        return self._requests

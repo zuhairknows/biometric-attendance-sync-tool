@@ -328,7 +328,8 @@ class InvestigationTests(unittest.TestCase):
             stream = io.StringIO()
             with mock.patch.dict('os.environ', INVESTIGATION_API_KEY='TEST_KEY', INVESTIGATION_API_SECRET='TEST_SECRET'):
                 with contextlib.redirect_stdout(stream):
-                    result = cli.main(args, request=transport, acl_check=lambda _: None)
+                    result = cli.main(args, request=transport, acl_check=lambda _: None,
+                                      runner=lambda task, options, **_: task(**options))
             self.assertEqual(result, code)
             self.assertNotIn('TEST_SECRET', stream.getvalue())
             self.assertNotIn('SYNTHETIC_EMP', stream.getvalue())

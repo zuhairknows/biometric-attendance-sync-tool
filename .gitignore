@@ -158,3 +158,4 @@ phase1-get-controls.json
 # Historical investigation evidence is private; only synthetic examples belong in Git.
 investigation_details_*.csv
 investigation_summary_*.json
+.investigation-worker-*.part

@@ -26,7 +26,7 @@ LIMITATIONS = [
 ]
 
 
-def contract_blockers(contract, start, end, devices, url):
+def contract_blockers(contract, start, end, devices, url, *, require_claims=True):
     try:
         valid = (contract['schema'] == 'attendance-investigation-contract-v1'
                  and contract['site_url'] == url
@@ -35,14 +35,15 @@ def contract_blockers(contract, start, end, devices, url):
                  and local_time(contract['coverage_start']) <= start <= end <= local_time(contract['coverage_end'])
                  and set(devices) <= set(contract['device_ids'])
                  and isinstance(contract['evidence_reference'], str) and bool(contract['evidence_reference'].strip())
-                 and all(contract['verification'].get(c) is True for c in CLAIMS))
+                 and isinstance(contract['verification'], dict)
+                 and (not require_claims or all(contract['verification'].get(c) is True for c in CLAIMS)))
         site_zone(contract['site_timezone'])
         return [] if valid else ['comparison_contract_unverified']
     except (AttributeError, KeyError, TypeError, ValueError, ReconciliationError):
         return ['comparison_contract_unverified']
 
 
-def investigate(repository, client, start, end, devices, contract, cancelled=lambda: False):
+def investigate(repository, client, start, end, devices, contract, cancelled=lambda: False, *, compatibility_only=False):
     if (not isinstance(start, dt.datetime) or not isinstance(end, dt.datetime)
             or start.tzinfo is not None or end.tzinfo is not None or start > end
             or not devices or len(set(devices)) != len(devices)
@@ -51,9 +52,18 @@ def investigate(repository, client, start, end, devices, contract, cancelled=lam
     began = dt.datetime.now(dt.timezone.utc).isoformat()
     source = repository.read(start, end, devices, cancelled)
     blockers = contract_blockers(contract, start, end, devices, client.url)
+    envelope_blockers = contract_blockers(contract, start, end, devices, client.url, require_claims=False)
+    if compatibility_only:
+        # Compatibility reads never substitute for the original verification claims.
+        # In particular, a running production worker is NOT declared quiescent.
+        blockers.append('production_compatibility_only_no_reconciliation')
+        if contract.get('verification', {}).get('read_only_api_verified') is not True:
+            envelope_blockers.append('read_only_api_unverified')
+            blockers.append('read_only_api_unverified')
     rows = []
     employees, checkins = {}, []
-    if not blockers and source:
+    reads_complete = False
+    if (not blockers or (compatibility_only and not envelope_blockers)) and source:
         try:
             users = set()
             for row in source:
@@ -64,6 +74,7 @@ def investigate(repository, client, start, end, devices, contract, cancelled=lam
                 users.add(row['user_id'])
             lower = start.replace(microsecond=0) if contract['timestamp_precision'] == 'seconds' else start
             employees, checkins = client.snapshot(lower, end, users)
+            reads_complete = True
         except VerificationError as exc:
             blockers.append(str(exc))
     if cancelled():
@@ -167,4 +178,9 @@ def investigate(repository, client, start, end, devices, contract, cancelled=lam
         contract_sha256=hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest(),
         totals=counts(rows), per_device={d: counts(r for r in rows if r['device_id'] == d) for d in devices},
         historical_holds=sum(r['historical_hold'] for r in rows), limitations=LIMITATIONS)
+    summary['api_requests_made'] = client.requests_made
+    if compatibility_only:
+        summary.update(purpose='production_read_only_compatibility',
+            compatibility_status='reads_complete' if reads_complete else 'not_verified',
+            unverified_claims=[c for c in CLAIMS if contract.get('verification', {}).get(c) is not True])
     return rows, summary
