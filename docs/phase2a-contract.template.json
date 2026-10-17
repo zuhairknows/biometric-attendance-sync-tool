@@ -1,0 +1,19 @@
+{
+  "schema": "attendance-investigation-contract-v1",
+  "site_url": "https://reviewed-staging.example.test",
+  "site_timezone": "Asia/Riyadh",
+  "timestamp_precision": "seconds",
+  "duplicate_key": "employee_time_log_type",
+  "coverage_start": "2026-10-01 00:00:00",
+  "coverage_end": "2026-10-17 23:59:59",
+  "device_ids": ["REPLACE_WITH_REVIEWED_DEVICE_ID"],
+  "evidence_reference": "",
+  "verification": {
+    "unfiltered_employee_and_checkin_visibility": false,
+    "server_duplicate_semantics": false,
+    "source_and_site_timezone_match": false,
+    "historical_payload_policy": false,
+    "destination_quiescent_during_scan": false,
+    "no_identity_mutating_hooks": false
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "blockers": [],
+  "completed_at": "2026-10-17T11:34:19.016443+00:00",
+  "contract_sha256": "426df294d0b608074a2b2973e75e111a722267221ef50a4bdf2dedf2d1c1cfe8",
+  "destination_observation_sha256": "e64c150806a8d298ab975a696ddbf90a29a98d4f5101d09ad7a6f4b4e41d59bc",
+  "destination_observed_counts": {
+    "checkins": 1,
+    "employees": 3
+  },
+  "device_ids": [
+    "TEST_A",
+    "TEST_B"
+  ],
+  "execution_supported": false,
+  "historical_holds": 1,
+  "limitations": [
+    "Only punches present in this ledger are investigated; device history is not fetched.",
+    "Unknown source timestamps are included for review regardless of the requested range.",
+    "REST scans are not a transactional snapshot; repeat scans detect only observable drift.",
+    "Visibility, deployed rules, historical payload policy and quiescence are reviewed assertions.",
+    "Current employee status/mapping does not prove historical employment or assignment.",
+    "Results are point-in-time evidence, never recovery authorization; historical holds remain unchanged.",
+    "All selected evidence is held in memory; split very large investigations into smaller ranges."
+  ],
+  "matching_policy": {
+    "duplicate_key": "employee_time_log_type",
+    "site_timezone": "Asia/Riyadh",
+    "timestamp_precision": "seconds"
+  },
+  "per_device": {
+    "TEST_A": {
+      "already_existing": 1,
+      "ambiguous": 1,
+      "duplicate_source": 1,
+      "invalid": 1,
+      "potentially_missing": 1,
+      "records": 6,
+      "unable_to_verify": 0,
+      "unmatched_employee": 1
+    },
+    "TEST_B": {
+      "already_existing": 0,
+      "ambiguous": 0,
+      "duplicate_source": 1,
+      "invalid": 0,
+      "potentially_missing": 0,
+      "records": 1,
+      "unable_to_verify": 0,
+      "unmatched_employee": 0
+    }
+  },
+  "range_end": "2026-10-17 23:59:59",
+  "range_inclusive": true,
+  "range_start": "2026-10-01 00:00:00",
+  "recovery_authorized": false,
+  "reports": [
+    {
+      "file": "sample-details.csv",
+      "sha256": "6efacf95d80df88bef95dc9a2c9fa074adc0e046b684306502571b7f0aea0360"
+    }
+  ],
+  "schema": "attendance-investigation-v1",
+  "source_snapshot_sha256": "319e27a9191871c19d7a8d000997e9976b9f4758c6abcfca4c3e8a556aab1bd7",
+  "started_at": "2026-10-17T11:34:18.996682+00:00",
+  "status": "complete",
+  "synthetic_example_only": true,
+  "totals": {
+    "already_existing": 1,
+    "ambiguous": 1,
+    "duplicate_source": 2,
+    "invalid": 1,
+    "potentially_missing": 1,
+    "records": 7,
+    "unable_to_verify": 0,
+    "unmatched_employee": 1
+  }
+}
