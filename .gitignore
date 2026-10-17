@@ -149,3 +149,8 @@ internal-profile.json
 # Private durable activation metadata and portable worker locks belong outside Git.
 *.activation.json
 *.worker.lock
+
+# Local SCM evidence and one-off incident probes are archived privately, not shipped.
+/.scm-*
+/scripts/.scm-*
+phase1-get-controls.json

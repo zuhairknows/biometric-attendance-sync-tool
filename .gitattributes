@@ -4,3 +4,19 @@ examples/reconciliation/*.csv -text whitespace=trailing-space,space-before-tab,c
 
 # Keep the standalone diagnostic's independently approved transfer hash stable.
 scripts/diagnose_windows_integration.py -text whitespace=trailing-space,space-before-tab,cr-at-eol
+
+# Preserve reviewed standalone transfer hashes across Windows checkouts.
+durable_confirmation.py -text
+scripts/confirm_two_uncertain.py -text
+scripts/verify_integration_get_only.py -text
+
+# The staging harness pins these runtime files to the release archive's LF bytes.
+durable_sync.py text eol=lf
+sync_ledger.py text eol=lf
+durable_delivery.py text eol=lf
+durable_startup.py text eol=lf
+punch_normalization.py text eol=lf
+erpnext_sync_win.py text eol=lf
+SMWinservice.py text eol=lf
+scripts/phase1_staging_engine_https.py text eol=lf
+scripts/phase1_staging_engine_crash.py text eol=lf
