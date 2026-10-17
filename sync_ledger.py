@@ -223,7 +223,12 @@ class Ledger:
                 self.db.execute('INSERT INTO device_state(device_id,last_successful_delivery) VALUES(?,?) '
                                 'ON CONFLICT(device_id) DO UPDATE SET last_successful_delivery=excluded.last_successful_delivery', (row['device_id'], now))
 
-    def safe_watermark(self, device_ids):
+    def safe_watermark(self, device_ids, *, cutover=None):
+        # Only the caller's validated activation boundary can scope live delivery.
+        # Omitting it retains the original conservative calculation for diagnostics.
+        if cutover is not None and (not isinstance(cutover, dt.datetime)
+                                   or cutover.tzinfo is not None or cutover.microsecond):
+            raise ValueError('Watermark cutover must be a naive whole-second datetime')
         if not device_ids:
             return None
         candidates = []
@@ -231,14 +236,24 @@ class Ledger:
             device = self.db.execute('SELECT * FROM device_state WHERE device_id=?', (device_id,)).fetchone()
             if not device or not device['fetch_ok'] or not device['last_successful_fetch']:
                 return None
-            # Permanent errors also block. An unknown timestamp cannot be ordered safely.
-            unresolved = self.db.execute("SELECT MIN(punch_timestamp),SUM(punch_timestamp IS NULL) FROM punches "
-                                         "WHERE device_id=? AND state NOT IN ('synced','duplicate')", (device_id,)).fetchone()
-            if unresolved[1]:
-                return None
+            # Permanent errors still block. Parse timestamps before excluding anything:
+            # a malformed/unknown time or a wrong hold label must never advance a shift.
+            earliest = None
+            rows = self.db.execute("SELECT DISTINCT punch_timestamp,state,error_category FROM punches "
+                                   "WHERE device_id=? AND state NOT IN ('synced','duplicate')", (device_id,))
+            for row in rows:
+                try:
+                    stamp = dt.datetime.fromisoformat(row['punch_timestamp'])
+                except (TypeError, ValueError):
+                    return None
+                if stamp.tzinfo is not None or str(stamp) != row['punch_timestamp']:
+                    return None
+                if (cutover is not None and row['state'] == 'rejected'
+                        and row['error_category'] == 'cutover_hold' and stamp < cutover):
+                    continue  # Watermark scope only; evidence/state/payload remain untouched.
+                earliest = min(earliest, stamp) if earliest is not None else stamp
             candidate = dt.datetime.fromisoformat(device['last_successful_fetch'])
-            if unresolved[0]:
-                earliest = dt.datetime.fromisoformat(unresolved[0])
+            if earliest is not None:
                 if earliest < dt.datetime.min + dt.timedelta(seconds=1):
                     return None
                 candidate = min(candidate, earliest - dt.timedelta(seconds=1))

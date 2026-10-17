@@ -95,8 +95,11 @@ def capture(ledger, engine, device, records=None):
 def update_shifts(ledger, engine, stop_requested=lambda: False):
     if not getattr(engine.status, 'usable', True) or ledger.destination_cooldown() > time.time():
         return
+    activation = validate_activation(ledger.path, engine.config)
+    boundary = max(filter(None, (import_boundary(engine.config.IMPORT_START_DATE),
+                                cutover_time(activation['cutover_time']))))
     for mapping in getattr(engine.config, 'shift_type_device_mapping', []):
-        watermark = ledger.safe_watermark(mapping['related_device_id'])
+        watermark = ledger.safe_watermark(mapping['related_device_id'], cutover=boundary)
         if watermark is None:
             continue
         shifts = mapping['shift_type_name']
