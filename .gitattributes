@@ -16,7 +16,9 @@ sync_ledger.py text eol=lf
 durable_delivery.py text eol=lf
 durable_startup.py text eol=lf
 punch_normalization.py text eol=lf
-erpnext_sync_win.py text eol=lf
-SMWinservice.py text eol=lf
 scripts/phase1_staging_engine_https.py text eol=lf
 scripts/phase1_staging_engine_crash.py text eol=lf
+
+# The separately reviewed Windows wrapper hashes use CRLF bytes.
+erpnext_sync_win.py text eol=crlf
+SMWinservice.py text eol=crlf
