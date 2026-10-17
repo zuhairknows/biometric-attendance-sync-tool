@@ -78,4 +78,10 @@ def create_demo():
         contract_hash=recovery.file_hash(contract_path), output=str(output), workspace=str(audit),
         simulation=str(scenario), normal_lock=str(root / 'synthetic-normal.sqlite3'),
         start=str(start), end=str(end), site=contract['site_url'])
+    configuration = inputs / 'synthetic-devices.py'
+    configuration.write_text('devices = ' + repr([
+        dict(device_id=f'FP{1 if number <= 7 else 2}_DEVICE_{number:02}',
+             ip=f'192.0.2.{number}', port=4370 + number, password='DEMO_DEVICE_SECRET')
+        for number in range(1, 13)]), encoding='utf-8')
+    values['device_config'] = str(configuration)
     return temporary, controller, values

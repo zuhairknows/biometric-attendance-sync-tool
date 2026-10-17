@@ -1,73 +1,96 @@
-# Phase 2C local validation
+# Phase 2C Flask conversion validation
 
-Base: `434a40cb12ee8d614ac5f9220686a3a0e7cc0a55` on
-`feature/phase2-historical-recovery`. Final revision is in the delivery report.
+Branch: `feature/phase2-historical-recovery`.
+Base: `ac8cd7248a7159449d3b48a8c7d055d875f47d52` (Tkinter version retained in history).
+Final revision is reported with delivery. No push, merge or deployment is included.
 
-Implemented a separate Tkinter application with reusable desktop adapters, a
-disposable synthetic demo, a whitelist-only preferences file, and an independent
-launcher. The three tabs reuse Phase 1 diagnostics, the exact bounded Phase 2A CLI,
-and Phase 2B approval/simulation/report functions. Dependencies are standard Windows
-Python 3.11/Tk plus `requests` for explicitly initiated investigation GETs.
+## Implementation boundary
 
-Backend changes are limited to an optional cancellation callback on the existing
-bounded worker, read-only snapshot access to an existing recovery audit database,
-and injectable existing ACL validation for the contained synthetic demo. Production
-defaults retain the real privacy checks. Phase 1 synchronization, normalization,
-ledger, startup, delivery and service modules are unchanged.
+- Removed the Phase 2C Tkinter view, moved its reusable adapters/demo to `manager_app`,
+  and added Flask routes, server-rendered templates, responsive CSS and vanilla JS.
+- Dashboard extends existing read-only ledger diagnostics with full state counts and
+  per-device quarantined counts. Configured device IDs/IPs/ports are AST-extracted
+  from one approved literal source file; configuration code/passwords are not used.
+- Existing Phase 2A CLI still handles the verified contract, GET-only comparison,
+  protected source/export, 32-request budget, 120-second worker deadline and 10-second
+  HTTP timeout. Production compatibility remains unverified and non-recoverable.
+- Existing Phase 2B audit, pinned approval and simulation functions remain authoritative.
+  Web approval adds a synthetic-only gate. No live transport/action was added.
+- A private startup profile fixes allowed paths and origin. Browser requests cannot
+  browse files, change paths or download arbitrary evidence. Employee IDs are opt-in.
+- Waitress binds only `127.0.0.1:8765`; debug/reloader are absent. Exact Host and local
+  peer checks reject proxies/unexpected hosts; POSTs require session CSRF and same
+  origin. Cookies and responses use HttpOnly/SameSite/no-store/CSP protections.
+- One manually selected action runs at a time. Status polling checks only that action.
+  Browser closure does not cancel it; server shutdown cancels app work without SCM
+  control calls. No scheduler, Windows service or device connection was introduced.
+- Phase 1 ledger, normalization, startup, synchronization, delivery and service modules
+  are unchanged. Only one legacy test guard was corrected for Python 3.11: `pathlib`
+  may import non-network `urllib.parse`; `urllib.request`, socket, HTTP, requests and
+  engine imports remain blocked, including a new assertion of that network guard.
 
-## Automated checks
+## Reproducible tests
 
-Run suites sequentially: the existing synthetic concurrency tests intentionally use
-the same machine-wide Phase 1 worker mutex. Concurrent runtime suites invalidate
-one another's results; no mutex or synchronization behavior was changed to avoid it.
+Use the isolated Python 3.11 environment from the operator guide. Run suites
+sequentially because the inherited concurrency tests use a machine-wide mutex.
 
 ```powershell
 $env:PYTHONPATH = 'tests'
-py -3.11 -B -m unittest test_desktop_manager -q
-py -3.14 -B -m unittest test_desktop_manager test_historical_recovery test_historical_investigation test_phase2a_production_verification test_durable_sync test_erpnext_sync test_service_hardening test_phase1_release test_phase1_remaining test_two_uncertain_confirmation test_attendance_reconciliation test_frappe_attendance_export test_frappe_server_export -q
+.\.venv\Scripts\python.exe -B -m unittest test_manager test_manager_web -q
+.\.venv\Scripts\python.exe -B -m unittest test_manager test_manager_web test_historical_recovery test_historical_investigation test_phase2a_production_verification test_durable_sync test_erpnext_sync test_service_hardening test_phase1_release test_phase1_remaining test_two_uncertain_confirmation test_attendance_reconciliation test_frappe_attendance_export test_frappe_server_export -q
+node --check manager_app/static/manager.js
+git diff --check
 ```
 
-- Python 3.11: **33/33 manager tests passed** (4.300 seconds).
-- Python 3.14: **395/395 expanded tests passed** (48.709 seconds).
-- Python 3.11, same expanded command with `-3.11`: **394 passed, 1 failed**
-  (47.646 seconds). The unchanged legacy test
-  `test_attendance_reconciliation.ReconciliationTests.test_fresh_process_has_no_engine_sdk_http_or_sqlite_imports`
-  blocks every `urllib` import before importing `pathlib`; Python 3.11's standard
-  `pathlib` itself imports `urllib.parse`. This is a pre-existing test-guard
-  incompatibility, not an HTTP request or a manager failure. Both the legacy test
-  and `scripts/reconcile_attendance.py` are unchanged from the starting commit.
-  The full Python 3.11 suite is therefore not reported as green.
-- Python 3.11 syntax parsing and launcher `--help` passed.
-- Rendered synthetic investigation and recovery windows inspected on Windows;
-  minimum 960x800 layout and asynchronous UI actions tested.
-- No production API, biometric connection, service operation or deployment was used.
+Results: **47 focused tests passed (6.354 seconds); 409 expanded tests passed
+(97.119 seconds)**. Runtime: Python 3.11, Flask 3.1.3, Waitress 3.0.2, requests 2.34.2.
+No production service, ledger, ERPNext or biometric device was accessed.
 
-Manager tests cover read-only dashboard loading, stopped/pending/unavailable service
-states, corrupt/missing databases, retry/quarantine/hold/delivery counts, immutable
-source bytes, audit read-only SQL enforcement and no audit/lock-file creation while
-browsing. They also cover selected approval with confirmation, changed source and
-contract rejection, malformed audit metadata, idempotent simulation, unapproved
-records, production-target rejection, normal-writer contention, protected exports,
-CSV/JSON consistency and non-overwrite, CLI worker/receipt integration, production
-results staying unverified, missing prerequisites, environment restoration, no
-credential/preferences leakage, error redaction, filters, responsive worker failure,
-startup without polling, active-worker cancellation and closing without service calls.
+Coverage includes startup without I/O; loopback binding; Host/peer/proxy rejection;
+CSRF, Origin and cross-session checks; payload limits; security headers; dashboard
+and missing/corrupt sources; 12 configured FP1/FP2 devices with unknown observations;
+configuration parsing without code execution or password disclosure; date/device
+filters; search/pagination; contract/hash/production gates; limits/deadlines inherited
+from Phase 2A; source-byte immutability; synthetic selected approval/confirmation;
+idempotent simulation, source/contract changes and writer contention; protected
+CSV/JSON exports; path injection/traversal; missing download/live-execution routes;
+redacted errors; single-action serialization; and browser/server shutdown independence.
 
-Existing Phase 2A/2B tests retain mapping/pagination/timezone/hold/HTTP-verb guards,
-uncertain outcomes, source hashes and source-state preservation. Synthetic simulation
-submissions are in-process fixture operations through the existing Phase 1 sender;
-there is no network recovery transport or live enable flag.
+## Local runtime inspection
 
-## Limits and decision
+Started the real synthetic Waitress demo and confirmed its listening address was
+**127.0.0.1:8765**. Loopback HTTP GET/POST checks completed a manual diagnostics action
+with synthetic service status; unexpected Host returned **400**, missing CSRF **403**.
+The Windows batch launcher passed its dependency checks and printed `--help` correctly.
+The server factory/browser-open/shutdown sequence is also covered by mocked tests.
 
-**GO for isolated synthetic desktop review. NO-GO for production recovery.**
-Real operator acceptance still needs deployed Windows ACLs, service-query permissions,
-display scaling and ledger-size checks. Production GETs need separately approved
-endpoint-safety evidence and the existing Phase 2A contract. Compatibility-only reads
-cannot authorize recovery. Live recovery still needs independent deployed identity,
-mapping, timezone, precision, hook and permission verification; source/audit provenance;
-cross-host fencing and source/live-ledger binding; and an authorized concurrency and
-uncertain-delivery policy. Held records remain excluded without a separately designed
-and approved transition. No production service stop or mutex bypass is authorized.
+Browser visual inspection/screenshots were unavailable: the browser-control inventory
+contained no available browser, and the native computer-use pipe was unavailable.
+Server-rendered HTML routes were checked with Flask and real loopback HTTP; responsive
+CSS/media rules and JS syntax were inspected. These checks do not prove browser layout,
+mobile rendering or deployed Windows compatibility. Perform that operator acceptance
+with `--demo` before approving normal-profile use. The temporary demo listener is
+stopped after verification; no manager deployment is included.
 
-See the [operator guide](phase2c-manager.md). No push, merge or deployment is included.
+## Remaining decision and blockers
+
+**GO for isolated synthetic/local review. NO-GO for production recovery.**
+Localhost is not user authentication: other local users/processes can access this
+approved workspace. Do not expose or reverse-proxy the listener. Live use still needs
+deployed ACL/SCM permissions and device-configuration/ledger-size acceptance. Production
+GETs require separate operational approval and reviewed endpoint/effective-hook/
+Server Script evidence; passing mocked tests establishes none of those claims.
+
+Production recovery additionally requires a fully verified non-compatibility Phase 2A
+investigation, deployed employee equality/visibility, duplicate/timezone/precision/
+historical payload verification, source/live-ledger binding, audit ownership, an
+authorized concurrency/fencing design and uncertain-delivery policy. Historical holds
+remain excluded without a separately designed and approved transition. The UI conversion
+does not authorize stopping the service or bypassing its writer mutex.
+
+See the [operator guide](phase2c-manager.md) and
+[startup profile example](../examples/manager-profile.example.json).
+
+Server/browser hardening follows the official
+[Flask security guidance](https://flask.palletsprojects.com/en/stable/web-security/)
+and [Windows-compatible Waitress deployment guidance](https://flask.palletsprojects.com/en/stable/deploying/waitress/).

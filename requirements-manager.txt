@@ -1,2 +1,4 @@
-# Tkinter ships with the standard Windows Python installer. No PyQt/pyzk/service package needed.
+# Independent manager environment; no SDK or Windows service dependencies.
+Flask>=3.1,<4
+waitress>=3,<4
 requests

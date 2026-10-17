@@ -1,0 +1,25 @@
+{% extends 'base.html' %}{% from 'macros.html' import token,pager,empty %}
+{% block title %}Historical investigation{% endblock %}{% block subtitle %}Compare a protected ledger snapshot using the verified Phase 2A workflow.{% endblock %}
+{% block body %}<section class="card panel"><div class="panel-heading"><div><h2>Investigation scope</h2><p>Approved paths and contract are fixed at startup. Destination: {{ profile.get('site', 'Not configured') }}</p></div><span class="badge">GET only</span></div>
+<form method="post" action="{{ url_for('investigate') }}" data-investigation>{{ token(csrf) }}<div class="form-grid">
+<label>Start · site local time<input type="datetime-local" step="1" name="start" value="{{ profile.get('start','')|replace(' ','T') }}" required></label>
+<label>End · inclusive<input type="datetime-local" step="1" name="end" value="{{ profile.get('end','')|replace(' ','T') }}" required></label>
+<label>Factory floor<select name="floor" data-floor><option value="">All floors</option><option>FP1</option><option>FP2</option></select></label>
+<div><span class="field-label">Devices</span><div class="device-picker">{% for d in devices %}<label class="check" data-device-floor="{{ d.floor }}"><input type="checkbox" name="devices" value="{{ d.device }}" {{ 'checked' if d.device == 'FP1_DEVICE_01' }}>{{ d.device }}</label>{% endfor %}</div></div>
+<label>API key · memory only<input type="password" name="api_key" maxlength="256" autocomplete="off" required></label>
+<label>API secret · memory only<input type="password" name="api_secret" maxlength="256" autocomplete="off" required></label></div>
+{% if device_warning %}<p class="notice warning">{{ device_warning }}</p>{% endif %}
+<label class="check"><input type="checkbox" name="backup_ack" value="1" required>I confirm the approved input is a protected offline SQLite backup.</label>
+<label class="check"><input type="checkbox" name="production_ack" value="1">I acknowledge production read-only compatibility at the configured origin. Results remain Unverified.</label>
+<div class="form-actions"><button {{ 'disabled' if not devices }}>Investigate & export</button><span class="caption">32 GETs maximum · 120-second deadline · 10-second HTTP timeout</span></div></form></section>
+{% if result %}<section class="card panel"><div class="panel-heading"><div><h2>Investigation results <span class="badge {{ 'warning' if result.summary.status != 'complete' }}">{{ 'Unverified' if result.summary.status != 'complete' else 'Complete' }}</span></h2><p>Point-in-time evidence. Recovery eligibility remains disabled.</p></div><form method="post" action="{{ url_for('investigation_export') }}">{{ token(csrf) }}<button class="secondary">Verify protected CSV / JSON</button></form></div>
+{% if result.summary.get('purpose') == 'production_read_only_compatibility' %}<div class="notice warning">Production compatibility only. These are not confirmed missing records and cannot authorize recovery.</div>{% endif %}
+<div class="count-strip">{% for key,count in result.summary.totals.items() %}<span><strong>{{ count }}</strong> {{ key|replace('_',' ') }}</span>{% endfor %}</div>
+{% for reason in result.summary.blockers %}<div class="notice warning">{{ reason|replace('_',' ') }}</div>{% endfor %}
+<details><summary>Investigation limitations</summary><ul>{% for note in result.summary.get('limitations',[]) %}<li>{{ note }}</li>{% endfor %}</ul></details>
+<form class="filters" method="get"><label>Classification<select name="classification"><option value="">All classifications</option>{% for c in categories %}<option value="{{ c }}" {{ 'selected' if request.args.get('classification') == c }}>{{ c|replace('_',' ') }}</option>{% endfor %}</select></label>
+<label>Floor<select name="floor"><option value="">All floors</option>{% for f in ('FP1','FP2') %}<option {{ 'selected' if request.args.get('floor') == f }}>{{ f }}</option>{% endfor %}</select></label>
+<label class="grow">Search<input name="q" value="{{ request.args.get('q','') }}" maxlength="100" placeholder="Device, time, classification…"></label><label class="check"><input type="checkbox" name="identifiers" value="1" {{ 'checked' if show_ids }}>Show identifiers</label><button class="secondary">Filter</button></form>
+<div class="table-scroll"><table><thead><tr><th>Record</th><th>Source device</th><th>Source time</th><th>Classification</th><th>Reason</th>{% if show_ids %}<th>Employee</th><th>Device user</th>{% endif %}</tr></thead><tbody>{% for r in table.rows %}<tr><td>{{ r.id }}</td><td class="mono">{{ r.device_id }}</td><td class="nowrap">{{ r.punch_timestamp }}</td><td><span class="badge">{{ r.classification|replace('_',' ') }}</span></td><td>{{ r.reason|replace('_',' ') }}</td>{% if show_ids %}<td>{{ r.employee }}</td><td>{{ r.user_id }}</td>{% endif %}</tr>{% endfor %}</tbody></table></div>{{ pager(table) }}
+<p class="caption">Complete CSV and JSON are saved only to the approved protected output directory. No browser download is exposed.</p></section>
+{% else %}<section class="card">{{ empty('No completed investigation') }}</section>{% endif %}{% endblock %}

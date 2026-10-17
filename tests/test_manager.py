@@ -8,13 +8,11 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
-import tkinter as tk
 import unittest
 from unittest import mock
 
-from desktop_manager.app import ManagerWindow
-from desktop_manager.controller import Controller, ManagerError, Settings
-from desktop_manager.demo import create_demo
+from manager_app.controller import Controller, ManagerError, Settings
+from manager_app.demo import create_demo
 from historical_attendance.bounded import run_bounded
 from historical_attendance.client import VerificationError
 from historical_attendance.recovery_store import RecoveryStore
@@ -275,101 +273,3 @@ class ManagerTests(ManagerFixture):
         self.assertEqual(marker.read_text(), 'started')
         self.assertEqual({p.pid for p in multiprocessing.active_children()}, active_before)
         self.assertFalse(list(self.root.glob('.investigation-worker-*')))
-
-
-class ManagerWindowTests(ManagerFixture):
-    def setUp(self):
-        super().setUp()
-        self.tk = tk.Tk()
-        self.tk.withdraw()
-        self.window = ManagerWindow(self.tk, self.controller, initial=self.values, demo=True)
-        self.tk.update_idletasks()
-        self.addCleanup(self.window.close)
-
-    def wait_action(self):
-        until = time.monotonic() + 12
-        while self.window.busy and time.monotonic() < until:
-            self.tk.update()
-            time.sleep(0.01)
-        self.assertFalse(self.window.busy, 'UI action did not complete')
-
-    def test_window_startup_is_idle_and_dashboard_loads_asynchronously(self):
-        query = self.controller.service_query = mock.Mock(return_value='STOPPED')
-        self.assertIsNone(self.window.thread)
-        query.assert_not_called()
-        self.window.refresh_dashboard()
-        self.wait_action()
-        self.assertEqual(self.window.metrics['service'].get(), 'STOPPED')
-        self.assertEqual(len(self.window.device_table.get_children()), 3)
-
-    def test_layout_preserves_footer_and_result_table_at_minimum_size(self):
-        self.tk.deiconify()
-        self.tk.geometry('960x800')
-        for index in range(3):
-            self.window.tabs.select(index)
-            self.tk.update()
-            self.assertGreater(self.window.tabs.winfo_height(), 200)
-        self.assertGreater(self.window.result_table.winfo_height(), 30)
-        footer = self.window.tabs.master.winfo_children()[-1]
-        self.assertLessEqual(footer.winfo_rooty() + footer.winfo_height(), self.tk.winfo_rooty() + self.tk.winfo_height())
-
-    def test_selected_approval_requires_confirmation_then_enables_simulation(self):
-        self.window.current_workspace = self.values['workspace']
-        self.window._batch_loaded(self.controller.batch(self.values['workspace'], self.batch['id']))
-        self.assertTrue(self.window.simulate_button.instate(['disabled']))
-        self.window.item_table.selection_set('1')
-        self.window.values['approval_reference'].set('SYNTHETIC operator review')
-        with mock.patch('desktop_manager.app.messagebox.askyesno', return_value=False):
-            self.window.approve_selected()
-        self.assertFalse(self.window.busy)
-        with mock.patch('desktop_manager.app.messagebox.askyesno', return_value=True):
-            self.window.approve_selected()
-            self.wait_action()
-            self.assertFalse(self.window.simulate_button.instate(['disabled']))
-            self.window.run_simulation()
-            self.wait_action()
-        self.assertEqual(self.window.selected_batch['counts']['Recovered'], 1)
-
-    def test_unverified_investigation_label_and_filters(self):
-        self.window._investigation_loaded(dict(summary=dict(status='unverified', purpose='production_read_only_compatibility',
-            totals={'records': 2, 'unable_to_verify': 2}, blockers=['unverified_claim']), rows=[
-                dict(id=1, device_id='FP1_DEVICE_01', classification='unable_to_verify'),
-                dict(id=2, device_id='FP2_DEVICE_08', classification='unable_to_verify')]))
-        self.assertIn('UNVERIFIED', self.window.investigation_status.get())
-        self.assertIn('not a recovery candidate', self.window.investigation_status.get())
-        self.window.search.set('FP2')
-        self.assertEqual(len(self.window.result_table.get_children()), 1)
-
-    def test_worker_exception_does_not_display_employee_or_credentials(self):
-        def fail():
-            raise RuntimeError('PRIVATE employee TEST_SECRET')
-        self.window._start(fail, lambda _: self.fail('must not complete'))
-        self.wait_action()
-        self.assertNotIn('PRIVATE', self.window.status.get())
-        self.assertNotIn('TEST_SECRET', self.window.status.get())
-
-    def test_investigation_action_clears_credentials_and_displays_completed_report(self):
-        self.window.run_investigation()
-        self.assertEqual(self.window.values['api_key'].get(), '')
-        self.assertEqual(self.window.values['api_secret'].get(), '')
-        self.wait_action()
-        self.assertIn('Investigation complete', self.window.investigation_status.get())
-        self.assertEqual(len(self.window.result_table.get_children()), 1)
-
-    def test_close_never_controls_or_queries_service(self):
-        self.controller.service_query = mock.Mock()
-        self.window.close()
-        self.controller.service_query.assert_not_called()
-        self.assertTrue(self.window.closed)
-
-    def test_closing_cancels_only_active_management_job(self):
-        self.controller.service_query = mock.Mock()
-        self.window._start(lambda: self.controller.cancelled.wait(10), lambda _: None)
-        with mock.patch('desktop_manager.app.messagebox.askyesno', return_value=True):
-            self.window.close()
-        self.assertFalse(self.window.thread.is_alive())
-        self.controller.service_query.assert_not_called()
-
-
-if __name__ == '__main__':
-    unittest.main()

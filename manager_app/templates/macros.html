@@ -1,0 +1,3 @@
+{% macro token(csrf) %}<input type="hidden" name="csrf" value="{{ csrf }}">{% endmacro %}
+{% macro pager(table) %}<div class="pagination"><span>{{ table.count }} results · Page {{ table.page }} of {{ table.pages }}</span><div><a class="button secondary" href="{{ table.previous }}">Previous</a><a class="button secondary" href="{{ table.next }}">Next</a></div></div>{% endmacro %}
+{% macro empty(text) %}<div class="empty"><span class="empty-icon">◫</span><h3>{{ text }}</h3><p>Use the manual action above to load approved local data.</p></div>{% endmacro %}

@@ -1,4 +1,4 @@
-"""Desktop adapters around existing diagnostics, Phase 2A CLI and Phase 2B APIs."""
+"""UI-independent adapters around existing diagnostics, Phase 2A CLI and Phase 2B APIs."""
 import contextlib
 import csv
 import datetime as dt
@@ -77,7 +77,8 @@ class Controller:
 
     def dashboard(self, ledger_path):
         data = dict(service='Unavailable', integrity='Unavailable', total=0, pending=0, retry=0,
-                    failed=0, holds=0, last_delivery='Not recorded', devices=[], errors=[])
+                    failed=0, holds=0, states={}, last_delivery='Not recorded', devices=[], errors=[],
+                    refreshed=dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'))
         try:
             data['service'] = self.service_query()
         except Exception:
@@ -91,7 +92,9 @@ class Controller:
                 diagnostics = ledger.diagnostics()
                 data.update(integrity='OK', total=diagnostics['total'], pending=diagnostics['states']['pending'],
                     retry=diagnostics['states']['retry'], failed=diagnostics['quarantined'],
-                    holds=diagnostics['held_historical'], last_delivery=utc_time(diagnostics['last_successful_delivery']))
+                    holds=diagnostics['held_historical'], states=diagnostics['states'],
+                    last_delivery=utc_time(diagnostics['last_successful_delivery']))
+                failures = {r[0]: r[1] for r in ledger.db.execute("SELECT device_id,COUNT(*) FROM punches WHERE state IN ('rejected','unmatched_employee','invalid_record') GROUP BY device_id")}
                 ids = {r[0] for r in ledger.db.execute('SELECT DISTINCT device_id FROM punches')}
                 states = {r['device_id']: dict(r) for r in ledger.db.execute('SELECT * FROM device_state')}
                 for device in sorted(ids | states.keys()):
@@ -100,6 +103,7 @@ class Controller:
                         fetch='OK' if state.get('fetch_ok') else 'Failed / unknown',
                         last_fetch=state.get('last_successful_fetch') or 'Not recorded',
                         backlog=diagnostics['pending_per_device'].get(device, 0),
+                        failed=failures.get(device, 0),
                         last_delivery=utc_time(state.get('last_successful_delivery'))))
         except Exception:
             data['errors'].append('Ledger unavailable or integrity/schema check failed. No state was changed.')

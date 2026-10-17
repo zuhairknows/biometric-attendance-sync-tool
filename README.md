@@ -20,10 +20,11 @@ For offline comparison with separately prepared Frappe exports, see the
 [Phase 1 attendance reconciliation runbook](docs/phase1-attendance-reconciliation.md).
 The reconciliation tool creates reports only; it never creates Employee Checkins.
 
-The separate [Phase 2C Windows manager](docs/phase2c-manager.md) provides manual
+The separate [Phase 2C local web manager](docs/phase2c-manager.md) provides manual
 read-only monitoring, historical investigation, batch review and synthetic recovery
-simulation. Launch `py -3.11 -B scripts\biometric_manager.py --demo` to try synthetic
-data. Live recovery is unavailable; the existing Windows service stays independent.
+simulation. Use `Start Biometric Manager.bat --demo` after installing the isolated
+manager dependencies. It opens `http://127.0.0.1:8765`; live recovery is unavailable
+and the existing Windows service stays independent.
 
 Prepare its inputs with the [read-only Frappe export procedure](docs/phase1-frappe-export-procedure.md).
 Export defaults to an offline plan; a live export requires separate approval and verified site/source evidence.

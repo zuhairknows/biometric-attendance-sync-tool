@@ -1,0 +1,17 @@
+{% extends 'base.html' %}{% from 'macros.html' import token,empty %}
+{% block title %}Dashboard{% endblock %}
+{% block subtitle %}A read-only view of service and stored attendance diagnostics.{% endblock %}
+{% block heading_action %}<form method="post" action="{{ url_for('refresh') }}">{{ token(csrf) }}<button>Refresh diagnostics <span aria-hidden="true">↻</span></button></form>{% endblock %}
+{% block body %}
+<div class="status-grid"><section class="card"><div class="card-label">WINDOWS SERVICE</div><div class="status-value">{{ dashboard.service if dashboard else 'Not loaded' }}</div><p>ERPNextBiometricPushService</p></section>
+<section class="card"><div class="card-label">SQLITE HEALTH</div><div class="status-value">{{ dashboard.integrity if dashboard else 'Not loaded' }}</div><p>Read-only schema and integrity checks</p></section>
+<section class="card"><div class="card-label">LAST SUCCESSFUL DELIVERY · UTC</div><div class="delivery-value">{{ dashboard.last_delivery if dashboard else 'Not loaded' }}</div><p>Recorded delivery, not current connectivity</p></section></div>
+{% if dashboard %}{% for error in dashboard.errors %}<div class="notice warning">{{ error }}</div>{% endfor %}{% endif %}
+<div class="metrics">{% for key,label in [('total','Stored punches'),('synced','Synced'),('pending','Pending'),('retry','Retry'),('rejected','Rejected'),('unmatched_employee','Unmatched'),('holds','Historical holds')] %}
+<section class="card metric"><span>{{ label }}</span><strong>{% if dashboard and dashboard.integrity == 'OK' %}{{ dashboard[key] if key in ('total','holds') else dashboard.states.get(key, '—') }}{% else %}—{% endif %}</strong></section>{% endfor %}</div>
+<section class="card panel"><div class="panel-heading"><div><h2>Device observations</h2><p>Stored fetch results only. A running service does not establish device connectivity.</p></div><a href="{{ url_for('devices_page') }}">View devices →</a></div>
+{% if dashboard and dashboard.devices %}<div class="table-scroll"><table><thead><tr><th>Device</th><th>Recorded fetch</th><th>Last successful pull</th><th>Backlog</th><th>Quarantined</th><th>Last delivery · UTC</th></tr></thead><tbody>
+{% for d in dashboard.devices %}<tr><td class="mono">{{ d.device }}</td><td>{{ d.fetch }}</td><td>{{ d.last_fetch }}</td><td>{{ d.backlog }}</td><td>{{ d.failed }}</td><td>{{ d.last_delivery }}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}{{ empty('Diagnostics have not been loaded') }}{% endif %}</section>
+<p class="caption">Last refresh · UTC: {{ dashboard.refreshed if dashboard else 'Not refreshed' }}. Held records remain unchanged.</p>
+{% endblock %}

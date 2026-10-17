@@ -370,11 +370,18 @@ class ReconciliationTests(unittest.TestCase):
 import sys
 class Guard:
     def find_spec(self, name, *args):
-        if name.split('.')[0] in {'local_config','erpnext_sync','erpnext_sync_win','SMWinservice','durable_sync','durable_delivery','sync_ledger','requests','zk','sqlite3','socket','http','urllib'}:
+        # pathlib on Python 3.11 needs urllib.parse, which performs no network I/O.
+        if name in {'urllib.request','urllib.error'} or name.split('.')[0] in {'local_config','erpnext_sync','erpnext_sync_win','SMWinservice','durable_sync','durable_delivery','sync_ledger','requests','zk','sqlite3','socket','http'}:
             raise RuntimeError('forbidden import')
 sys.meta_path.insert(0, Guard())
 from scripts.reconcile_attendance import main
 assert main(sys.argv[1:], acl_check=lambda _: None) == 0
+try:
+    import urllib.request
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('network import guard must remain active')
 '''
         result = subprocess.run([sys.executable, '-B', '-c', script, *self.argv()], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
