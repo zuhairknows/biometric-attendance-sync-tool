@@ -159,3 +159,6 @@ phase1-get-controls.json
 investigation_details_*.csv
 investigation_summary_*.json
 .investigation-worker-*.part
+*.recovery-audit*
+recovery_*.csv
+recovery_*.json
