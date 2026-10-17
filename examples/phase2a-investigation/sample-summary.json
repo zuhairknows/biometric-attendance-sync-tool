@@ -1,11 +1,12 @@
 {
   "blockers": [],
-  "completed_at": "2026-10-17T11:34:19.016443+00:00",
-  "contract_sha256": "426df294d0b608074a2b2973e75e111a722267221ef50a4bdf2dedf2d1c1cfe8",
-  "destination_observation_sha256": "e64c150806a8d298ab975a696ddbf90a29a98d4f5101d09ad7a6f4b4e41d59bc",
+  "completed_at": "2026-10-17T11:45:48.668126+00:00",
+  "contract_sha256": "3f950a96016f5121efd7f673cf3c790e21499a0a88aa0f53aa010749244b8202",
+  "destination_observation_sha256": "b69151f331793e3af783f2d1b84d17c658abfaf49e74e69728826d68af1420af",
   "destination_observed_counts": {
     "checkins": 1,
-    "employees": 3
+    "employee_lookups": 3,
+    "employee_matches": 3
   },
   "device_ids": [
     "TEST_A",
@@ -56,12 +57,12 @@
   "reports": [
     {
       "file": "sample-details.csv",
-      "sha256": "6efacf95d80df88bef95dc9a2c9fa074adc0e046b684306502571b7f0aea0360"
+      "sha256": "a694a8e003abdf254f6a7694c81256feeef3526be456fddb46f477cfc2bfc7d1"
     }
   ],
   "schema": "attendance-investigation-v1",
-  "source_snapshot_sha256": "319e27a9191871c19d7a8d000997e9976b9f4758c6abcfca4c3e8a556aab1bd7",
-  "started_at": "2026-10-17T11:34:18.996682+00:00",
+  "source_snapshot_sha256": "f844a644500c837cdcf19526b9d0b4a728b1bcc469c6d9178cd9435bbfb42f37",
+  "started_at": "2026-10-17T11:45:48.648506+00:00",
   "status": "complete",
   "synthetic_example_only": true,
   "totals": {

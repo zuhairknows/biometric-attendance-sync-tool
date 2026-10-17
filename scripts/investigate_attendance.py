@@ -9,10 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from historical_attendance.client import ReadOnlyFrappeClient
 from historical_attendance.engine import investigate
-from historical_attendance.reporting import export
+from historical_attendance.reporting import export, validate_output
 from historical_attendance.repository import SQLiteRepository
 from scripts.attendance_reconciliation import local_time, verified_json
-from scripts.capture_history_safety import preflight_output, check_directory_acl
+from scripts.capture_history_safety import check_directory_acl
 from scripts.reconcile_attendance import SafeParser
 
 
@@ -32,10 +32,7 @@ def main(argv=None, *, request=None, acl_check=check_directory_acl):
         source = Path(args.ledger_copy).resolve(strict=True)
         if not Path(args.ledger_copy).is_absolute():
             raise ValueError
-        directory = preflight_output(args.output, live=False, acl_check=acl_check)
-        for path in (source, contract_path):
-            if directory == path.parent or path.parent in directory.parents:
-                raise ValueError
+        directory = validate_output(args.output, ledger_path=source, input_paths=[contract_path], acl_check=acl_check)
         if request is None:
             import requests
             request = requests.request
@@ -44,7 +41,7 @@ def main(argv=None, *, request=None, acl_check=check_directory_acl):
         rows, summary = investigate(SQLiteRepository(source), client, args.start, args.end,
                                     args.device, contract)
         summary['contract_file_sha256'] = digest
-        export(directory, rows, summary)
+        export(directory, rows, summary, ledger_path=source, input_paths=[contract_path], acl_check=acl_check)
         print(json.dumps({'status': summary['status'], 'records': len(rows)}))
         return 2 if summary['blockers'] else 0
     except KeyboardInterrupt:

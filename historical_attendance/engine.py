@@ -11,7 +11,8 @@ from .source import verified_source
 
 CLAIMS = ('unfiltered_employee_and_checkin_visibility', 'server_duplicate_semantics',
           'source_and_site_timezone_match', 'historical_payload_policy',
-          'destination_quiescent_during_scan', 'no_identity_mutating_hooks')
+          'destination_quiescent_during_scan', 'no_identity_mutating_hooks',
+          'employee_lookup_database_equality')
 CATEGORIES = ('already_existing', 'potentially_missing', 'unmatched_employee',
               'duplicate_source', 'invalid', 'ambiguous', 'unable_to_verify')
 LIMITATIONS = [
@@ -51,11 +52,18 @@ def investigate(repository, client, start, end, devices, contract, cancelled=lam
     source = repository.read(start, end, devices, cancelled)
     blockers = contract_blockers(contract, start, end, devices, client.url)
     rows = []
-    employees, checkins = [], []
+    employees, checkins = {}, []
     if not blockers and source:
         try:
+            users = set()
+            for row in source:
+                try:
+                    verified_source(row)
+                except (KeyError, ValueError, TypeError, OverflowError):
+                    continue
+                users.add(row['user_id'])
             lower = start.replace(microsecond=0) if contract['timestamp_precision'] == 'seconds' else start
-            employees, checkins = client.snapshot(lower, end)
+            employees, checkins = client.snapshot(lower, end, users)
         except VerificationError as exc:
             blockers.append(str(exc))
     if cancelled():
@@ -67,11 +75,17 @@ def investigate(repository, client, start, end, devices, contract, cancelled=lam
     uncertain = set()
     if not blockers:
         try:
-            for employee in employees:
-                if (not isinstance(employee['attendance_device_id'], (str, type(None)))
-                        or not isinstance(employee['status'], str)):
+            if source and set(employees) != users:
+                raise ValueError
+            for user, matches in employees.items():
+                if not isinstance(matches, list):
                     raise ValueError
-                mapping[employee['attendance_device_id']].append(employee)
+                for employee in matches:
+                    if (not isinstance(employee['attendance_device_id'], str)
+                            or not isinstance(employee['status'], str)):
+                        raise ValueError
+                # Keep the server's full result, even when stored IDs differ from user.
+                mapping[user] = matches
             for checkin in checkins:
                 employee = checkin['employee']
                 if not isinstance(employee, str) or not employee:
@@ -148,7 +162,8 @@ def investigate(repository, client, start, end, devices, contract, cancelled=lam
         source_snapshot_sha256=hashlib.sha256(json.dumps(source, sort_keys=True).encode()).hexdigest(),
         destination_observation_sha256=hashlib.sha256(json.dumps(
             dict(employees=employees, checkins=checkins), sort_keys=True).encode()).hexdigest(),
-        destination_observed_counts=dict(employees=len(employees), checkins=len(checkins)),
+        destination_observed_counts=dict(employee_lookups=len(employees),
+            employee_matches=sum(len(matches) for matches in employees.values()), checkins=len(checkins)),
         contract_sha256=hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest(),
         totals=counts(rows), per_device={d: counts(r for r in rows if r['device_id'] == d) for d in devices},
         historical_holds=sum(r['historical_hold'] for r in rows), limitations=LIMITATIONS)

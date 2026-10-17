@@ -13,7 +13,8 @@ from unittest import mock
 from historical_attendance.client import ReadOnlyFrappeClient, VerificationError
 from historical_attendance.engine import CLAIMS, investigate
 from historical_attendance.repository import SQLiteRepository
-from historical_attendance.reporting import export
+from historical_attendance.reporting import export, validate_output
+from scripts.capture_history_safety import CaptureError
 from punch_normalization import normalize
 from sync_ledger import Ledger
 from scripts import investigate_attendance as cli
@@ -50,14 +51,25 @@ class InvestigationTests(unittest.TestCase):
         self.assertEqual(method, 'GET')
         self.assertTrue('/api/resource/' in url or url.endswith('/api/method/frappe.client.get_count'))
         self.assertFalse(kwargs['allow_redirects'])
+        params = kwargs['params']
+        doctype = params['doctype'] if url.endswith('get_count') else ('Employee' if url.endswith('/Employee') else 'Employee Checkin')
+        filters = json.loads(params['filters'])
+        if doctype == 'Employee':
+            self.assertEqual(len(filters), 1)
+            self.assertEqual(filters[0][:2], ['attendance_device_id', '='])
+            user = filters[0][2]
+            # Synthetic database equality, deliberately NOT a production normalizer.
+            data = [e for e in self.employees if e['attendance_device_id'].rstrip().casefold() == user.rstrip().casefold()]
+        else:
+            data = self.checkins
         if url.endswith('/api/method/frappe.client.get_count'):
-            data = self.employees if kwargs['params']['doctype'] == 'Employee' else self.checkins
             return mock.Mock(status_code=200, json=lambda: {'message': len(data)})
-        data = self.employees if url.endswith('/Employee') else self.checkins
-        data = sorted(data, key=lambda row: row['name'])
+        self.assertEqual(params['order_by'], 'name asc')
+        data = sorted(data, key=lambda row: row['name'].casefold())
         offset = kwargs['params']['limit_start']
         size = kwargs['params']['limit_page_length']
-        return mock.Mock(status_code=200, json=lambda: {'data': data[offset:offset + size]})
+        # Each HTTP response owns fresh values, just like decoded JSON.
+        return mock.Mock(status_code=200, json=lambda: {'data': [dict(row) for row in data[offset:offset + size]]})
 
     def add(self, device='TEST_A', **changes):
         raw = dict(user_id='100', timestamp=STAMP, punch=0, status=1, uid=1)
@@ -289,7 +301,7 @@ class InvestigationTests(unittest.TestCase):
         rows[0]['device_id'] = '=FORMULA'
         output = self.root / 'report'
         output.mkdir()
-        marker = export(output, rows, summary)
+        marker = export(output, rows, summary, ledger_path=self.path, acl_check=lambda _: None)
         manifest = json.loads((output / marker['file']).read_text())
         details = output / manifest['reports'][0]['file']
         self.assertEqual(hashlib.sha256(details.read_bytes()).hexdigest(), manifest['reports'][0]['sha256'])
@@ -326,6 +338,180 @@ class InvestigationTests(unittest.TestCase):
         for url in ('http://example.test', 'https://user:pass@example.test', 'https://example.test?secret=x'):
             with self.assertRaises(VerificationError):
                 ReadOnlyFrappeClient(url, 'key', 'secret', self.request)
+
+    def test_database_equivalent_mapping_uses_original_lookup_id(self):
+        for stored in ('100 ', '100'):
+            self.employees[0]['attendance_device_id'] = stored
+            self.checkins = []
+            self.checkin()
+            self.assertEqual(self.category(), 'already_existing')
+        self.add(user_id='AbC ', uid=2)
+        self.employees.append(dict(self.employees[0], name='SYNTHETIC_EMP_02', attendance_device_id='abc'))
+        rows, _ = self.run_report()
+        self.assertEqual(rows[1]['classification'], 'potentially_missing')
+        employee_calls = [c for c in self.calls if c[1].endswith('/Employee')]
+        values = {json.loads(c[2]['params']['filters'])[0][2] for c in employee_calls}
+        self.assertIn('AbC ', values)  # No trimming/case conversion on the wire.
+
+    def test_all_equivalent_mappings_remain_ambiguous(self):
+        self.add(user_id='AbC', uid=2)
+        for status in ('Active', 'Inactive'):
+            self.employees = [dict(name='SYNTH_A', attendance_device_id='ABC', status='Active', modified=str(START)),
+                              dict(name='SYNTH_B', attendance_device_id='abc ', status=status, modified=str(START))]
+            rows, _ = self.run_report()
+            self.assertEqual(rows[1]['classification'], 'ambiguous')
+            self.assertFalse(rows[1]['eligible_for_recovery'])
+
+    def test_lookup_results_cached_per_original_id_for_each_pass(self):
+        for uid in range(2, 12):
+            self.add(uid=uid, timestamp=STAMP + dt.timedelta(seconds=uid))
+        self.run_report()
+        first_pages = [c for c in self.calls if c[1].endswith('/Employee') and c[2]['params']['limit_start'] == 0]
+        self.assertEqual(len(first_pages), 2)  # Two verification passes, not eleven punch lookups.
+
+    def test_equivalent_lookup_truncated_on_later_page_blocks_all(self):
+        self.employees.append(dict(self.employees[0], name='SYNTHETIC_EMP_02', attendance_device_id='100 '))
+        original = self.client._request
+        def truncated(method, url, **kwargs):
+            if url.endswith('/Employee') and kwargs['params']['limit_start'] > 0:
+                return mock.Mock(status_code=200, json=lambda: {'data': []})
+            return original(method, url, **kwargs)
+        self.client._request = truncated
+        rows, summary = self.run_report()
+        self.assertEqual(rows[0]['classification'], 'unable_to_verify')
+        self.assertIn('pagination_count_mismatch', summary['blockers'])
+
+    def test_lookup_error_on_later_page_blocks_all(self):
+        self.employees.append(dict(self.employees[0], name='SYNTHETIC_EMP_02'))
+        original = self.client._request
+        for failure in (TimeoutError('SECRET'), OSError('PRIVATE')):
+            def failed(method, url, **kwargs):
+                if url.endswith('/Employee') and kwargs['params']['limit_start'] > 0:
+                    raise failure
+                return original(method, url, **kwargs)
+            self.client._request = failed
+            self.assertEqual(self.category(), 'unable_to_verify')
+
+    def test_unestablished_database_lookup_semantics_blocks_without_requests(self):
+        self.policy['verification']['employee_lookup_database_equality'] = False
+        self.assertEqual(self.category(), 'unable_to_verify')
+        self.assertFalse(self.calls)
+
+    def test_database_collation_order_a_B_succeeds_for_both_doctypes(self):
+        self.employees = [dict(self.employees[0], name='a'), dict(self.employees[0], name='B')]
+        self.checkin(name='a', employee='a')
+        self.checkin(name='B', employee='a')
+        self.assertEqual([e['name'] for e in self.client.scan('Employee', [['attendance_device_id', '=', '100']])], ['a', 'B'])
+        self.assertEqual(self.category(), 'ambiguous')
+        self.employees.pop()
+        self.assertEqual(self.category(), 'ambiguous')  # Both destination rows were retrieved.
+
+    def test_same_name_repeated_within_page_fails_closed(self):
+        self.client.page_size = 2
+        self.employees.append(dict(self.employees[0]))
+        self.assertEqual(self.category(), 'unable_to_verify')
+
+    def test_mapping_changes_between_passes_blocks(self):
+        original = self.client._request
+        first_pages = []
+        def changed(method, url, **kwargs):
+            if url.endswith('/Employee') and kwargs['params']['limit_start'] == 0:
+                first_pages.append(True)
+                if len(first_pages) == 2:
+                    self.employees[0]['status'] = 'Inactive'
+            return original(method, url, **kwargs)
+        self.client._request = changed
+        rows, summary = self.run_report()
+        self.assertEqual(rows[0]['classification'], 'unable_to_verify')
+        self.assertIn('destination_changed_during_investigation', summary['blockers'])
+
+    def test_request_and_distinct_lookup_limits_fail_closed(self):
+        self.client.max_requests = 1
+        self.assertEqual(self.category(), 'unable_to_verify')
+        self.assertEqual(len(self.calls), 1)
+        self.calls.clear()
+        self.client.max_requests = 20000
+        self.client.max_lookup_ids = 1
+        self.add(user_id='200', uid=2)
+        rows, summary = self.run_report()
+        self.assertTrue(all(r['classification'] == 'unable_to_verify' for r in rows))
+        self.assertIn('employee_lookup_limit_exceeded', summary['blockers'])
+        self.assertFalse(self.calls)
+
+    def test_direct_export_requires_source_and_private_output(self):
+        rows, summary = self.run_report()
+        output = self.root / 'private'
+        output.mkdir()
+        with self.assertRaises(TypeError):
+            export(output, rows, summary)
+        denied = mock.Mock(side_effect=CaptureError('output_acl_not_private'))
+        with self.assertRaises(CaptureError):
+            export(output, rows, summary, ledger_path=self.path, acl_check=denied)
+        self.assertEqual(list(output.iterdir()), [])
+        with self.assertRaises(CaptureError):
+            export(self.path.parent, rows, summary, ledger_path=self.path, acl_check=lambda _: None)
+        child = self.path.parent / 'reports'
+        child.mkdir()
+        with self.assertRaises(CaptureError):
+            export(child, rows, summary, ledger_path=self.path, acl_check=lambda _: None)
+        self.assertEqual(list(child.iterdir()), [])
+
+    def test_direct_export_default_acl_guard_cannot_be_skipped_implicitly(self):
+        rows, summary = self.run_report()
+        output = self.root / 'unprotected'
+        output.mkdir()
+        response = mock.Mock(returncode=0, stdout='{"safe":false}')
+        with mock.patch('scripts.capture_history_safety.sys.platform', 'win32'):
+            with mock.patch('scripts.capture_history_safety.subprocess.run', return_value=response) as check:
+                with self.assertRaises(CaptureError):
+                    export(output, rows, summary, ledger_path=self.path)
+                check.assert_called_once()
+        self.assertEqual(list(output.iterdir()), [])
+
+    def test_direct_export_protects_config_service_and_checkout_directories(self):
+        rows, summary = self.run_report()
+        config = self.root / 'configuration'
+        config.mkdir()
+        input_file = config / 'review.json'
+        input_file.write_text('{}', encoding='utf-8')
+        with self.assertRaises(CaptureError):
+            export(config, rows, summary, ledger_path=self.path, input_paths=[input_file], acl_check=lambda _: None)
+        # Use synthetic protected roots; never touch a real service directory.
+        with mock.patch('scripts.capture_history_safety.PROTECTED_ROOTS', (config,)):
+            with self.assertRaises(CaptureError):
+                export(config, rows, summary, ledger_path=self.path, acl_check=lambda _: None)
+        with self.assertRaises(CaptureError):
+            export(Path(__file__).resolve().parents[1], rows, summary, ledger_path=self.path, acl_check=lambda _: None)
+        self.assertEqual(input_file.read_bytes(), b'{}')
+
+    def test_direct_export_refuses_overwrite_and_preserves_inputs(self):
+        rows, summary = self.run_report()
+        output = self.root / 'private'
+        output.mkdir()
+        before = self.path.read_bytes()
+        with mock.patch('historical_attendance.reporting.uuid.uuid4', return_value=mock.Mock(hex='fixed')):
+            with mock.patch('historical_attendance.reporting.dt.datetime') as clock:
+                clock.now.return_value.strftime.return_value = 'fixed'
+                export(output, rows, summary, ledger_path=self.path, acl_check=lambda _: None)
+                first = {p.name: p.read_bytes() for p in output.iterdir()}
+                with self.assertRaises(OSError):
+                    export(output, rows, summary, ledger_path=self.path, acl_check=lambda _: None)
+                for name, data in first.items():
+                    self.assertEqual((output / name).read_bytes(), data)
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_all_ledger_states_and_holds_remain_unchanged(self):
+        from sync_ledger import STATES
+        for uid, state in enumerate(STATES, start=2):
+            self.add(uid=uid, timestamp=STAMP + dt.timedelta(seconds=uid))
+            with Ledger(self.path) as ledger:
+                ledger.db.execute('UPDATE punches SET state=?,error_category=? WHERE device_uid=?',
+                                  (state, 'cutover_hold', str(uid)))
+                ledger.db.commit()
+        rows, _ = self.run_report()
+        self.assertEqual([r['state'] for r in rows[1:]], list(STATES))
+        self.assertTrue(all(not r['eligible_for_recovery'] for r in rows))
+        self.assertTrue(all(r['historical_hold'] for r in rows[1:]))
 
 
 if __name__ == '__main__':

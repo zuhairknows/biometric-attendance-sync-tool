@@ -9,6 +9,7 @@
   "device_ids": ["REPLACE_WITH_REVIEWED_DEVICE_ID"],
   "evidence_reference": "",
   "verification": {
+    "employee_lookup_database_equality": false,
     "unfiltered_employee_and_checkin_visibility": false,
     "server_duplicate_semantics": false,
     "source_and_site_timezone_match": false,

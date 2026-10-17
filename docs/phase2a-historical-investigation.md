@@ -23,6 +23,9 @@ holds, imports configuration, or starts/stops the service.
    user permissions, permission query conditions, field restrictions, deployed
    overrides and the read-only `frappe.client.get_count` implementation. HTTP 200
    and matching counts do not prove unrestricted visibility.
+   Also verify `employee_lookup_database_equality`: the resource equality filter
+   and count endpoint must preserve the deployed Phase 1 database lookup semantics.
+   Older contracts without this explicit claim now fail closed.
 4. Set `INVESTIGATION_API_KEY` and `INVESTIGATION_API_SECRET` in the process
    environment using your approved secret mechanism. Do not put credentials in
    arguments, the contract, repository files, logs or shell history.
@@ -56,7 +59,7 @@ are a setup error. An empty range produces a header-only report without API read
 | --- | --- |
 | `already_existing` | Exactly one destination identity matches under the reviewed rule |
 | `potentially_missing` | No destination identity in the verified comparison; human review required |
-| `unmatched_employee` | Complete employee scan returned no matching attendance device ID |
+| `unmatched_employee` | Complete server-side equality lookup returned no employee |
 | `duplicate_source` | Multiple selected sources share one destination identity; all members flagged |
 | `invalid` | Original source evidence cannot reproduce the Phase 1 identity/payload |
 | `ambiguous` | Mapping, timestamp, direction, or destination identity conflicts |
@@ -71,6 +74,8 @@ for byte-exact source values. Reports contain employee data and must remain priv
 
 The JSON includes per-device counts (including zero-row selections), holds,
 limitations, matching policy, input observation fingerprints and a CSV SHA256.
+Destination counts distinguish distinct employee lookups from returned mapping
+matches; one employee may appear in more than one lookup under database equality.
 Publication never overwrites existing files. The JSON is published last and is
 the completion marker; orphan CSV/`.part` files do not constitute a completed run.
 After interruption rerun the full investigation; there is no automatic resume.
@@ -80,6 +85,13 @@ After interruption rerun the full investigation; there is no automatic resume.
 `historical_attendance/` separates the SQLite repository, source verification,
 GET-only client, business rules and reporting. The future Windows application can
 call `investigate(...)` with a cancellation callback and use the returned data.
+Publish through `export(output, rows, summary, ledger_path=ledger_copy,
+input_paths=[reviewed_contract])`. The ledger path is required. Supply all other
+input/configuration files through `input_paths` so their directories and children
+are excluded. `export` itself checks directory privacy, known protected service
+and checkout roots, source separation and non-overwriting publication. The CLI
+uses the same `validate_output` before API reads; export rechecks before writing.
+Keep the default ACL validator in application code; the override is a test seam.
 Wire the same callback into `ReadOnlyFrappeClient(cancelled=...)` to check between
 HTTP requests. A request already in progress ends on response/timeout; cancellation
 does not interrupt SQLite's integrity check. No delivery component is imported.
@@ -95,12 +107,21 @@ and saved per-punch policies without changing the older fixed-device offline too
 
 The API uses authenticated HTTPS GET requests only: paginated resource lists and
 the allowlisted `frappe.client.get_count` method. Counts before/after each scan,
-explicit terminal empty pages, unique ordered names, bounded pages and two equal
-full scans are required. See [Frappe pagination documentation](https://docs.frappe.io/framework/user/en/api/rest)
+explicit terminal empty pages, unique names, bounded pages and two equal
+full passes are required. `name asc` ordering is requested from the server;
+Python does not reinterpret its collation order. See [Frappe pagination documentation](https://docs.frappe.io/framework/user/en/api/rest)
 and the [Frappe v15 client source](https://github.com/frappe/frappe/blob/version-15/frappe/client.py).
 These checks detect truncation, observable drift and ignored offsets. They cannot
 establish transactional snapshot isolation or discover permission-hidden records.
 If visibility or quiescence is uncertain, leave the contract unverified.
+
+Each distinct original source attendance ID gets its own paginated Employee
+equality lookup, without a status filter. The database decides whether case or
+trailing spaces are equivalent. All returned employees remain associated with
+the queried source ID; there is no Python trimming/case-folding or first-match
+selection. Verified results are cached per original ID within the investigation,
+then every lookup and the Checkin scan are repeated to detect observable drift.
+A failed lookup blocks the entire destination comparison.
 
 Second precision is supported conservatively: fractional source or destination
 values require review rather than rounding into an absence claim. Microsecond
@@ -115,7 +136,11 @@ visible regardless of range. Current employee mapping does not prove historical
 mapping. The engine scans selected devices' ledger history to validate date
 exclusion and holds the selected evidence and destination observations in memory.
 Use smaller ranges for large ledgers; requests have a 30-second timeout and a
-10,000-page safety bound. REST read consistency and historical source policy need
+10,000-page per-scan safety bound, 1,000 distinct lookup IDs and 20,000 total GETs
+across both passes. Default pages contain up to 200 records; lookups run
+sequentially with no unbounded concurrency or automatic retries. Limit exhaustion
+produces an unverified report; split larger ranges rather than silently truncating.
+The client limits are constructor options for controlled use. REST read consistency and historical source policy need
 site-specific verification before operational use.
 
 ## Local validation
@@ -123,7 +148,7 @@ site-specific verification before operational use.
 ```powershell
 py -B -m unittest discover -s tests -p test_historical_investigation.py -v
 $env:PYTHONPATH = 'tests'
-py -B -m unittest test_historical_investigation test_durable_sync test_erpnext_sync test_service_hardening test_phase1_release test_phase1_remaining test_two_uncertain_confirmation test_attendance_reconciliation -q
+py -B -m unittest test_historical_investigation test_durable_sync test_erpnext_sync test_service_hardening test_phase1_release test_phase1_remaining test_two_uncertain_confirmation test_attendance_reconciliation test_frappe_attendance_export test_frappe_server_export -q
 ```
 
 Tests use synthetic databases and mocked HTTP. They assert unchanged source bytes

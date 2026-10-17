@@ -2,11 +2,13 @@
 import csv
 import datetime as dt
 import json
+from pathlib import Path
 import uuid
 
 from scripts.attendance_reconciliation import csv_cell
 from scripts.reconcile_attendance import publish
 from sync_ledger import CAPTURE_FIELDS
+from scripts.capture_history_safety import preflight_output, check_directory_acl, CaptureError
 
 
 FIELDS = ('id',) + CAPTURE_FIELDS + (
@@ -22,7 +24,22 @@ def write_csv(stream, rows):
     writer.writerows({f: csv_cell(row[f]) for f in FIELDS} for row in rows)
 
 
-def export(directory, rows, summary):
+def validate_output(directory, *, ledger_path, input_paths=(), acl_check=check_directory_acl):
+    """One shared policy for CLI preflight and direct application publication."""
+    directory = preflight_output(directory, live=False, acl_check=acl_check)
+    for value in (ledger_path, *input_paths):
+        path = Path(value)
+        if not path.is_absolute():
+            raise CaptureError('input_path_must_be_absolute')
+        path = path.resolve(strict=True)
+        if not path.is_file() or directory == path.parent or path.parent in directory.parents:
+            raise CaptureError('output_must_be_separate_from_inputs')
+    return directory
+
+
+def export(directory, rows, summary, *, ledger_path, input_paths=(), acl_check=check_directory_acl):
+    # Recheck immediately before publication, including calls outside the CLI.
+    directory = validate_output(directory, ledger_path=ledger_path, input_paths=input_paths, acl_check=acl_check)
     run = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d_%H%M%S_') + uuid.uuid4().hex
     details = publish(directory, 'investigation_details_' + run + '.csv', lambda s: write_csv(s, rows))
     summary = dict(summary, reports=[details])
