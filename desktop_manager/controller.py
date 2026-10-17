@@ -1,0 +1,229 @@
+"""Desktop adapters around existing diagnostics, Phase 2A CLI and Phase 2B APIs."""
+import contextlib
+import csv
+import datetime as dt
+import io
+import json
+import os
+from pathlib import Path
+import tempfile
+import threading
+
+from sync_ledger import Ledger
+from historical_attendance import recovery
+from historical_attendance.bounded import run_bounded
+from historical_attendance.recovery_store import RecoveryStore
+from historical_attendance.recovery_simulation import SimulationTarget
+from scripts import investigate_attendance as investigation_cli
+from scripts.attendance_reconciliation import child_file
+from scripts.capture_history_safety import service_state, check_directory_acl
+
+
+class ManagerError(Exception):
+    """Only fixed, employee/credential-free diagnostics cross the UI boundary."""
+
+
+def utc_time(value):
+    return dt.datetime.fromtimestamp(value, dt.timezone.utc).isoformat(timespec='seconds') if value else 'Not recorded'
+
+
+class Settings:
+    # Only explicit app preferences. Never serialize widgets, credentials or report data.
+    FIELDS = ('monitor_ledger', 'backup', 'contract', 'contract_hash', 'output', 'workspace',
+              'simulation', 'normal_lock', 'start', 'end')
+
+    def __init__(self, path=None):
+        self.path = Path(path) if path else Path(os.environ['LOCALAPPDATA']) / 'MYFPF' / 'BiometricSyncManager' / 'settings.json'
+
+    def load(self):
+        try:
+            data = json.loads(self.path.read_text(encoding='utf-8'))
+            return {k: data[k] for k in self.FIELDS if isinstance(data.get(k), str)}
+        except (OSError, ValueError, TypeError, AttributeError):
+            return {}
+
+    def save(self, values):
+        data = {k: values[k] for k in self.FIELDS if isinstance(values.get(k), str)}
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix='.settings-', dir=self.path.parent)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                json.dump(data, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            Path(name).replace(self.path)
+        finally:
+            Path(name).unlink(missing_ok=True)
+
+
+class Controller:
+    def __init__(self, *, service_query=service_state, acl_check=check_directory_acl, cli=investigation_cli.main, sandbox_root=None):
+        self.service_query = service_query
+        self.acl_check = acl_check
+        self.cli = cli
+        self.cancelled = threading.Event()
+        self.last_investigation = None
+        self.sandbox_root = Path(sandbox_root).resolve() if sandbox_root else None
+
+    def _paths(self, *values):
+        for value in values:
+            path = Path(value)
+            if not path.is_absolute() or (self.sandbox_root and not path.resolve().is_relative_to(self.sandbox_root)):
+                raise ManagerError('absolute_approved_path_required')
+
+    def close(self):
+        # Cancels only this app's bounded work. Never issues a service-control call.
+        self.cancelled.set()
+
+    def dashboard(self, ledger_path):
+        data = dict(service='Unavailable', integrity='Unavailable', total=0, pending=0, retry=0,
+                    failed=0, holds=0, last_delivery='Not recorded', devices=[], errors=[])
+        try:
+            data['service'] = self.service_query()
+        except Exception:
+            data['errors'].append('Service status unavailable; access or installation could not be verified.')
+        try:
+            self._paths(ledger_path)
+            with Ledger(Path(ledger_path), readonly=True) as ledger:
+                ledger.db.execute('PRAGMA query_only=ON')
+                ledger.db.execute('BEGIN')
+                ledger.verify_integrity()
+                diagnostics = ledger.diagnostics()
+                data.update(integrity='OK', total=diagnostics['total'], pending=diagnostics['states']['pending'],
+                    retry=diagnostics['states']['retry'], failed=diagnostics['quarantined'],
+                    holds=diagnostics['held_historical'], last_delivery=utc_time(diagnostics['last_successful_delivery']))
+                ids = {r[0] for r in ledger.db.execute('SELECT DISTINCT device_id FROM punches')}
+                states = {r['device_id']: dict(r) for r in ledger.db.execute('SELECT * FROM device_state')}
+                for device in sorted(ids | states.keys()):
+                    state = states.get(device, {})
+                    data['devices'].append(dict(device=device,
+                        fetch='OK' if state.get('fetch_ok') else 'Failed / unknown',
+                        last_fetch=state.get('last_successful_fetch') or 'Not recorded',
+                        backlog=diagnostics['pending_per_device'].get(device, 0),
+                        last_delivery=utc_time(state.get('last_successful_delivery'))))
+        except Exception:
+            data['errors'].append('Ledger unavailable or integrity/schema check failed. No state was changed.')
+        return data
+
+    def investigate(self, values, devices, key, secret, production_ack, backup_ack):
+        self.last_investigation = None  # A failed run must not leave stale results exportable.
+        if not backup_ack or not devices or not key or not secret or self.cancelled.is_set():
+            raise ManagerError('investigation_prerequisites_missing')
+        self._paths(values['backup'], values['contract'], values['output'])
+        directory = Path(values['output'])
+        before = set(directory.glob('investigation_summary_*.json'))
+        args = ['--ledger-copy', values['backup'], '--start', values['start'], '--end', values['end'],
+            '--site-url', values['site'], '--contract', values['contract'], '--contract-sha256', values['contract_hash'],
+            '--output', str(directory), '--max-get-requests', '32', '--deadline-seconds', '120', '--request-timeout-seconds', '10']
+        for device in devices:
+            args.extend(['--device', device])
+        if production_ack:
+            args.extend(['--production-read-only', '--acknowledge-production', values['site'].rstrip('/')])
+        # Use the CLI's exact acknowledgement, contract, privacy and bounded-worker gates.
+        # Environment credentials exist only for this explicitly initiated action.
+        old = {k: os.environ.get(k) for k in ('INVESTIGATION_API_KEY', 'INVESTIGATION_API_SECRET')}
+        try:
+            os.environ.update(INVESTIGATION_API_KEY=key, INVESTIGATION_API_SECRET=secret)
+            receipt = io.StringIO()
+            runner = lambda task, options, **limits: run_bounded(task, options, **limits, cancelled=self.cancelled.is_set)
+            with contextlib.redirect_stdout(receipt):
+                code = self.cli(args, acl_check=self.acl_check, runner=runner)
+        except Exception:
+            raise ManagerError('investigation_blocked_or_cancelled') from None
+        finally:
+            for name, original in old.items():
+                if original is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = original
+        if code not in (0, 2) or self.cancelled.is_set():
+            raise ManagerError('investigation_blocked_or_cancelled')
+        try:
+            terminal = json.loads(receipt.getvalue())
+            created = set(directory.glob('investigation_summary_*.json')) - before
+            if len(created) != 1:
+                raise ValueError
+            summary_path = created.pop()
+            summary = json.loads(summary_path.read_text(encoding='utf-8'))
+            if terminal['status'] != summary['status'] or terminal['records'] != summary['totals']['records']:
+                raise ValueError
+            detail = child_file(summary_path.parent.resolve(), summary['reports'][0]['file'])
+            if recovery.file_hash(detail) != summary['reports'][0]['sha256']:
+                raise ValueError
+            with detail.open(encoding='utf-8', newline='') as stream:
+                rows = list(csv.DictReader(stream))
+            if len(rows) != summary['totals']['records']:
+                raise ValueError
+        except Exception:
+            raise ManagerError('completed_report_unverified') from None
+        self.last_investigation = dict(summary=summary, rows=rows, json_path=str(summary_path), csv_path=str(detail))
+        return self.last_investigation
+
+    def batches(self, workspace):
+        try:
+            self._paths(workspace)
+            store = RecoveryStore(workspace, acl_check=self.acl_check, readonly=True)
+            try:
+                rows = [dict(r) for r in store.db.execute('SELECT id,fingerprint,metadata FROM batches ORDER BY rowid DESC')]
+                for row in rows:
+                    row['created'] = json.loads(row['metadata'])['created']
+                    if not isinstance(row['created'], str):
+                        raise ValueError
+                return rows
+            finally:
+                store.close()
+        except Exception:
+            raise ManagerError('existing_recovery_workspace_unavailable') from None
+
+    def batch(self, workspace, batch_id):
+        try:
+            self._paths(workspace)
+            store = RecoveryStore(workspace, acl_check=self.acl_check, readonly=True)
+            try:
+                data = recovery.results(store, batch_id)
+                data['metadata'] = json.loads(store.batch(batch_id)['metadata'])
+                return data
+            finally:
+                store.close()
+        except Exception:
+            raise ManagerError('recovery_batch_unavailable') from None
+
+    def approve(self, workspace, batch_id, fingerprint, ids, reference):
+        try:
+            self._paths(workspace)
+            if self.cancelled.is_set():
+                raise ValueError
+            store = RecoveryStore(workspace, acl_check=self.acl_check)
+            try:
+                recovery.approve(store, batch_id, fingerprint, ids, reference)
+            finally:
+                store.close()
+            return self.batch(workspace, batch_id)
+        except Exception:
+            raise ManagerError('selected_approval_blocked') from None
+
+    def simulate(self, workspace, batch_id, fingerprint, scenario, normal_lock):
+        try:
+            self._paths(workspace, scenario, normal_lock)
+            if self.cancelled.is_set():
+                raise ValueError
+            store = RecoveryStore(workspace, acl_check=self.acl_check)
+            try:
+                recovery.execute(store, batch_id, fingerprint, SimulationTarget(scenario), Path(normal_lock),
+                                 stop_requested=self.cancelled.is_set)
+            finally:
+                store.close()
+            return self.batch(workspace, batch_id)
+        except Exception:
+            raise ManagerError('simulation_blocked_review_batch_or_writer_lock') from None
+
+    def export_recovery(self, workspace, batch_id, output):
+        try:
+            self._paths(workspace, output)
+            store = RecoveryStore(workspace, acl_check=self.acl_check, readonly=True)
+            try:
+                return recovery.export_results(store, batch_id, output, acl_check=self.acl_check)
+            finally:
+                store.close()
+        except Exception:
+            raise ManagerError('protected_recovery_export_failed') from None

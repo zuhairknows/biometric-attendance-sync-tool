@@ -26,17 +26,22 @@ def now():
 
 
 class RecoveryStore:
-    def __init__(self, workspace, *, acl_check=check_directory_acl):
+    def __init__(self, workspace, *, acl_check=check_directory_acl, readonly=False):
         workspace = preflight_output(workspace, live=False, acl_check=acl_check)
         # Distinct suffix prevents confusing the audit store with a source ledger.
         self.path = workspace / 'recovery-state.recovery-audit'
-        self.db = sqlite3.connect(self.path, timeout=1)
+        self.readonly = readonly
+        self.db = (sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True, timeout=1)
+                   if readonly else sqlite3.connect(self.path, timeout=1))
         self.db.row_factory = sqlite3.Row
         try:
             self.db.execute('PRAGMA foreign_keys=ON')
+            if readonly:
+                self.db.execute('PRAGMA query_only=ON')
+                self.db.execute('BEGIN')  # One consistent view while the normal audit writer may commit.
             version = self.db.execute('PRAGMA user_version').fetchone()[0]
             tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            if version == 0 and not tables:
+            if version == 0 and not tables and not readonly:
                 with self.db:
                     self.db.execute('BEGIN IMMEDIATE')
                     for statement in SCHEMA:
@@ -50,8 +55,9 @@ class RecoveryStore:
             if (self.db.execute('PRAGMA quick_check').fetchone()[0] != 'ok'
                     or self.db.execute('PRAGMA foreign_key_check').fetchone() is not None):
                 raise VerificationError('recovery_store_integrity_unverified')
-            self.db.execute('PRAGMA journal_mode=DELETE')
-            self.db.execute('PRAGMA synchronous=FULL')
+            if not readonly:
+                self.db.execute('PRAGMA journal_mode=DELETE')
+                self.db.execute('PRAGMA synchronous=FULL')
         except BaseException:
             self.db.close()
             raise
@@ -89,6 +95,9 @@ class RecoveryStore:
         Separate from Phase 1's global worker mutex, which Windows may reacquire
         recursively on its owning thread. This file lock protects the audit DB.
         """
+        if self.readonly:
+            yield  # Read transaction above needs no writer lock or lock-file mutation.
+            return
         with Path(str(self.path) + '.lock').open('a+b') as stream:
             try:
                 if os.name == 'nt':

@@ -1,0 +1,2 @@
+# Tkinter ships with the standard Windows Python installer. No PyQt/pyzk/service package needed.
+requests

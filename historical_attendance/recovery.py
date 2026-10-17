@@ -59,7 +59,7 @@ def verify_batch(store, batch, fingerprint):
     return metadata
 
 
-def prepare(store, ledger_path, summary_path, summary_sha256, contract_path, contract_sha256, *, receipt_review):
+def prepare(store, ledger_path, summary_path, summary_sha256, contract_path, contract_sha256, *, receipt_review, acl_check=None):
     """Only externally pinned complete Phase 2A artifacts can seed a batch.
 
     receipt_review references the operator's verified supervisor completion receipt;
@@ -77,7 +77,8 @@ def prepare(store, ledger_path, summary_path, summary_sha256, contract_path, con
             and not any(Path(str(source_path) + suffix).exists() for suffix in ('-wal', '-shm', '-journal')),
             'self_contained_rollback_journal_backup_required')
     source_hash = file_hash(source_path)
-    validate_output(store.path.parent, ledger_path=source_path, input_paths=[summary_path, contract_path])
+    protection = {} if acl_check is None else dict(acl_check=acl_check)
+    validate_output(store.path.parent, ledger_path=source_path, input_paths=[summary_path, contract_path], **protection)
     require(summary.get('schema') == 'attendance-investigation-v1' and summary.get('status') == 'complete'
             and summary.get('blockers') == [] and 'compatibility_status' not in summary
             and summary.get('purpose') is None and summary.get('recovery_authorized') is False
@@ -255,12 +256,13 @@ def results(store, batch_id):
         items=items, events=events, submission_intents=intents)
 
 
-def export_results(store, batch_id, output):
+def export_results(store, batch_id, output, *, acl_check=None):
     from scripts.reconcile_attendance import publish
     data = results(store, batch_id)
     metadata = json.loads(store.batch(batch_id)['metadata'])
+    protection = {} if acl_check is None else dict(acl_check=acl_check)
     output = validate_output(output, ledger_path=Path(metadata['source']),
-        input_paths=[store.path, *(Path(entry['path']) for entry in metadata['inputs'])])
+        input_paths=[store.path, *(Path(entry['path']) for entry in metadata['inputs'])], **protection)
     stem = 'recovery_' + batch_id + '_' + uuid.uuid4().hex
     fields = ('batch', 'id', 'employee', 'status', 'reason', 'source')
     def write_csv(stream):
