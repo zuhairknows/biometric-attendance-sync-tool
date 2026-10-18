@@ -1,5 +1,32 @@
 # Phase 2C Flask conversion validation
 
+## Investigation-only startup
+
+Base: `9406eb5b9d87cc4ef19f1f732c59bfc34ee036e4`. Added mutually exclusive
+`--investigation-only` / `--monitor-only` startup policies. Investigation mode
+allows the monitoring endpoints plus the existing investigation page, action and
+protected export verification. Every recovery action remains default-denied.
+Navigation uses the same endpoint policy; the mode and unverified deployment claims
+are visible. No new profile fields, dependencies, databases or workers were added.
+The investigation demo prepares inputs but no report/recovery batch at startup.
+
+Phase 1 and the Phase 2A/2B engines/CLI are unchanged. Production remains
+compatibility-only even with all claims true; unknown claims are not filled in.
+GET safety evidence, production acknowledgement, source/privacy protections and
+32 GET / 120-second worker / 10-second HTTP limits remain mandatory.
+
+**13 new tests passed (2.650 seconds); 435 relevant regression tests passed
+(68.856 seconds), Python 3.11.** Run the original expanded command below with
+`test_investigation_only` and `test_monitor_only` added. Coverage includes route
+permissions, unchanged monitoring/demo/default modes, source and hold preservation,
+strict input validation, protected exports, incomplete evidence, GET-only authenticated
+production mocks, the real 32-request limit under incomplete pagination, and
+compatibility results remaining unverified/non-recoverable. No production resources
+were accessed, no service was changed, and no deployment/push/merge occurred.
+
+The controlled operator procedure and confirmed live-recovery blockers are in the
+[investigation-only guide](phase2c-manager.md#investigation-only-mode-one-controlled-read-only-production-run).
+
 ## Monitoring refresh correction
 
 Base: `69a43e567b45dfadf35d511344064498183e0492`. `/refresh` was already on the

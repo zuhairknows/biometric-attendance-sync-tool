@@ -76,6 +76,90 @@ back by stopping only the manager; leave its isolated files inactive. No service
 restart or ledger restore is part of deployment/rollback. Separate deployment
 approval is still required; localhost is not user authentication.
 
+## Investigation-only mode: one controlled read-only production run
+
+`--investigation-only` allows Dashboard, Devices and Phase 2A investigation/protected
+CSV/JSON export. All recovery pages/actions, approvals, simulations and recovery
+exports are denied server-side, even with valid CSRF and a populated audit workspace.
+It is mutually exclusive with `--monitor-only`. Preview without live connections:
+
+```powershell
+& '.\Start Biometric Manager.bat' --demo --investigation-only
+```
+
+After separate deployment/execution approval, reuse
+`C:\GitHub\biometric-sync-manager-phase2c` and its existing private profile. Update
+only this isolated manager to the reviewed delivery commit, never the active
+service checkout; keep `ERPNextBiometricPushService` running. Extend the profile
+with these existing fields (example paths must point to already approved storage):
+
+```json
+{
+  "backup": "C:/Private/BiometricReview/inputs/ledger-copy.sqlite3",
+  "contract": "C:/Private/BiometricReview/inputs/production-review.json",
+  "contract_hash": "REPLACE_WITH_INDEPENDENTLY_APPROVED_SHA256",
+  "output": "C:/Private/BiometricReview/reports/run-01",
+  "site": "https://erp.myfpf.com"
+}
+```
+
+Keep the existing `monitor_ledger` and `device_config`. No credentials, recovery
+workspace, new database or new ACL grants are needed. `start`/`end` defaults are
+optional; select the actual range in the browser. Preserve private UTF-8 JSON
+without a BOM and existing input/output separation/ACL checks.
+
+1. Approve a five-minute interval with 1–20 available backup punches for
+   `FP1_DEVICE_01`. Only local ledger history is investigated; no device is fetched.
+   Use the existing consistent offline backup, not a file copy of the writable
+   production ledger. Compare its SHA256 with independently recorded evidence:
+   `Get-FileHash -LiteralPath 'C:\Private\BiometricReview\inputs\ledger-copy.sqlite3' -Algorithm SHA256`.
+2. Review the existing [production contract template](phase2a-production-contract.template.json)
+   and [verification requirements](phase2a-production-read-only-verification.md#contract-record-facts-rather-than-inventing-evidence).
+   Apply those evidence requirements to this manager run in the isolated production
+   manager installation specified above. Set `read_only_api_verified` true only after independent
+   review of effective list/count GET handlers, overrides, middleware and relevant
+   Server Scripts. **STOP before requests if GET safety cannot be established.**
+   Leave every unknown comparison claim false, especially destination stability;
+   never invent quiescence while the service runs. Independently approve/hash the
+   contract, then place that exact hash in the profile. Use an existing approved token.
+3. Use an existing empty protected report folder outside inputs, checkout and service
+   directories. Stop if privacy checks fail; do not relax production ACLs to proceed.
+   Record the service's running state/PID before and after using
+   `Get-CimInstance Win32_Service -Filter "Name='ERPNextBiometricPushService'" | Select-Object State,ProcessId`.
+4. Stop only the existing manager console with Ctrl+C, then launch with the **same
+   private profile path** already used for monitoring:
+
+   ```powershell
+   Set-Location 'C:\GitHub\biometric-sync-manager-phase2c'
+   $Profile = Read-Host 'Existing private manager profile absolute path'
+   & '.\Start Biometric Manager.bat' --investigation-only --profile $Profile
+   ```
+
+5. Reload `http://127.0.0.1:8765`. Confirm **Investigation only**, no Recovery link,
+   and direct `/recovery` returns 403. Enter the approved range/device and masked
+   credentials; confirm the offline backup and explicitly acknowledge production.
+   Initiate one investigation. Limits remain **32 GETs / 120-second worker deadline /
+   10-second HTTP timeout**, without automatic retries or budget increases.
+6. Review protected CSV/JSON, per-device counts, blockers and unverified claims.
+   Recheck backup/contract hashes and service PID/state. **STOP** on source/hash drift,
+   permission/API/pagination errors, exceeded limits or uncertain results. Do not
+   rerun automatically. Ctrl+C stops only the manager; restart with `--monitor-only`
+   and the same profile to return to monitoring. No service restart or ledger restore.
+
+**Production remains compatibility-only in the unchanged Phase 2A CLI**, even if
+all comparison claims are true. `reads_complete` only describes consistent GETs;
+the report remains **Unverified**, with no confirmed missing/recoverable punches.
+Fully verified comparison requires independent employee equality/visibility,
+duplicate, timezone/precision, historical settings, effective-hook and stability
+evidence and a mode permitted by Phase 2A. This change does not enable such a full
+production comparison. Recovery eligibility/authorization remain false everywhere.
+
+Live recovery is still blocked by the absence of a production transport/operational
+approval and verified non-compatibility investigation, the service's global writer
+mutex, unverified cross-host fencing/source-to-live-ledger/audit ownership, and
+uncertain-delivery reconciliation requirements. Held/rejected records remain excluded;
+any hold transition needs a separate design and authorization. No such change is made.
+
 ## Approved startup profile
 
 Normal launch reads the existing private file

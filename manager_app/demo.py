@@ -26,7 +26,7 @@ class DemoACL:
             raise ValueError('demo_path_outside_sandbox')
 
 
-def create_demo(*, monitor_only=False):
+def create_demo(*, monitor_only=False, investigation_only=False):
     temporary = tempfile.TemporaryDirectory(prefix='biometric-manager-demo-')
     root = Path(temporary.name).resolve()
     inputs, output, audit, exports = (root / name for name in ('inputs', 'reports', 'audit', 'exports'))
@@ -62,22 +62,24 @@ def create_demo(*, monitor_only=False):
     scenario.write_text(json.dumps(dict(synthetic_only=True, site_url=contract['site_url'],
         employees=[dict(name='SYNTHETIC_EMP', attendance_device_id='100', status='Active', modified=str(start))],
         checkins=[])), encoding='utf-8')
-    target = SimulationTarget(scenario)
-    reader = ReadOnlyFrappeClient(target.url, 'DEMO', 'DEMO', target.request)
-    rows, summary = investigate(SQLiteRepository(source), reader, start, end, contract['device_ids'], contract)
-    summary['contract_file_sha256'] = recovery.file_hash(contract_path)
-    detail = inputs / 'synthetic-details.csv'
-    with detail.open('w', encoding='utf-8', newline='') as stream:
-        reporting.write_csv(stream, rows)
-    summary['reports'] = [dict(file=detail.name, sha256=recovery.file_hash(detail))]
-    summary_path = inputs / 'synthetic-summary.json'
-    summary_path.write_text(json.dumps(summary), encoding='utf-8')
-    store = RecoveryStore(audit, acl_check=demo_acl)
-    try:
-        recovery.prepare(store, source, summary_path, recovery.file_hash(summary_path), contract_path,
-            recovery.file_hash(contract_path), receipt_review='SYNTHETIC completed demo reviewed', acl_check=demo_acl)
-    finally:
-        store.close()
+    if not investigation_only:
+        # Read-only investigation previews do not prepare a recovery batch, even locally.
+        target = SimulationTarget(scenario)
+        reader = ReadOnlyFrappeClient(target.url, 'DEMO', 'DEMO', target.request)
+        rows, summary = investigate(SQLiteRepository(source), reader, start, end, contract['device_ids'], contract)
+        summary['contract_file_sha256'] = recovery.file_hash(contract_path)
+        detail = inputs / 'synthetic-details.csv'
+        with detail.open('w', encoding='utf-8', newline='') as stream:
+            reporting.write_csv(stream, rows)
+        summary['reports'] = [dict(file=detail.name, sha256=recovery.file_hash(detail))]
+        summary_path = inputs / 'synthetic-summary.json'
+        summary_path.write_text(json.dumps(summary), encoding='utf-8')
+        store = RecoveryStore(audit, acl_check=demo_acl)
+        try:
+            recovery.prepare(store, source, summary_path, recovery.file_hash(summary_path), contract_path,
+                recovery.file_hash(contract_path), receipt_review='SYNTHETIC completed demo reviewed', acl_check=demo_acl)
+        finally:
+            store.close()
 
     def demo_cli(args, **options):
         return cli.main(args, request=SimulationTarget(scenario).request, **options)

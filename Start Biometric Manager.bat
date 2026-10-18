@@ -1,6 +1,7 @@
 @echo off
 rem Monitoring: "Start Biometric Manager.bat" --monitor-only --profile "C:\Private\monitor.json"
 rem Synthetic monitoring preview: "Start Biometric Manager.bat" --demo --monitor-only
+rem Read-only investigation: "Start Biometric Manager.bat" --investigation-only --profile "C:\Private\investigation.json"
 setlocal
 cd /d "%~dp0"
 set "MANAGER_PY=%~dp0.venv\Scripts\python.exe"

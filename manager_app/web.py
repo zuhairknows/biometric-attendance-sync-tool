@@ -19,9 +19,13 @@ from .state import State
 
 ORIGIN = 'http://127.0.0.1:8765'
 MONITOR_ENDPOINTS = frozenset({'dashboard_page', 'devices_page', 'refresh', 'job_page', 'job_status', 'static', 'favicon'})
+INVESTIGATION_ENDPOINTS = MONITOR_ENDPOINTS | {'investigation_page', 'investigate', 'investigation_export'}
 
 
-def create_app(controller, values, *, demo=False, monitor_only=False):
+def create_app(controller, values, *, demo=False, monitor_only=False, investigation_only=False):
+    if monitor_only and investigation_only:
+        raise ValueError('startup_modes_are_mutually_exclusive')
+    allowed_endpoints = MONITOR_ENDPOINTS if monitor_only else INVESTIGATION_ENDPOINTS if investigation_only else None
     app = Flask(__name__)
     app.config.update(SECRET_KEY=secrets.token_hex(32), DEBUG=False, TESTING=False,
         TRUSTED_HOSTS=['127.0.0.1'], SESSION_COOKIE_NAME='biometric_manager', SESSION_COOKIE_HTTPONLY=True,
@@ -44,9 +48,9 @@ def create_app(controller, values, *, demo=False, monitor_only=False):
             abort(400)
         if request.method not in ('GET', 'HEAD', 'POST'):
             abort(405)
-        # Default deny: adding a future route cannot silently expand monitoring mode.
+        # Default deny: adding a future route cannot silently expand a restricted mode.
         # Run before parsing forms/CSRF or invoking any route/business operation.
-        if monitor_only and request.endpoint not in MONITOR_ENDPOINTS:
+        if allowed_endpoints is not None and request.endpoint not in allowed_endpoints:
             abort(403)
         if request.method == 'POST':
             token = session.get('csrf', '')
@@ -79,7 +83,8 @@ def create_app(controller, values, *, demo=False, monitor_only=False):
         if 'csrf' not in session:
             session['csrf'] = secrets.token_hex(32)
             session.permanent = True
-        return dict(csrf=session['csrf'], demo=demo, monitor_only=monitor_only, devices=state.devices,
+        return dict(csrf=session['csrf'], demo=demo, monitor_only=monitor_only,
+            investigation_only=investigation_only, allowed_endpoints=allowed_endpoints, devices=state.devices,
             device_warning=device_warning, active=request.endpoint, job=state.job,
             profile=state.values, dashboard=state.dashboard)
 
