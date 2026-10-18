@@ -26,7 +26,7 @@ class DemoACL:
             raise ValueError('demo_path_outside_sandbox')
 
 
-def create_demo():
+def create_demo(*, monitor_only=False):
     temporary = tempfile.TemporaryDirectory(prefix='biometric-manager-demo-')
     root = Path(temporary.name).resolve()
     inputs, output, audit, exports = (root / name for name in ('inputs', 'reports', 'audit', 'exports'))
@@ -42,6 +42,15 @@ def create_demo():
             ledger.ingest([normalize(dict(user_id='100', timestamp=dt.datetime(2026, 10, 11, hour),
                 punch=0, status=1, uid=hour), dict(device_id=device, punch_direction=None))], device,
                 fetched_at='2026-10-11 11:00:00')
+    configuration = inputs / 'synthetic-devices.py'
+    configuration.write_text('devices = ' + repr([
+        dict(device_id=f'FP{1 if number <= 7 else 2}_DEVICE_{number:02}',
+             ip=f'192.0.2.{number}', port=4370 + number, password='DEMO_DEVICE_SECRET')
+        for number in range(1, 13)]), encoding='utf-8')
+    if monitor_only:
+        # Monitoring previews need no investigation report, recovery batch or transport.
+        controller = Controller(service_query=lambda: 'RUNNING (demo)', acl_check=demo_acl, sandbox_root=root)
+        return temporary, controller, dict(monitor_ledger=str(source), device_config=str(configuration))
     contract = dict(schema='attendance-investigation-contract-v1', destination_environment='synthetic',
         site_url='https://manager.example.test', site_timezone='Asia/Riyadh', timestamp_precision='seconds',
         duplicate_key='employee_time_log_type', coverage_start=str(start), coverage_end=str(end),
@@ -78,10 +87,5 @@ def create_demo():
         contract_hash=recovery.file_hash(contract_path), output=str(output), workspace=str(audit),
         simulation=str(scenario), normal_lock=str(root / 'synthetic-normal.sqlite3'),
         start=str(start), end=str(end), site=contract['site_url'])
-    configuration = inputs / 'synthetic-devices.py'
-    configuration.write_text('devices = ' + repr([
-        dict(device_id=f'FP{1 if number <= 7 else 2}_DEVICE_{number:02}',
-             ip=f'192.0.2.{number}', port=4370 + number, password='DEMO_DEVICE_SECRET')
-        for number in range(1, 13)]), encoding='utf-8')
     values['device_config'] = str(configuration)
     return temporary, controller, values

@@ -1,5 +1,40 @@
 # Phase 2C Flask conversion validation
 
+## Final monitoring-only gate
+
+Gate base: `12a32666f9be9c7f0faa08ba71eaea31e8a087eb`. The additional startup
+flag `--monitor-only` is enforced by a default-deny endpoint allowlist before
+form parsing or business handlers. Only Dashboard, Devices, diagnostics refresh,
+job display/status and static assets are available. Disabled sections are hidden
+and **Monitoring only** is visible. Normal/demo defaults and existing protection
+rules are unchanged; no Phase 1, service or business-rule modules changed.
+
+Ten new synthetic tests enumerate prohibited routes for GET/HEAD/valid-CSRF POST,
+assert business/export/job operations are never invoked, and compare every fixture
+file's bytes before/after blocked requests. They also cover URL variants, request
+flag bypass attempts, default denial of future endpoints, working diagnostics/assets/
+job status, navigation, Host/CSRF protections, missing/relative/corrupt ledger paths,
+missing device metadata, CLI forwarding/default behavior for profile/demo modes,
+and monitoring-demo startup without investigation/recovery/export preparation.
+The 57 focused manager/gate tests passed in 8.305 seconds. The full expanded
+suite passed **419 tests in 66.909 seconds** under Python 3.11, adding
+`test_monitor_only` to the original expanded command below. Launcher `--help` and
+diff checks passed. No production connection, deployment, service action or new
+listening server was used for gate validation.
+
+```powershell
+$env:PYTHONPATH = 'tests'
+.\.venv\Scripts\python.exe -B -m unittest test_monitor_only test_manager test_manager_web -q
+```
+
+See [monitoring-only deployment instructions](phase2c-manager.md#enforced-monitoring-only-startup).
+Operational deployment still requires approval, a private minimal profile and an
+isolated checkout/environment. Existing read-only ledger/SCM permissions must be
+verified without changing the running service. This gate does not authorize
+investigation or recovery and does not make localhost user authentication.
+
+## Original conversion validation
+
 Branch: `feature/phase2-historical-recovery`.
 Base: `ac8cd7248a7159449d3b48a8c7d055d875f47d52` (Tkinter version retained in history).
 Final revision is reported with delivery. No push, merge or deployment is included.

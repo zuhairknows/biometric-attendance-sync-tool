@@ -25,6 +25,53 @@ to print the address without opening a browser. A busy port fails before launch.
 local synthetic ERPNext fixture. It never contacts ERPNext, SCM or devices. Demo
 state is removed on graceful shutdown. Start here on a review computer.
 
+## Enforced monitoring-only startup
+
+Use `--monitor-only` to allow only Dashboard, Devices, static assets, diagnostics
+refresh and its read-only job pages/status. Investigation, recovery, approval,
+simulation and exports return **403**, including direct GET/POST URLs. Their
+navigation is hidden; every page displays **Monitoring only**. The restriction is
+startup-only and cannot be disabled by a browser request. Without this flag, normal
+and demo workflows retain their existing behavior. For a synthetic preview:
+
+```powershell
+& '.\Start Biometric Manager.bat' --demo --monitor-only
+```
+
+This preview seeds only synthetic monitoring data, not investigation reports or
+recovery batches. Ordinary `--demo` still prepares its full demonstration workflow.
+
+For approved production monitoring, use a separate manager checkout at the reviewed
+delivery commit and its own `.venv`; leave the running service checkout/environment
+unchanged. In an existing private profile directory meeting the ACL requirements
+below, save this minimal UTF-8 JSON **without a BOM**:
+
+```json
+{
+  "monitor_ledger": "C:/ProgramData/ERPNextBiometricPushService/sync.sqlite3",
+  "device_config": "C:/GitHub/biometric-attendance-sync-tool/local_config.py"
+}
+```
+
+Confirm `device_config` is the actual approved active device configuration. Do not
+add credentials, investigation inputs or recovery workspace paths. Launch from the
+isolated manager checkout under an account with existing approved ledger-read and
+SCM-query permissions:
+
+```powershell
+& '.\Start Biometric Manager.bat' --monitor-only --profile 'C:\Private\BiometricReview\monitor.json'
+```
+
+Check `http://127.0.0.1:8765`: Monitoring only is visible, only Dashboard/Devices
+navigation remains, and one manual refresh reports real diagnostics. Direct
+`/investigation` and `/recovery` must return 403. Missing/invalid ledger access stays
+Unavailable without creation/repair; missing device metadata stays unknown. Stop if
+permissions or profile validation fail rather than changing service/ledger ACLs.
+Verify the service remains running with the same PID/configuration. Ctrl+C rolls
+back by stopping only the manager; leave its isolated files inactive. No service
+restart or ledger restore is part of deployment/rollback. Separate deployment
+approval is still required; localhost is not user authentication.
+
 ## Approved startup profile
 
 Normal launch reads the existing private file

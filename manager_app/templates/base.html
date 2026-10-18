@@ -8,11 +8,14 @@
 <aside class="sidebar"><a class="brand" href="{{ url_for('dashboard_page') }}"><span class="brand-mark">B</span><span>Biometric<span class="brand-sub">Sync Manager</span></span></a>
 <div class="nav-label">WORKSPACE</div><nav aria-label="Main navigation">
 {% for endpoint,label,icon in [('dashboard_page','Dashboard','◫'),('devices_page','Devices','▤'),('investigation_page','Investigation','⌕'),('recovery_page','Recovery','↺')] %}
+{% if not monitor_only or endpoint in ('dashboard_page','devices_page') %}
 <a class="nav-link {{ 'selected' if active == endpoint or (endpoint == 'recovery_page' and active == 'batch_page') }}" href="{{ url_for(endpoint) }}"><span aria-hidden="true">{{ icon }}</span>{{ label }}</a>
+{% endif %}
 {% endfor %}</nav><div class="sidebar-footer"><span class="local-dot"></span> Local connection<br><small>127.0.0.1:8765 · No live recovery</small></div></aside>
-<main><header class="topbar"><span>ATTENDANCE OPERATIONS</span><span class="badge {{ 'info' if demo else '' }}">{{ 'Synthetic demo' if demo else 'Local workspace' }}</span></header>
+<main><header class="topbar"><span>ATTENDANCE OPERATIONS</span><span class="badge {{ 'info' if demo or monitor_only else '' }}">{{ 'Monitoring only' if monitor_only else 'Synthetic demo' if demo else 'Local workspace' }}</span></header>
 <div class="content"><div class="page-heading"><div><p class="eyebrow">BIOMETRIC SYNC MANAGER</p><h1>{{ self.title() }}</h1><p class="subtitle">{% block subtitle %}{% endblock %}</p></div>{% block heading_action %}{% endblock %}</div>
 {% if demo %}<div class="notice subtle">Demonstration data only. No ERPNext, device or Windows service connection.</div>{% endif %}
+{% if monitor_only %}<div class="notice safety">Monitoring only — Dashboard and Devices enabled. Investigation, recovery and exports are disabled.</div>{% endif %}
 {% if job and job.status == 'running' %}<div class="notice">One management action is running. <a href="{{ url_for('job_page', identity=job.id) }}">View progress</a></div>{% endif %}
 {% for message in get_flashed_messages() %}<div class="notice">{{ message }}</div>{% endfor %}
 {% block body %}{% endblock %}

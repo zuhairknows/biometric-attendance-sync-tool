@@ -18,9 +18,10 @@ from .profile import device_catalog
 from .state import State
 
 ORIGIN = 'http://127.0.0.1:8765'
+MONITOR_ENDPOINTS = frozenset({'dashboard_page', 'devices_page', 'refresh', 'job_page', 'job_status', 'static'})
 
 
-def create_app(controller, values, *, demo=False):
+def create_app(controller, values, *, demo=False, monitor_only=False):
     app = Flask(__name__)
     app.config.update(SECRET_KEY=secrets.token_hex(32), DEBUG=False, TESTING=False,
         TRUSTED_HOSTS=['127.0.0.1'], SESSION_COOKIE_NAME='biometric_manager', SESSION_COOKIE_HTTPONLY=True,
@@ -43,6 +44,10 @@ def create_app(controller, values, *, demo=False):
             abort(400)
         if request.method not in ('GET', 'HEAD', 'POST'):
             abort(405)
+        # Default deny: adding a future route cannot silently expand monitoring mode.
+        # Run before parsing forms/CSRF or invoking any route/business operation.
+        if monitor_only and request.endpoint not in MONITOR_ENDPOINTS:
+            abort(403)
         if request.method == 'POST':
             token = session.get('csrf', '')
             supplied = request.form.get('csrf', '')
@@ -72,7 +77,7 @@ def create_app(controller, values, *, demo=False):
         if 'csrf' not in session:
             session['csrf'] = secrets.token_hex(32)
             session.permanent = True
-        return dict(csrf=session['csrf'], demo=demo, devices=state.devices,
+        return dict(csrf=session['csrf'], demo=demo, monitor_only=monitor_only, devices=state.devices,
             device_warning=device_warning, active=request.endpoint, job=state.job,
             profile=state.values, dashboard=state.dashboard)
 
