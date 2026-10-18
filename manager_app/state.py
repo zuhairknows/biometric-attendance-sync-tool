@@ -3,6 +3,7 @@ import secrets
 import threading
 
 from .controller import INVESTIGATION_FAILURES, ManagerError
+from historical_attendance.diagnostics import DiagnosticError
 
 
 class State:
@@ -34,6 +35,10 @@ class State:
             except BaseException as error:
                 # Neither HTTP exceptions nor private input/employee values enter logs/pages.
                 message = INVESTIGATION_FAILURES.get(str(error)) if isinstance(error, ManagerError) else None
+                if isinstance(error, ManagerError) and isinstance(error.diagnostic, DiagnosticError):
+                    message = error.diagnostic.message
+                elif isinstance(error, DiagnosticError):
+                    message = error.message
                 job.update(status='blocked', error=message or 'Action blocked. Review the approved inputs, permissions and verification prerequisites.')
             finally:
                 self.lock.release()

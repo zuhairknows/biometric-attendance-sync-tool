@@ -6,10 +6,11 @@ from pathlib import Path
 import re
 import secrets
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, g, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.exceptions import HTTPException
 
 from historical_attendance.engine import CATEGORIES
+from historical_attendance.diagnostics import DiagnosticError
 from historical_attendance.reporting import validate_output
 from historical_attendance.recovery import file_hash
 from scripts.attendance_reconciliation import local_time
@@ -71,13 +72,29 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
             'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'})
         return response
 
+    @app.before_request
+    def offline_diagnostics():
+        # protect() runs first: forbidden modes, Host and CSRF failures never
+        # invoke offline logic or create diagnostic files.
+        if request.endpoint in ('offline_page', 'offline_run', 'offline_export'):
+            g.offline_trace = controller.offline_diagnostics(state.values)
+            g.offline_trace.enter('request')
+
     @app.errorhandler(Exception)
     def safe_error(error):
-        status = error.code if isinstance(error, HTTPException) else 400 if isinstance(error, (ManagerError, ValueError)) else 500
+        status = error.code if isinstance(error, HTTPException) else 400 if isinstance(error, (ManagerError, ValueError, DiagnosticError)) else 500
         if request.environ.get('HTTP_HOST') != '127.0.0.1:8765':
             # Host validation can fail before Flask creates a URL adapter.
             return 'Request rejected.', status
-        return render_template('error.html', code=status), status
+        diagnostic = error if isinstance(error, DiagnosticError) else getattr(error, 'diagnostic', None)
+        trace = getattr(g, 'offline_trace', None)
+        if trace and not isinstance(diagnostic, DiagnosticError):
+            try:
+                diagnostic = trace.fail(ValueError('request_rejected') if isinstance(error, HTTPException) else error)
+            except DiagnosticError as log_error:
+                diagnostic = log_error
+        return render_template('error.html', code=status,
+            diagnostic=diagnostic.message if isinstance(diagnostic, DiagnosticError) else None), status
 
     @app.context_processor
     def context():
@@ -226,12 +243,15 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
     @app.get('/investigation/offline')
     def offline_page():
         from historical_attendance.offline import choices
+        diagnostic = g.offline_trace
         try:
+            diagnostic.enter('import_directory')
             catalog = choices(state.values.get('offline_directory', ''), controller.acl_check)
             warning = ''
-        except Exception:
+            diagnostic.emit('passed', 'ok')
+        except Exception as error:
             catalog = dict(snapshots=[], csvs=[])
-            warning = 'Approved private offline import directory unavailable. Review the startup profile and permissions.'
+            warning = diagnostic.fail(error).message
         result = state.offline
         keys = ('id', 'device_id', 'punch_timestamp', 'classification', 'reason')
         classification = request.args.get('classification', '')
@@ -245,6 +265,7 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
     @app.post('/investigation/offline/run')
     def offline_run():
         from historical_attendance.offline import choices
+        diagnostic = g.offline_trace
         fields({'start', 'end', 'floor', 'devices', 'snapshot', 'employees', 'checkins', 'backup_ack'})
         start, end = (request.form.get(k, '').replace('T', ' ') for k in ('start', 'end'))
         start, end = (v + ':00' if len(v) == 16 else v for v in (start, end))
@@ -254,7 +275,9 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
                 or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed
                 or request.form.get('backup_ack') != '1'):
             abort(400)
+        diagnostic.enter('import_directory')
         catalog = choices(state.values.get('offline_directory', ''), controller.acl_check)
+        diagnostic.enter('request')
         snapshot, employees, checkins = (request.form.get(k, '') for k in ('snapshot', 'employees', 'checkins'))
         if (snapshot not in catalog['snapshots'] or employees not in catalog['csvs']
                 or checkins not in catalog['csvs'] or employees == checkins):
@@ -262,12 +285,13 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
         values = dict(state.values, start=start, end=end)
         def task():
             state.offline = None
-            return controller.compare_offline(values, snapshot, employees, checkins, selected)
+            return controller.compare_offline(values, snapshot, employees, checkins, selected, diagnostic=diagnostic)
         return launch('Offline comparison and protected export', task,
             lambda result: setattr(state, 'offline', result), url_for('offline_page'))
 
     @app.post('/investigation/offline/export')
     def offline_export():
+        diagnostic = g.offline_trace
         fields(set())
         result = state.offline
         if not result:
@@ -276,18 +300,25 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
             # Publication already happened atomically via the shared protected
             # exporter. This action verifies those exact files, never downloads them.
             from historical_attendance.offline import import_root, approved_file, digest
-            root = import_root(state.values['offline_directory'], controller.acl_check)
-            manifest = approved_file(root, state.values['offline_evidence'], controller.acl_check)
-            if digest(manifest) != result['summary']['evidence_file_sha256']:
-                raise ManagerError('offline_comparison_blocked')
-            evidence = json.loads(manifest.read_text(encoding='utf-8-sig'))
-            inputs = [approved_file(root, entry['file'], controller.acl_check) for entry in evidence['files'].values()]
-            if any(digest(path) != entry['sha256'] for path, entry in zip(inputs, evidence['files'].values())):
-                raise ManagerError('offline_comparison_blocked')
-            validate_output(state.values['output'], ledger_path=inputs[0], input_paths=[manifest, *inputs[1:]], acl_check=controller.acl_check)
-            if (file_hash(Path(result['csv_path'])) != result['summary']['reports'][0]['sha256']
-                    or json.loads(Path(result['json_path']).read_text(encoding='utf-8')) != result['summary']):
-                raise ManagerError('offline_comparison_blocked')
+            with diagnostic.guard('import_directory'):
+                root = import_root(state.values['offline_directory'], controller.acl_check)
+                diagnostic.enter('evidence_path')
+                manifest = approved_file(root, state.values['offline_evidence'], controller.acl_check)
+                diagnostic.enter('evidence_hash')
+                if digest(manifest) != result['summary']['evidence_file_sha256']:
+                    raise ValueError('offline_inputs_changed')
+                evidence = json.loads(manifest.read_text(encoding='utf-8-sig'))
+                diagnostic.enter('input_recheck')
+                inputs = [approved_file(root, entry['file'], controller.acl_check) for entry in evidence['files'].values()]
+                if any(digest(path) != entry['sha256'] for path, entry in zip(inputs, evidence['files'].values())):
+                    raise ValueError('offline_inputs_changed')
+                diagnostic.enter('output')
+                validate_output(state.values['output'], ledger_path=inputs[0], input_paths=[manifest, *inputs[1:]], acl_check=controller.acl_check)
+                diagnostic.enter('export_verify')
+                if (file_hash(Path(result['csv_path'])) != result['summary']['reports'][0]['sha256']
+                        or json.loads(Path(result['json_path']).read_text(encoding='utf-8')) != result['summary']):
+                    raise ValueError('completed_report_unverified')
+                diagnostic.emit('complete', 'result_complete' if result['summary']['status'] == 'complete' else 'result_unverified')
         return launch('Verify offline protected CSV/JSON', verify, lambda _: None, url_for('offline_page'))
 
     @app.get('/recovery')

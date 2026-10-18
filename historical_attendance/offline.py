@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .client import VerificationError
+from .diagnostics import CODES, DiagnosticError
 from .engine import CLAIMS, investigate
 from .repository import SQLiteRepository
 from .reporting import export, validate_output
@@ -125,20 +126,27 @@ class ExportDestination:
 
 
 def compare(*, directory, evidence_name, evidence_hash, snapshot, employees, checkins,
-            start, end, devices, output, acl_check=check_directory_acl):
+            start, end, devices, output, acl_check=check_directory_acl, diagnostic=None):
+    stage = diagnostic.enter if diagnostic else lambda _: None
+    stage('import_directory')
     root = import_root(directory, acl_check)
+    stage('evidence_path')
     evidence_path = approved_file(root, evidence_name, acl_check)
     require(evidence_path.stat().st_size <= MAX_BYTES, 'offline_evidence_size_limit')
+    stage('evidence_hash')
     evidence, evidence_hash, _ = verified_json(evidence_path, evidence_hash)
+    stage('source_path')
     source = approved_file(root, snapshot, acl_check)
     require(source.suffix.lower() == '.sqlite3', 'offline_source_type_invalid')
     require(employees != checkins, 'offline_exports_must_be_distinct')
     require(start <= end and devices and len(devices) == len(set(devices)), 'invalid_range_or_devices')
     files = evidence.get('files', {})
+    stage('source_hash')
     require(files.get('snapshot', {}).get('file') == snapshot
             and digest(source) == files['snapshot'].get('sha256'), 'offline_source_changed_or_unapproved')
     # As in Phase 2B preparation, reject WAL/hot-journal inputs before SQLite
     # could create sidecars. A protected self-contained backup is mandatory.
+    stage('source_format')
     with source.open('rb') as stream:
         header = stream.read(20)
     require(header[:16] == b'SQLite format 3\x00' and header[18:20] == b'\x01\x01'
@@ -150,30 +158,42 @@ def compare(*, directory, evidence_name, evidence_hash, snapshot, employees, che
     # claims are generated or set true here; HTTP endpoint safety is irrelevant
     # because this adapter has no HTTP implementation.
     inputs = [evidence_path]
+    stage('output')
     validate_output(output, ledger_path=source, input_paths=inputs, acl_check=acl_check)
     before_source = digest(source)
+    stage('source_read')
     source_rows = SQLiteRepository(source).read(start, end, devices)
     blockers, imported, observed = [], {}, dict(evidence=evidence_hash, snapshot=before_source)
     # Unknown retrieval times must stay unknown, including when other evidence
     # is already unverified. Never substitute file timestamps or the current time.
+    stage('export_times')
     for role in ('employees', 'checkins'):
         try:
             value = files.get(role, {}).get('created_at')
             if value is None:
                 blockers.append(f'offline_{role}_creation_time_missing')
+                if diagnostic:
+                    diagnostic.emit('unverified', blockers[-1])
             else:
                 created = dt.datetime.fromisoformat(value)
                 require(created.tzinfo is not None and created <= dt.datetime.now(dt.timezone.utc),
                         f'offline_{role}_creation_time_invalid')
-        except Exception:
+        except Exception as error:
+            # A diagnostic write failure must not be treated as export metadata.
+            if isinstance(error, DiagnosticError):
+                raise
             blockers.append(f'offline_{role}_creation_time_invalid')
+            if diagnostic:
+                diagnostic.emit('unverified', blockers[-1])
     try:
+        stage('export_evidence')
         require(evidence.get('schema') == 'attendance-offline-evidence-v1'
                 and evidence.get('export_set_consistent') is True
                 and bool(evidence.get('review_reference')), 'offline_export_evidence_unverified')
         for role, selected, required in (
                 ('employees', employees, ('name', 'attendance_device_id', 'status')),
                 ('checkins', checkins, ('name', 'employee', 'time', 'log_type', 'device_id'))):
+            stage(role + '_csv')
             meta = files.get(role, {})
             require(meta.get('file') == selected and selected.lower().endswith('.csv'), 'offline_export_selection_unapproved')
             path = approved_file(root, selected, acl_check)
@@ -189,6 +209,7 @@ def compare(*, directory, evidence_name, evidence_hash, snapshot, employees, che
                     and type(meta.get('independent_count')) is int and meta['independent_count'] == len(rows),
                     'offline_export_count_or_origin_unverified')
             imported[role] = rows
+        stage('export_evidence')
         require(files['employees'].get('filters') == [] and files['employees'].get('includes_inactive') is True,
                 'offline_employee_coverage_unverified')
         lower, upper = (local_time(files['checkins'][key]) for key in ('coverage_start', 'coverage_end'))
@@ -209,12 +230,22 @@ def compare(*, directory, evidence_name, evidence_hash, snapshot, employees, che
             if row['log_type'] == '__SQL_NULL__':
                 row['log_type'] = None
     except VerificationError as error:
+        if diagnostic:
+            diagnostic.fail(error, event='unverified')
         blockers.append(str(error))
-    except Exception:
+    except Exception as error:
+        if isinstance(error, DiagnosticError):
+            raise
+        if diagnostic:
+            diagnostic.fail(error, event='unverified')
         # CSV, metadata and permission errors may include private paths/values.
         blockers.append('offline_export_invalid_or_unreadable')
     destination = ExportDestination(contract, evidence, imported.get('employees', []), imported.get('checkins', []), blockers)
+    stage('comparison')
     rows, summary = investigate(FrozenSource(source_rows), destination, start, end, devices, contract)
+    if diagnostic:
+        for code in summary['blockers']:
+            diagnostic.emit('unverified', code if code in CODES else 'validation_failed')
     summary['blockers'] = list(dict.fromkeys(summary['blockers'] + blockers))
     summary.update(schema='attendance-offline-comparison-v1', purpose='offline_comparison',
                    label=LABEL, status='unverified' if summary['blockers'] else 'complete',
@@ -230,14 +261,17 @@ def compare(*, directory, evidence_name, evidence_hash, snapshot, employees, che
         'CSV blank cells cannot distinguish SQL NULL without the reviewed encoding evidence.',
         LABEL]
     # Detect changes during import/comparison before issuing a completed report.
+    stage('input_recheck')
     require(digest(source) == before_source == files['snapshot']['sha256']
             and digest(evidence_path) == evidence_hash, 'offline_inputs_changed')
     for path in inputs[1:]:
         role = 'employees' if path.name == employees else 'checkins'
         require(digest(path) == files[role]['sha256'], 'offline_inputs_changed')
+    stage('publication')
     report = export(output, rows, summary, ledger_path=source, input_paths=inputs, acl_check=acl_check, notice=LABEL)
     # Keep the common manager presentation shape without making it a recovery report.
     summary_path = Path(output) / report['file']
+    stage('report_read')
     published = json.loads(summary_path.read_text(encoding='utf-8'))
     return dict(summary=published, rows=rows, json_path=str(summary_path),
                 csv_path=str(Path(output) / published['reports'][0]['file']))

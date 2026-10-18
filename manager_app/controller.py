@@ -21,6 +21,9 @@ from scripts.capture_history_safety import service_state, check_directory_acl
 
 class ManagerError(Exception):
     """Only fixed, employee/credential-free diagnostics cross the UI boundary."""
+    def __init__(self, code, diagnostic=None):
+        super().__init__(code)
+        self.diagnostic = diagnostic
 
 
 # Only these fixed messages may cross the job boundary. Never display exception text
@@ -50,18 +53,33 @@ def utc_time(value):
     return dt.datetime.fromtimestamp(value, dt.timezone.utc).isoformat(timespec='seconds') if value else 'Not recorded'
 
 
-def _offline_output(values, acl_check):
+def _offline_output(values, acl_check, diagnostic):
     from historical_attendance.offline import import_root, approved_file
     from historical_attendance.reporting import validate_output
+    diagnostic.enter('import_directory')
     root = import_root(values['offline_directory'], acl_check)
+    diagnostic.enter('source_path')
     source = approved_file(root, values['offline_snapshot'], acl_check)
+    diagnostic.enter('evidence_path')
     evidence = approved_file(root, values['offline_evidence'], acl_check)
+    diagnostic.enter('output')
     return validate_output(values['output'], ledger_path=source, input_paths=[evidence], acl_check=acl_check)
 
 
 def _offline_task(**options):
     from historical_attendance.offline import compare
-    return [], compare(**options)
+    from historical_attendance.diagnostics import DiagnosticError
+    diagnostic = options['diagnostic']
+    try:
+        return [], compare(**options)
+    except Exception as error:
+        try:
+            failure = error if isinstance(error, DiagnosticError) else diagnostic.fail(error)
+        except DiagnosticError as log_error:
+            failure = log_error
+        # Only fixed diagnostics cross the child boundary, including when the
+        # log itself becomes unavailable. This is never a successful report.
+        return [], dict(diagnostic_failure=dict(stage=failure.stage, code=failure.code, reference=failure.reference))
 
 
 class Settings:
@@ -228,22 +246,45 @@ class Controller:
         except Exception:
             raise ManagerError('existing_recovery_workspace_unavailable') from None
 
-    def compare_offline(self, values, snapshot, employees, checkins, devices):
+    def offline_diagnostics(self, values):
+        from historical_attendance.diagnostics import Trace, DiagnosticError
         try:
+            return Trace(values, self.acl_check)
+        except DiagnosticError as error:
+            raise ManagerError('offline_comparison_blocked', error) from None
+
+    def compare_offline(self, values, snapshot, employees, checkins, devices, diagnostic=None):
+        from historical_attendance.diagnostics import DiagnosticError
+        diagnostic = diagnostic or self.offline_diagnostics(values)
+        try:
+            diagnostic.enter('profile')
             self._paths(values['offline_directory'], values['output'])
             if self.cancelled.is_set():
-                raise ValueError
-            # Reuse the bounded isolated-process supervisor; this task contains no
-            # network transport and does not change the API investigation contract.
-            return run_bounded(_offline_task, dict(directory=values['offline_directory'],
+                raise investigation_cli.VerificationError('investigation_cancelled')
+            options = dict(directory=values['offline_directory'],
                 evidence_name=values['offline_evidence'], evidence_hash=values['offline_evidence_hash'],
                 snapshot=snapshot, employees=employees, checkins=checkins,
                 start=investigation_cli.local_time(values['start']), end=investigation_cli.local_time(values['end']),
-                devices=devices, output=values['output'], acl_check=self.acl_check),
-                seconds=120, directory=_offline_output(dict(values, offline_snapshot=snapshot), self.acl_check),
-                cancelled=self.cancelled.is_set)[1]
-        except Exception:
-            raise ManagerError('offline_comparison_blocked') from None
+                devices=devices, output=values['output'], acl_check=self.acl_check, diagnostic=diagnostic)
+            directory = _offline_output(dict(values, offline_snapshot=snapshot), self.acl_check, diagnostic)
+            diagnostic.enter('worker')
+            # Reuse the bounded isolated-process supervisor; this task contains no
+            # network transport and does not change the API investigation contract.
+            result = run_bounded(_offline_task, options, seconds=120, directory=directory,
+                                 cancelled=self.cancelled.is_set)[1]
+            if 'diagnostic_failure' in result:
+                failure = result['diagnostic_failure']
+                if failure.get('reference') != diagnostic.reference:
+                    raise investigation_cli.VerificationError('investigation_worker_failed')
+                raise DiagnosticError(failure.get('stage'), failure.get('code'), diagnostic.reference)
+            diagnostic.emit('complete', 'result_complete' if result['summary']['status'] == 'complete' else 'result_unverified')
+            return result
+        except Exception as error:
+            try:
+                failure = error if isinstance(error, DiagnosticError) else diagnostic.worker_failure(error)
+            except DiagnosticError as log_error:
+                failure = log_error
+            raise ManagerError('offline_comparison_blocked', failure) from None
 
     def batch(self, workspace, batch_id):
         try:

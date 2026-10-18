@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from .controller import ManagerError
 from scripts.capture_history_safety import check_directory_acl
 
-PATHS = ('monitor_ledger', 'backup', 'contract', 'output', 'workspace', 'simulation', 'normal_lock', 'device_config', 'offline_directory')
+PATHS = ('monitor_ledger', 'backup', 'contract', 'output', 'workspace', 'simulation', 'normal_lock', 'device_config', 'offline_directory', 'diagnostics_directory')
 FIELDS = (*PATHS, 'contract_hash', 'site', 'start', 'end', 'offline_evidence', 'offline_evidence_hash')
 
 
@@ -37,7 +37,11 @@ def load_profile(filename, acl_check=check_directory_acl):
             if (origin.scheme != 'https' or not origin.hostname or origin.username or origin.password
                     or origin.query or origin.fragment or origin.path not in ('', '/')):
                 raise ValueError
-        return {k: local_path(v) if k in PATHS and v else v for k, v in data.items()}
+        values = {k: local_path(v) if k in PATHS and v else v for k, v in data.items()}
+        # Existing approved profile storage is the default private diagnostic location.
+        # Validation and all writes are deferred until an explicit offline action.
+        values.setdefault('diagnostics_directory', str(path.parent))
+        return values
     except Exception:
         raise ManagerError('private_startup_profile_invalid') from None
 

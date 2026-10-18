@@ -122,3 +122,58 @@ Before live recovery: independently verify deployed mapping/visibility/rules,
 source-to-live-ledger binding, concurrency/fencing, audit ownership and uncertain
 delivery reconciliation; obtain separate execution approval. Any hold release
 requires its own authorized design. This task implements none of those transitions.
+
+## Private offline diagnostics
+
+Each offline page/action has a random diagnostic reference. The job page, polling
+response and return/error page show only that reference, a stable stage/code and
+a fixed next step. Find `offline-<reference>.jsonl` in the approved diagnostic
+directory. There is no browser log-download endpoint.
+
+The default is the existing private startup-profile directory. If it does not meet
+the existing output/privacy rules, add `"diagnostics_directory": "C:/BiometricReview/PrivateDiagnostics"`
+to the startup profile, using an already approved existing private local directory.
+It must be outside imports, checkouts and service state, with protected private ACLs,
+write access and sufficient free space. Direct controller callers without a loaded
+profile default to the approved report-output directory. No directory/ACL is created
+or changed automatically. If logging cannot be established, the action stops with
+a safe diagnostic-location error; it never falls back to console or public temp logs.
+
+Each JSONL entry contains exactly `reference`, `stage`, `code`, `event`. No paths,
+file names, hashes, API credentials, employee IDs, punch times, raw records, exception
+text or traces are logged. Stages are validation checkpoints, not database state
+changes. `unverified` events can end in `complete / result_unverified`: this is an
+accepted Unverified report, not a failed worker. Missing creation times follow that
+path and never permit a missing-punch finding.
+
+Common failures:
+
+| Stage / code | Next check |
+| --- | --- |
+| `profile / missing_setting` | Required offline profile fields and selected range |
+| `source_path` or `evidence_path / file_not_found` | Approved file selection/existence |
+| `source_path`, `evidence_path` or CSV stage / `output_acl_not_private` | Individual input file ACLs, not only parent directory ACLs |
+| `evidence_hash / sha256_mismatch` | Independently approved evidence SHA256 |
+| `source_hash / offline_source_changed_or_unapproved` | Snapshot binding and unchanged bytes |
+| `source_format / self_contained_rollback_journal_backup_required` | Snapshot format and sidecars |
+| `source_read / source_schema_unsupported` | Backup schema versus reviewed manager version |
+| `output / output_must_be_existing_absolute_directory` | Existing approved report directory |
+| `employees_csv` or `checkins_csv / offline_csv_headers_invalid` | Required export headers |
+| `publication / permission_denied` | Private report write permissions |
+| `worker / investigation_deadline_exceeded` | Incomplete action; no automatic retry or limit increase |
+
+The existing ACL checker requires protected inheritance on individual input files;
+inherited-only file ACLs may fail even when Dashboard reads succeed. Do not change
+production permissions or relax validation to make a comparison pass. Logs are
+diagnostic metadata, not evidence authorizing recovery. Retain/archive them privately.
+
+Previously, controller preflight errors were replaced by one ManagerError, the bounded
+worker discarded exceptions, and CSV import errors were reduced to generic blockers.
+The app's Flask logger is intentionally disabled. This change adds a separate fixed
+diagnostic channel without enabling raw Flask/debug logging. Old generic failures
+cannot be reconstructed from HTTP access logs; no IT-SUPPORT root cause is asserted
+without a new approved diagnostic reference.
+
+Local validation: 476 relevant tests passed, including 14 new diagnostic tests
+(`test_offline_diagnostics`). All inputs/services were synthetic or mocked; this
+does not establish production permissions or identify a past deployed failure.
