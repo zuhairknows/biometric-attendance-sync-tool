@@ -6,6 +6,10 @@ examples/reconciliation/*.csv -text whitespace=trailing-space,space-before-tab,c
 examples/phase2a-investigation/*.json -text whitespace=trailing-space,space-before-tab,cr-at-eol
 examples/phase2a-investigation/*.csv -text whitespace=trailing-space,space-before-tab,cr-at-eol
 
+# Offline synthetic report integrity must survive checkout newline conversion.
+examples/offline-comparison/sample/*.csv -text whitespace=trailing-space,space-before-tab,cr-at-eol
+examples/offline-comparison/sample/*.json -text whitespace=trailing-space,space-before-tab,cr-at-eol
+
 # Keep the standalone diagnostic's independently approved transfer hash stable.
 scripts/diagnose_windows_integration.py -text whitespace=trailing-space,space-before-tab,cr-at-eol
 

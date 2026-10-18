@@ -1,0 +1,61 @@
+{
+  "schema": "attendance-offline-evidence-v1",
+  "review_reference": "REPLACE_WITH_INDEPENDENT_ADMIN_REVIEW",
+  "export_set_consistent": false,
+  "log_type_encoding_verified": false,
+  "null_log_type_token": "__SQL_NULL__",
+  "comparison_contract": {
+    "schema": "attendance-investigation-contract-v1",
+    "site_url": "https://erp.myfpf.com",
+    "destination_environment": "production",
+    "site_timezone": "Asia/Riyadh",
+    "timestamp_precision": "seconds",
+    "duplicate_key": "employee_time_log_type",
+    "coverage_start": "2000-01-01 00:00:00",
+    "coverage_end": "2000-01-01 00:05:00",
+    "device_ids": ["FP1_DEVICE_01", "FP2_DEVICE_08", "FP2_DEVICE_11"],
+    "evidence_reference": "REPLACE_WITH_DEPLOYED_RULES_EVIDENCE",
+    "verification": {
+      "unfiltered_employee_and_checkin_visibility": false,
+      "server_duplicate_semantics": false,
+      "source_and_site_timezone_match": false,
+      "historical_payload_policy": false,
+      "destination_quiescent_during_scan": false,
+      "no_identity_mutating_hooks": false,
+      "employee_lookup_database_equality": false
+    }
+  },
+  "employee_lookup_results": {
+    "ORIGINAL_SOURCE_ATTENDANCE_ID": {
+      "verified": false,
+      "evidence_reference": "REPLACE_WITH_COMPLETE_DB_EQUALITY_RESULT_REFERENCE",
+      "employee_names": []
+    }
+  },
+  "files": {
+    "snapshot": {"file": "snapshot.sqlite3", "sha256": "REPLACE_WITH_SHA256"},
+    "employees": {
+      "file": "employees.csv",
+      "sha256": "REPLACE_WITH_SHA256",
+      "origin": "https://erp.myfpf.com",
+      "created_at": "REPLACE_WITH_TIMEZONE_AWARE_EXPORT_TIME",
+      "filters": [],
+      "includes_inactive": false,
+      "independent_count": 0,
+      "count_verified": false,
+      "count_reference": "REPLACE_WITH_INDEPENDENT_FULL_COUNT_EVIDENCE"
+    },
+    "checkins": {
+      "file": "checkins.csv",
+      "sha256": "REPLACE_WITH_SHA256",
+      "origin": "https://erp.myfpf.com",
+      "created_at": "REPLACE_WITH_TIMEZONE_AWARE_EXPORT_TIME",
+      "coverage_start": "2000-01-01 00:00:00",
+      "coverage_end": "2000-01-01 00:05:00",
+      "filters": [["time", ">=", "2000-01-01 00:00:00"], ["time", "<=", "2000-01-01 00:05:00"]],
+      "independent_count": 0,
+      "count_verified": false,
+      "count_reference": "REPLACE_WITH_INDEPENDENT_FULL_COUNT_EVIDENCE"
+    }
+  }
+}

@@ -10,6 +10,7 @@ class State:
         self.controller, self.values, self.devices = controller, dict(values), devices
         self.dashboard = None
         self.investigation = None
+        self.offline = None
         self.batches = []
         self.lock = threading.Lock()
         self.thread = None

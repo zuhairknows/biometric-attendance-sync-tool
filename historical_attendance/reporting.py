@@ -18,10 +18,11 @@ FIELDS = ('id',) + CAPTURE_FIELDS + (
     'reason', 'checkin_names', 'duplicate_group_size', 'eligible_for_recovery')
 
 
-def write_csv(stream, rows):
-    writer = csv.DictWriter(stream, fieldnames=FIELDS)
+def write_csv(stream, rows, notice=None):
+    fields = FIELDS + (('report_notice',) if notice else ())
+    writer = csv.DictWriter(stream, fieldnames=fields)
     writer.writeheader()
-    writer.writerows({f: csv_cell(row[f]) for f in FIELDS} for row in rows)
+    writer.writerows({f: csv_cell(notice if f == 'report_notice' else row[f]) for f in fields} for row in rows)
 
 
 def validate_output(directory, *, ledger_path, input_paths=(), acl_check=check_directory_acl):
@@ -37,11 +38,11 @@ def validate_output(directory, *, ledger_path, input_paths=(), acl_check=check_d
     return directory
 
 
-def export(directory, rows, summary, *, ledger_path, input_paths=(), acl_check=check_directory_acl):
+def export(directory, rows, summary, *, ledger_path, input_paths=(), acl_check=check_directory_acl, notice=None):
     # Recheck immediately before publication, including calls outside the CLI.
     directory = validate_output(directory, ledger_path=ledger_path, input_paths=input_paths, acl_check=acl_check)
     run = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d_%H%M%S_') + uuid.uuid4().hex
-    details = publish(directory, 'investigation_details_' + run + '.csv', lambda s: write_csv(s, rows))
+    details = publish(directory, 'investigation_details_' + run + '.csv', lambda s: write_csv(s, rows, notice))
     summary = dict(summary, reports=[details])
     # This file is the completion marker. CSV without a summary is incomplete.
     return publish(directory, 'investigation_summary_' + run + '.json',

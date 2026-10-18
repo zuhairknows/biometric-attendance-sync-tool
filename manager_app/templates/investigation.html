@@ -1,6 +1,7 @@
 {% extends 'base.html' %}{% from 'macros.html' import token,pager,empty %}
 {% block title %}Historical investigation{% endblock %}{% block subtitle %}Compare a protected ledger snapshot using the verified Phase 2A workflow.{% endblock %}
 {% block body %}{% if job and job.status == 'blocked' and job.destination == url_for('investigation_page') %}<div class="notice warning" role="alert">Investigation blocked: {{ job.error }}</div>{% endif %}<section class="card panel"><div class="panel-heading"><div><h2>Investigation scope</h2><p>Approved paths and contract are fixed at startup. Destination: {{ profile.get('site', 'Not configured') }}</p></div><span class="badge">GET only</span></div>
+<p><a class="button secondary" href="{{ url_for('offline_page') }}">Offline Comparison</a> Use approved exports without ERPNext API access.</p>
 <form method="post" action="{{ url_for('investigate') }}" data-investigation>{{ token(csrf) }}<div class="form-grid">
 <label>Start · site local time<input type="datetime-local" step="1" name="start" value="{{ profile.get('start','')|replace(' ','T') }}" required></label>
 <label>End · inclusive<input type="datetime-local" step="1" name="end" value="{{ profile.get('end','')|replace(' ','T') }}" required></label>

@@ -19,7 +19,8 @@ from .state import State
 
 ORIGIN = 'http://127.0.0.1:8765'
 MONITOR_ENDPOINTS = frozenset({'dashboard_page', 'devices_page', 'refresh', 'job_page', 'job_status', 'static', 'favicon'})
-INVESTIGATION_ENDPOINTS = MONITOR_ENDPOINTS | {'investigation_page', 'investigate', 'investigation_export'}
+INVESTIGATION_ENDPOINTS = MONITOR_ENDPOINTS | {'investigation_page', 'investigate', 'investigation_export',
+    'offline_page', 'offline_run', 'offline_export'}
 
 
 def create_app(controller, values, *, demo=False, monitor_only=False, investigation_only=False):
@@ -221,6 +222,73 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
             if json.loads(Path(result['json_path']).read_text(encoding='utf-8')) != result['summary']:
                 raise ValueError
         return launch('Verify protected CSV/JSON export', verify, lambda _: None, url_for('investigation_page'))
+
+    @app.get('/investigation/offline')
+    def offline_page():
+        from historical_attendance.offline import choices
+        try:
+            catalog = choices(state.values.get('offline_directory', ''), controller.acl_check)
+            warning = ''
+        except Exception:
+            catalog = dict(snapshots=[], csvs=[])
+            warning = 'Approved private offline import directory unavailable. Review the startup profile and permissions.'
+        result = state.offline
+        keys = ('id', 'device_id', 'punch_timestamp', 'classification', 'reason')
+        classification = request.args.get('classification', '')
+        if classification and classification not in CATEGORIES:
+            abort(400)
+        rows = [{k: r.get(k, '') for k in keys} for r in (result or {}).get('rows', [])
+                if not classification or r['classification'] == classification]
+        return render_template('offline.html', result=result, catalog=catalog, warning=warning,
+                               categories=CATEGORIES, table=paginate(rows))
+
+    @app.post('/investigation/offline/run')
+    def offline_run():
+        from historical_attendance.offline import choices
+        fields({'start', 'end', 'floor', 'devices', 'snapshot', 'employees', 'checkins', 'backup_ack'})
+        start, end = (request.form.get(k, '').replace('T', ' ') for k in ('start', 'end'))
+        start, end = (v + ':00' if len(v) == 16 else v for v in (start, end))
+        selected, floor = request.form.getlist('devices'), request.form.get('floor', '')
+        allowed = {d['device'] for d in state.devices if not floor or d['floor'] == floor}
+        if (local_time(start) > local_time(end) or floor not in ('', 'FP1', 'FP2')
+                or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed
+                or request.form.get('backup_ack') != '1'):
+            abort(400)
+        catalog = choices(state.values.get('offline_directory', ''), controller.acl_check)
+        snapshot, employees, checkins = (request.form.get(k, '') for k in ('snapshot', 'employees', 'checkins'))
+        if (snapshot not in catalog['snapshots'] or employees not in catalog['csvs']
+                or checkins not in catalog['csvs'] or employees == checkins):
+            abort(400)
+        values = dict(state.values, start=start, end=end)
+        def task():
+            state.offline = None
+            return controller.compare_offline(values, snapshot, employees, checkins, selected)
+        return launch('Offline comparison and protected export', task,
+            lambda result: setattr(state, 'offline', result), url_for('offline_page'))
+
+    @app.post('/investigation/offline/export')
+    def offline_export():
+        fields(set())
+        result = state.offline
+        if not result:
+            abort(409)
+        def verify():
+            # Publication already happened atomically via the shared protected
+            # exporter. This action verifies those exact files, never downloads them.
+            from historical_attendance.offline import import_root, approved_file, digest
+            root = import_root(state.values['offline_directory'], controller.acl_check)
+            manifest = approved_file(root, state.values['offline_evidence'], controller.acl_check)
+            if digest(manifest) != result['summary']['evidence_file_sha256']:
+                raise ManagerError('offline_comparison_blocked')
+            evidence = json.loads(manifest.read_text(encoding='utf-8-sig'))
+            inputs = [approved_file(root, entry['file'], controller.acl_check) for entry in evidence['files'].values()]
+            if any(digest(path) != entry['sha256'] for path, entry in zip(inputs, evidence['files'].values())):
+                raise ManagerError('offline_comparison_blocked')
+            validate_output(state.values['output'], ledger_path=inputs[0], input_paths=[manifest, *inputs[1:]], acl_check=controller.acl_check)
+            if (file_hash(Path(result['csv_path'])) != result['summary']['reports'][0]['sha256']
+                    or json.loads(Path(result['json_path']).read_text(encoding='utf-8')) != result['summary']):
+                raise ManagerError('offline_comparison_blocked')
+        return launch('Verify offline protected CSV/JSON', verify, lambda _: None, url_for('offline_page'))
 
     @app.get('/recovery')
     def recovery_page():

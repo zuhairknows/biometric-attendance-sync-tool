@@ -9,8 +9,8 @@ from urllib.parse import urlsplit
 from .controller import ManagerError
 from scripts.capture_history_safety import check_directory_acl
 
-PATHS = ('monitor_ledger', 'backup', 'contract', 'output', 'workspace', 'simulation', 'normal_lock', 'device_config')
-FIELDS = (*PATHS, 'contract_hash', 'site', 'start', 'end')
+PATHS = ('monitor_ledger', 'backup', 'contract', 'output', 'workspace', 'simulation', 'normal_lock', 'device_config', 'offline_directory')
+FIELDS = (*PATHS, 'contract_hash', 'site', 'start', 'end', 'offline_evidence', 'offline_evidence_hash')
 
 
 def local_path(value):

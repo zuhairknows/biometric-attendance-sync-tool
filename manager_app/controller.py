@@ -26,6 +26,7 @@ class ManagerError(Exception):
 # Only these fixed messages may cross the job boundary. Never display exception text
 # or trust arbitrary CLI receipts, which can contain private input in integrations.
 INVESTIGATION_FAILURES = {
+    'offline_comparison_blocked': 'Offline comparison could not verify approved inputs, private file permissions or report output. Review the offline profile and evidence/hash; no accepted result is available.',
     'investigation_profile_incomplete': 'The private startup profile is missing investigation settings. Supply backup, contract, approved contract_hash, protected output and HTTPS site; select a start and end time.',
     'investigation_prerequisites_missing': 'Confirm the offline-backup acknowledgement, selected devices and API credentials; the manager must not be closing.',
     'absolute_approved_path_required': 'Approved input and output paths must be absolute and within the permitted location.',
@@ -47,6 +48,20 @@ INVESTIGATION_FAILURES = {
 
 def utc_time(value):
     return dt.datetime.fromtimestamp(value, dt.timezone.utc).isoformat(timespec='seconds') if value else 'Not recorded'
+
+
+def _offline_output(values, acl_check):
+    from historical_attendance.offline import import_root, approved_file
+    from historical_attendance.reporting import validate_output
+    root = import_root(values['offline_directory'], acl_check)
+    source = approved_file(root, values['offline_snapshot'], acl_check)
+    evidence = approved_file(root, values['offline_evidence'], acl_check)
+    return validate_output(values['output'], ledger_path=source, input_paths=[evidence], acl_check=acl_check)
+
+
+def _offline_task(**options):
+    from historical_attendance.offline import compare
+    return [], compare(**options)
 
 
 class Settings:
@@ -212,6 +227,23 @@ class Controller:
                 store.close()
         except Exception:
             raise ManagerError('existing_recovery_workspace_unavailable') from None
+
+    def compare_offline(self, values, snapshot, employees, checkins, devices):
+        try:
+            self._paths(values['offline_directory'], values['output'])
+            if self.cancelled.is_set():
+                raise ValueError
+            # Reuse the bounded isolated-process supervisor; this task contains no
+            # network transport and does not change the API investigation contract.
+            return run_bounded(_offline_task, dict(directory=values['offline_directory'],
+                evidence_name=values['offline_evidence'], evidence_hash=values['offline_evidence_hash'],
+                snapshot=snapshot, employees=employees, checkins=checkins,
+                start=investigation_cli.local_time(values['start']), end=investigation_cli.local_time(values['end']),
+                devices=devices, output=values['output'], acl_check=self.acl_check),
+                seconds=120, directory=_offline_output(dict(values, offline_snapshot=snapshot), self.acl_check),
+                cancelled=self.cancelled.is_set)[1]
+        except Exception:
+            raise ManagerError('offline_comparison_blocked') from None
 
     def batch(self, workspace, batch_id):
         try:

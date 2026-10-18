@@ -178,3 +178,26 @@ See the [operator guide](phase2c-manager.md) and
 Server/browser hardening follows the official
 [Flask security guidance](https://flask.palletsprojects.com/en/stable/web-security/)
 and [Windows-compatible Waitress deployment guidance](https://flask.palletsprojects.com/en/stable/deploying/waitress/).
+
+## Offline comparison validation
+
+The offline feature adds 18 synthetic tests. The complete relevant regression run
+passed 459 tests, including manager modes/CSRF/Host guards, Phase 2A production
+compatibility, Phase 2B rejection of offline reports and Phase 1 delivery/service
+regressions. No production connection, deployment, service control or device call
+was performed. This is local mocked/synthetic evidence, not live export acceptance.
+
+```powershell
+$env:PYTHONPATH='tests'
+.\.venv\Scripts\python.exe -B -m unittest test_offline_comparison test_investigation_only test_monitor_only test_manager test_manager_web test_historical_recovery test_historical_investigation test_phase2a_production_verification test_durable_sync test_erpnext_sync test_service_hardening test_phase1_release test_phase1_remaining test_two_uncertain_confirmation test_attendance_reconciliation test_frappe_attendance_export test_frappe_server_export -q
+```
+
+Offline coverage includes existing/missing punches, cross-device duplicates,
+inactive/ambiguous/unmatched database-equality mappings, case/trailing-space IDs,
+missing/malformed/duplicate CSV records, coverage/count/evidence failures,
+timezone/DST/precision uncertainty, NULL versus blank, formula-safe output, pinned
+input changes (including mid-comparison changes), unchanged source bytes/holds,
+private paths/permissions/output separation, WAL-sidecar rejection, empty ranges,
+Flask selection/export and monitoring-only denial. The committed synthetic sample
+also passed CSV SHA256/JSON count/disabled-recovery checks. Phase 1 modules and the
+Phase 2A client, engine and API CLI are unchanged.

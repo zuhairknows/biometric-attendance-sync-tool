@@ -206,6 +206,10 @@ can briefly contend with a writer; avoid excessive live-ledger refreshes.
 
 ## Investigation and protected exports
 
+For file-only comparison, use [Offline Comparison](offline-comparison.md) under
+Historical Investigation. It needs approved exports and independent evidence;
+it neither uses nor weakens the production API endpoint-safety contract.
+
 Start with FP1_DEVICE_01 and a five-minute range covered by the backup/contract.
 Select floor/devices, enter masked credentials for this action, and acknowledge
 the protected offline backup. Explicitly acknowledge production when applicable.
