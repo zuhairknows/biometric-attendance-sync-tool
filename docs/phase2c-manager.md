@@ -228,6 +228,45 @@ with 25/50/100-row pages; identifiers are hidden until explicitly requested.
 employee data into an unprotected browser Downloads directory. No arbitrary file
 browser/download endpoint exists. Interrupted partial files are not accepted evidence.
 
+### Diagnosing a blocked investigation
+
+A job marked **Action blocked** has no accepted result. Its fixed, private-data-free
+reason is displayed on the job page, in `/jobs/<id>/status`, and after **Continue to
+results**. Before this diagnostic improvement, the CLI/controller/job/JavaScript
+discarded or replaced the reason; an old generic job cannot establish its cause.
+Dashboard success only verifies `monitor_ledger`, not investigation prerequisites.
+
+Check these gates in order, using local approved inputs only:
+
+- **Profile/prerequisites:** `backup`, `contract`, `contract_hash`, `output`, `site`
+  must be populated; start/end, devices, credentials and offline-backup acknowledgement
+  are required. A valid monitoring-only profile may lack investigation settings.
+- **Contract:** readable JSON object, matching independently approved SHA256. Production
+  requires compatibility mode, exact origin acknowledgement and a contract declaring
+  `destination_environment: production`. It separately requires
+  `verification.read_only_api_verified: true` backed by independent effective-endpoint
+  review. If that evidence is unknown, stop; never change it merely to pass the gate.
+- **Backup:** approved absolute offline snapshot path must exist and be readable.
+  SQLite schema/integrity checks run in the isolated worker; failures there produce
+  a worker-failure notice, not a claim that the backup itself was definitely corrupt.
+- **Output:** existing absolute local directory, outside checkout/service state and
+  input directories/subdirectories; no database or production-log markers. ACLs must
+  be protected with no broad group grants, read/write access available, and at least
+  256 MiB free. Validation does not change ACLs or create the directory.
+- **Execution/completion:** cancellation, deadline, worker failure, CLI failure or a
+  missing/inconsistent completion receipt, summary, CSV hash or row count block the
+  job. Worker exceptions remain grouped because raw errors may expose private data.
+
+On the original version there is no retained detailed CLI failure log: Flask logging
+is disabled and the controller captures/discards CLI stdout. Access logs show only
+HTTP outcomes, not which prerequisite failed. A protected CSV/JSON pair accepted by
+the manager is required for completed evidence; leftover files alone prove nothing.
+API/pagination/contract-comparison uncertainty can instead complete a report marked
+**Unverified**; inspect its displayed blockers and protected JSON `blockers` and
+`unverified_claims`. This is different from a blocked job with no accepted report.
+Do not run the CLI merely to diagnose preflight: passing preflight can issue live
+GETs. Any further production attempt still needs separate read-only approval.
+
 ## Recovery management
 
 Load an existing batch, select Pending Approval records, enter a non-sensitive review

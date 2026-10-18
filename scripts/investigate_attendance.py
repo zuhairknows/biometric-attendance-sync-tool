@@ -53,26 +53,36 @@ def main(argv=None, *, request=None, acl_check=check_directory_acl, runner=run_b
     parser.add_argument('--request-timeout-seconds', type=int, default=10, help='Connect/read timeout (default: 10)')
     parser.add_argument('--production-read-only', action='store_true', help='Compatibility reads only; never reconcile production')
     parser.add_argument('--acknowledge-production', help='Repeat the exact production HTTPS origin as acknowledgement')
+    failure_category = 'investigation_failed'
     try:
         args = parser.parse_args(argv)
+        failure_category = 'investigation_contract_unverified'
         contract, digest, contract_path = verified_json(args.contract, args.contract_sha256)
         origin = args.site_url.rstrip('/')
         is_production = (urlsplit(origin).hostname == 'erp.myfpf.com'
                          or contract.get('destination_environment') == 'production')
+        failure_category = 'investigation_limits_invalid'
         if not (1 <= args.max_get_requests <= 20000 and 1 <= args.deadline_seconds <= 600
                 and 1 <= args.request_timeout_seconds <= 120):
             raise ValueError
         if is_production or args.production_read_only:
+            failure_category = 'investigation_production_ack_required'
             if (not args.production_read_only or args.acknowledge_production != origin
-                    or contract.get('destination_environment') != 'production'
-                    or contract.get('verification', {}).get('read_only_api_verified') is not True):
+                    or contract.get('destination_environment') != 'production'):
+                raise ValueError
+            failure_category = 'investigation_endpoint_safety_unverified'
+            if contract.get('verification', {}).get('read_only_api_verified') is not True:
                 raise ValueError
         elif args.acknowledge_production:
+            failure_category = 'investigation_production_ack_required'
             raise ValueError
+        failure_category = 'investigation_source_unavailable'
         source = Path(args.ledger_copy).resolve(strict=True)
         if not Path(args.ledger_copy).is_absolute():
             raise ValueError
+        failure_category = 'investigation_output_unverified'
         directory = validate_output(args.output, ledger_path=source, input_paths=[contract_path], acl_check=acl_check)
+        failure_category = 'investigation_execution_failed'
         rows, summary = runner(execute_investigation, dict(source=source, start=args.start, end=args.end,
             devices=args.device, contract=contract, site_url=args.site_url, max_requests=args.max_get_requests,
             request_timeout=args.request_timeout_seconds, compatibility_only=args.production_read_only,
@@ -92,7 +102,7 @@ def main(argv=None, *, request=None, acl_check=check_directory_acl, runner=run_b
         return 1
     except Exception:
         # No exception text: HTTP/parser/file errors may include private input.
-        print(json.dumps({'status': 'failed', 'error_category': 'investigation_failed'}))
+        print(json.dumps({'status': 'failed', 'error_category': failure_category}))
         return 1
 
 

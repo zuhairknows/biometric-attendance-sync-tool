@@ -11,6 +11,8 @@ from historical_attendance.engine import CLAIMS
 from historical_attendance.recovery import file_hash
 from historical_attendance.recovery_simulation import SimulationTarget
 from manager_app.demo import create_demo
+from manager_app.controller import INVESTIGATION_FAILURES, ManagerError
+from historical_attendance.client import VerificationError
 from manager_app.web import ORIGIN, create_app
 from scripts import biometric_manager as launcher, investigate_attendance as cli
 from test_manager import ManagerFixture
@@ -167,6 +169,95 @@ class InvestigationOnlyTests(ManagerFixture):
                 self.finish(self.investigate(production_ack=ack), status='blocked')
                 self.assertEqual(self.calls, [])
                 self.assertIsNone(self.state.investigation)
+
+    def test_safe_preflight_blocker_survives_job_polling_and_return_to_results(self):
+        # Exercise the real CLI preflight, with no worker or destination requests.
+        for ack, safety, category in (
+                ('0', True, 'investigation_production_ack_required'),
+                ('1', False, 'investigation_endpoint_safety_unverified')):
+            with self.subTest(category=category):
+                self.contract(read_only=safety)
+                self.mock_api()
+                page = self.finish(self.investigate(production_ack=ack), status='blocked')
+                message = INVESTIGATION_FAILURES[category]
+                self.assertIn(message.encode(), page.data)
+                identity = self.state.job['id']
+                self.assertEqual(self.get(f'/jobs/{identity}/status').json,
+                                 dict(status='blocked', error=message))
+                self.assertIn(message.encode(), self.get(f'/jobs/{identity}').data)
+                self.assertEqual(self.calls, [])
+                self.assertIsNone(self.controller.last_investigation)
+
+    def test_contract_source_and_output_failures_identify_stage_without_private_input(self):
+        cases = (
+            ('contract_hash', '0'*64, 'investigation_contract_unverified'),
+            ('contract', str(self.root / 'PRIVATE_CONTRACT'), 'investigation_contract_unverified'),
+            ('backup', str(self.root / 'PRIVATE_BACKUP'), 'investigation_source_unavailable'),
+            ('output', str(self.root / 'PRIVATE_OUTPUT'), 'investigation_output_unverified'),
+            ('output', str(self.source.parent), 'investigation_output_unverified'),
+        )
+        self.mock_api()
+        for field, value, category in cases:
+            original = self.state.values[field]
+            try:
+                self.state.values[field] = value
+                page = self.finish(self.investigate(), status='blocked')
+                self.assertIn(INVESTIGATION_FAILURES[category].encode(), page.data)
+                self.assertNotIn(b'PRIVATE_', page.data)
+                self.assertNotIn(str(self.root).encode(), page.data)
+                self.assertNotIn(b'SYNTHETIC_SECRET', page.data)
+                self.assertEqual(self.calls, [])
+            finally:
+                self.state.values[field] = original
+
+    def test_private_output_acl_failure_is_actionable_and_prevents_requests(self):
+        self.mock_api()
+        self.controller.acl_check = mock.Mock(side_effect=ValueError('PRIVATE ACL SECRET'))
+        page = self.finish(self.investigate(), status='blocked')
+        self.assertIn(INVESTIGATION_FAILURES['investigation_output_unverified'].encode(), page.data)
+        self.assertNotIn(b'PRIVATE ACL SECRET', page.data)
+        self.assertEqual(self.calls, [])
+
+    def test_monitoring_profile_missing_investigation_settings_is_explained(self):
+        self.mock_api()
+        for field in ('backup', 'contract', 'contract_hash', 'output', 'site'):
+            original = self.state.values.pop(field)
+            try:
+                page = self.finish(self.investigate(), status='blocked')
+                self.assertIn(INVESTIGATION_FAILURES['investigation_profile_incomplete'].encode(), page.data)
+                self.assertEqual(self.calls, [])
+            finally:
+                self.state.values[field] = original
+
+    def test_worker_deadline_and_failed_receipt_are_safe(self):
+        # Preserve the bounded supervisor's existing fixed failure categories.
+        for category in ('investigation_deadline_exceeded', 'investigation_cancelled', 'investigation_worker_failed'):
+            with self.subTest(category=category), mock.patch('manager_app.controller.run_bounded',
+                    side_effect=VerificationError(category)) as runner:
+                page = self.finish(self.investigate(), status='blocked')
+                runner.assert_called_once()
+                self.assertIn(INVESTIGATION_FAILURES[category].encode(), page.data)
+        def no_report(*args, **kwargs):
+            print(json.dumps(dict(status='complete', records=0)))
+            return 0
+        self.controller.cli = no_report
+        page = self.finish(self.investigate(), status='blocked')
+        self.assertIn(INVESTIGATION_FAILURES['completed_report_unverified'].encode(), page.data)
+
+    def test_unknown_receipts_and_exceptions_never_cross_diagnostic_boundary(self):
+        for payload in ('PRIVATE EMPLOYEE SECRET <script>', {'private': 'SECRET'}):
+            def failed(*args, **kwargs):
+                print(json.dumps(dict(status='failed', error_category=payload)))
+                return 1
+            self.controller.cli = failed
+            page = self.finish(self.investigate(), status='blocked')
+            self.assertIn(INVESTIGATION_FAILURES['investigation_blocked_or_cancelled'].encode(), page.data)
+            self.assertNotIn(b'SECRET', page.data)
+        for exception in (RuntimeError('PRIVATE SECRET'), ManagerError('PRIVATE SECRET')):
+            with mock.patch.object(self.controller, 'investigate', side_effect=exception):
+                page = self.finish(self.investigate(), status='blocked')
+                self.assertNotIn(b'PRIVATE SECRET', page.data)
+                self.assertNotIn('PRIVATE SECRET', str(self.get(f"/jobs/{self.state.job['id']}/status").json))
 
     def test_incomplete_nonproduction_evidence_blocks_comparison_and_explains_why(self):
         self.contract(production=False)

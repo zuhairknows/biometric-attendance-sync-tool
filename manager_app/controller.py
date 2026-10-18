@@ -23,6 +23,28 @@ class ManagerError(Exception):
     """Only fixed, employee/credential-free diagnostics cross the UI boundary."""
 
 
+# Only these fixed messages may cross the job boundary. Never display exception text
+# or trust arbitrary CLI receipts, which can contain private input in integrations.
+INVESTIGATION_FAILURES = {
+    'investigation_profile_incomplete': 'The private startup profile is missing investigation settings. Supply backup, contract, approved contract_hash, protected output and HTTPS site; select a start and end time.',
+    'investigation_prerequisites_missing': 'Confirm the offline-backup acknowledgement, selected devices and API credentials; the manager must not be closing.',
+    'absolute_approved_path_required': 'Approved input and output paths must be absolute and within the permitted location.',
+    'investigation_contract_unverified': 'The contract could not be read or its approved SHA256 did not match. Review the private profile and independently approved contract.',
+    'investigation_limits_invalid': 'Investigation request or time limits are invalid. Use the supported manager defaults.',
+    'investigation_production_ack_required': 'Production compatibility requires the production acknowledgement and a contract declaring the production destination. Review both; do not change unknown verification claims.',
+    'investigation_endpoint_safety_unverified': 'The production contract does not verify read-only API endpoint safety. Stop until independent endpoint review establishes safety; do not automatically approve this claim.',
+    'investigation_source_unavailable': 'The approved offline SQLite backup could not be located or accessed. Check the private profile and backup access; do not use the live writable ledger.',
+    'investigation_output_unverified': 'Protected report output validation failed. Check the existing local directory, private ACLs, write access, free space and separation from inputs, checkout and production state.',
+    'investigation_execution_failed': 'The investigation could not complete execution or publish protected reports. Review the approved source snapshot and output prerequisites. No verified result is available.',
+    'investigation_deadline_exceeded': 'The investigation exceeded its 120-second deadline. Treat any report artifacts as incomplete; do not raise limits or retry automatically.',
+    'investigation_cancelled': 'The investigation was cancelled. Any report artifacts are incomplete evidence.',
+    'investigation_incomplete': 'The investigation was interrupted. Any report artifacts are incomplete evidence.',
+    'investigation_worker_failed': 'The isolated investigation worker failed. Source integrity/schema, execution or report publication could not be established; any report artifacts are incomplete.',
+    'completed_report_unverified': 'The completion receipt and protected CSV/JSON reports could not be verified together. Do not use any artifacts as completed evidence.',
+    'investigation_blocked_or_cancelled': 'The investigation failed without a recognized safe diagnostic. Review approved inputs and permissions; no verified result is available.',
+}
+
+
 def utc_time(value):
     return dt.datetime.fromtimestamp(value, dt.timezone.utc).isoformat(timespec='seconds') if value else 'Not recorded'
 
@@ -113,6 +135,9 @@ class Controller:
         self.last_investigation = None  # A failed run must not leave stale results exportable.
         if not backup_ack or not devices or not key or not secret or self.cancelled.is_set():
             raise ManagerError('investigation_prerequisites_missing')
+        if any(not isinstance(values.get(name), str) or not values[name] for name in
+               ('backup', 'contract', 'contract_hash', 'output', 'site', 'start', 'end')):
+            raise ManagerError('investigation_profile_incomplete')
         self._paths(values['backup'], values['contract'], values['output'])
         directory = Path(values['output'])
         before = set(directory.glob('investigation_summary_*.json'))
@@ -140,7 +165,16 @@ class Controller:
                     os.environ.pop(name, None)
                 else:
                     os.environ[name] = original
-        if code not in (0, 2) or self.cancelled.is_set():
+        if self.cancelled.is_set():
+            raise ManagerError('investigation_cancelled')
+        if code not in (0, 2):
+            # Decode only a known fixed category; never forward raw child output.
+            try:
+                category = json.loads(receipt.getvalue()).get('error_category')
+                if isinstance(category, str) and category in INVESTIGATION_FAILURES:
+                    raise ManagerError(category)
+            except (ValueError, TypeError, AttributeError):
+                pass
             raise ManagerError('investigation_blocked_or_cancelled')
         try:
             terminal = json.loads(receipt.getvalue())

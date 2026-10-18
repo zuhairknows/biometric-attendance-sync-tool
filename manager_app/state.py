@@ -2,7 +2,7 @@
 import secrets
 import threading
 
-from .controller import ManagerError
+from .controller import INVESTIGATION_FAILURES, ManagerError
 
 
 class State:
@@ -30,9 +30,10 @@ class State:
                     raise ManagerError('management_action_cancelled')
                 accept(result)
                 job['status'] = 'complete'
-            except BaseException:
+            except BaseException as error:
                 # Neither HTTP exceptions nor private input/employee values enter logs/pages.
-                job.update(status='blocked', error='Action blocked. Review the approved inputs, permissions and verification prerequisites.')
+                message = INVESTIGATION_FAILURES.get(str(error)) if isinstance(error, ManagerError) else None
+                job.update(status='blocked', error=message or 'Action blocked. Review the approved inputs, permissions and verification prerequisites.')
             finally:
                 self.lock.release()
 

@@ -17,7 +17,7 @@ if (progress) {
         label.textContent = result.status === 'complete' ? 'Action complete' : 'Action blocked';
         next.hidden = false;
         if (result.status === 'blocked') progress.querySelector('[data-job-error]').textContent =
-          'Review the approved inputs, permissions and verification prerequisites.';
+          result.error || 'Review the approved inputs, permissions and verification prerequisites.';
       }
     } catch (_) {
       label.textContent = 'Manager unavailable';

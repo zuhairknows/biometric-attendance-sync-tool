@@ -288,6 +288,9 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
     def job_status(identity):
         if not state.job or identity != state.job['id']:
             abort(404)
-        return jsonify(status=state.job['status'])
+        result = dict(status=state.job['status'])
+        if state.job['status'] == 'blocked':
+            result['error'] = state.job['error']
+        return jsonify(result)
 
     return app
