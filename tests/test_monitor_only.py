@@ -1,11 +1,31 @@
 """Monitoring gate acceptance: synthetic files, mocked service, no live integrations."""
 from contextlib import ExitStack
+from html.parser import HTMLParser
 import unittest
 from unittest import mock
 
 from manager_app.web import ORIGIN, create_app
 from scripts import biometric_manager as launcher
 from test_manager import ManagerFixture
+
+
+class RefreshForm(HTMLParser):
+    """Read the rendered form, rather than fabricating its CSRF field from the session."""
+    def __init__(self):
+        super().__init__()
+        self.inside = False
+        self.fields = {}
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'form':
+            self.inside = attrs.get('action') == '/refresh' and attrs.get('method') == 'post'
+        if self.inside and tag == 'input' and attrs.get('name'):
+            self.fields[attrs['name']] = attrs.get('value', '')
+
+    def handle_endtag(self, tag):
+        if tag == 'form':
+            self.inside = False
 
 
 class MonitorOnlyTests(ManagerFixture):
@@ -60,11 +80,57 @@ class MonitorOnlyTests(ManagerFixture):
             self.assertNotIn(b'href="/recovery"', response.data)
             self.assertIn(b'exports are disabled', response.data)
 
+    def test_rendered_dashboard_and_devices_forms_accept_browser_origin(self):
+        for monitor_only in (True, False):
+            app = create_app(self.controller, self.values, demo=True, monitor_only=monitor_only)
+            state = app.extensions['manager']
+            self.addCleanup(state.close)
+            client = app.test_client()
+            for path, destination in (('/', '/'), ('/devices', '/devices')):
+                with self.subTest(monitor_only=monitor_only, path=path):
+                    page = client.get(path, base_url=ORIGIN)
+                    # Native browser form submissions must retain their real Origin.
+                    self.assertEqual(page.headers['Referrer-Policy'], 'same-origin')
+                    form = RefreshForm()
+                    form.feed(page.get_data(as_text=True))
+                    self.assertTrue(form.fields['csrf'])
+                    response = client.post('/refresh', base_url=ORIGIN, data=form.fields,
+                        headers={'Origin': ORIGIN, 'Sec-Fetch-Site': 'same-origin',
+                                 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document'})
+                    self.assertEqual(response.status_code, 303)
+                    state.thread.join(10)
+                    self.assertFalse(state.thread.is_alive())
+                    self.assertEqual(state.job['status'], 'complete')
+                    self.assertEqual(state.job['destination'], destination)
+                    self.assertEqual(state.dashboard['integrity'], 'OK')
+
+    def test_browser_refresh_still_rejects_invalid_csrf_and_null_or_foreign_origin(self):
+        page = self.get('/')
+        form = RefreshForm()
+        form.feed(page.get_data(as_text=True))
+        cases = [('', ORIGIN), ('wrong', ORIGIN), (form.fields['csrf'], 'null'),
+                 (form.fields['csrf'], 'https://evil.test')]
+        with mock.patch.object(self.state, 'start') as start:
+            for token, origin in cases:
+                with self.subTest(token_valid=token == form.fields['csrf'], origin=origin):
+                    response = self.client.post('/refresh', base_url=ORIGIN,
+                        data={'csrf': token}, headers={'Origin': origin, 'Sec-Fetch-Site': 'same-origin'})
+                    self.assertEqual(response.status_code, 403)
+            start.assert_not_called()
+
+    def test_favicon_is_empty_read_only_response(self):
+        for method in ('GET', 'HEAD'):
+            response = self.client.open('/favicon.ico', method=method, base_url=ORIGIN)
+            self.assertEqual(response.status_code, 204)
+            self.assertEqual(response.data, b'')
+        self.assertEqual(self.post('/favicon.ico').status_code, 403)
+        self.assertIsNone(self.state.thread)
+
     def test_every_prohibited_route_blocks_get_head_and_valid_csrf_post_without_io(self):
         routes = []
         # Enumerate registered business routes, so additions cannot escape this check.
         for rule in self.app.url_map.iter_rules():
-            if rule.endpoint in ('static', 'dashboard_page', 'devices_page', 'refresh', 'job_page', 'job_status'):
+            if rule.endpoint in ('static', 'dashboard_page', 'devices_page', 'refresh', 'job_page', 'job_status', 'favicon'):
                 continue
             path = rule.rule.replace('<identity>', self.batch['id'])
             if '<action>' in path:
@@ -83,7 +149,8 @@ class MonitorOnlyTests(ManagerFixture):
                     self.assertEqual(self.get(path).status_code, 403)
                     self.assertEqual(self.client.head(path, base_url=ORIGIN).status_code, 403)
                     self.assertEqual(self.post(path, dict(ids=['1'], confirmed='1',
-                        reference='SYNTHETIC review', fingerprint=self.batch['fingerprint'])).status_code, 403)
+                        reference='SYNTHETIC review', fingerprint=self.batch['fingerprint']),
+                        headers={'Origin': ORIGIN, 'Sec-Fetch-Site': 'same-origin'}).status_code, 403)
             for operation in operations:
                 operation.assert_not_called()
         after = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}

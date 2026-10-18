@@ -18,7 +18,7 @@ from .profile import device_catalog
 from .state import State
 
 ORIGIN = 'http://127.0.0.1:8765'
-MONITOR_ENDPOINTS = frozenset({'dashboard_page', 'devices_page', 'refresh', 'job_page', 'job_status', 'static'})
+MONITOR_ENDPOINTS = frozenset({'dashboard_page', 'devices_page', 'refresh', 'job_page', 'job_status', 'static', 'favicon'})
 
 
 def create_app(controller, values, *, demo=False, monitor_only=False):
@@ -58,7 +58,9 @@ def create_app(controller, values, *, demo=False, monitor_only=False):
 
     @app.after_request
     def headers(response):
-        response.headers.update({'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
+        # no-referrer makes native form POSTs send Origin: null, failing our strict
+        # Origin check. same-origin preserves local form origins without cross-origin referrers.
+        response.headers.update({'Cache-Control': 'no-store', 'Referrer-Policy': 'same-origin',
             'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY',
             'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'})
@@ -133,6 +135,10 @@ def create_app(controller, values, *, demo=False, monitor_only=False):
     @app.get('/')
     def dashboard_page():
         return render_template('dashboard.html')
+
+    @app.get('/favicon.ico')
+    def favicon():
+        return '', 204  # No icon file or business operation is needed.
 
     @app.post('/refresh')
     def refresh():

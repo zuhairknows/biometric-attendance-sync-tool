@@ -21,6 +21,10 @@ or service installation. Keep its console open. Ctrl+C stops only the manager;
 closing the browser leaves initiated manager actions running. Add `--no-browser`
 to print the address without opening a browser. A busy port fails before launch.
 
+After an approved manager update, reload Dashboard/Devices before using their forms:
+an old document may retain the previous referrer policy or session CSRF token.
+No synchronization-service restart is required.
+
 `--demo` uses disposable synthetic punches, 12 synthetic device definitions and a
 local synthetic ERPNext fixture. It never contacts ERPNext, SCM or devices. Demo
 state is removed on graceful shutdown. Start here on a review computer.

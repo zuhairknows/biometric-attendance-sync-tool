@@ -1,5 +1,27 @@
 # Phase 2C Flask conversion validation
 
+## Monitoring refresh correction
+
+Base: `69a43e567b45dfadf35d511344064498183e0492`. `/refresh` was already on the
+monitoring allowlist. The confirmed source defect was `Referrer-Policy: no-referrer`:
+native HTML form POSTs use `Origin: null` under that policy, so the strict Origin
+guard rejected even valid CSRF. A synthetic reproduction returned 403 and started
+no job. This follows the [Fetch Origin-header algorithm](https://fetch.spec.whatwg.org/#append-a-request-origin-header).
+
+The correction sets `Referrer-Policy: same-origin`; the CSRF/Origin/Host checks and
+loopback binding are unchanged. Null and foreign origins remain rejected. Cross-origin
+referrers remain suppressed. `/favicon.ico` now has a read-only empty 204 response;
+no investigation/recovery/export endpoint was added to the monitoring allowlist.
+
+Three focused tests cover actual rendered refresh forms from Dashboard and Devices
+in normal/monitoring modes with browser-style navigation headers, invalid CSRF and
+null/foreign origins, and GET/HEAD-only favicon behavior. Existing blocked-route tests
+also send explicit valid Origin/CSRF while asserting no business operations/file changes.
+The 35 targeted Flask/gate tests passed in 5.456 seconds; the expanded Phase 1–2C
+suite passed **422 tests in 68.145 seconds** under Python 3.11. Diff checks passed.
+Tests simulate browser headers using Flask; they do not claim browser/live production verification on IT-SUPPORT.
+No deployment or production access was performed.
+
 ## Final monitoring-only gate
 
 Gate base: `12a32666f9be9c7f0faa08ba71eaea31e8a087eb`. The additional startup
