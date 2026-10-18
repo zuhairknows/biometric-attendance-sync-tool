@@ -177,6 +177,70 @@ class OfflineTests(ManagerFixture):
             self.assertEqual(result['summary']['status'], 'unverified')
             self.assertEqual(result['summary']['totals']['potentially_missing'], 0)
 
+    def test_missing_creation_times_allow_only_unverified_reports(self):
+        self.checkin_rows = []  # Absence must not become a missing-punch finding.
+        self.write_csvs(); self.refresh()
+        original = json.loads(json.dumps(self.evidence))
+        for roles in (('employees',), ('checkins',), ('employees', 'checkins')):
+            for omitted in (False, True):
+                for consistent in (False, True):
+                    with self.subTest(roles=roles, omitted=omitted, consistent=consistent):
+                        self.evidence = json.loads(json.dumps(original))
+                        self.evidence['export_set_consistent'] = consistent
+                        for role in roles:
+                            if omitted:
+                                del self.evidence['files'][role]['created_at']
+                            else:
+                                self.evidence['files'][role]['created_at'] = None
+                        self.approve()
+                        result = self.compare()
+                        summary = result['summary']
+                        self.assertEqual(summary['status'], 'unverified')
+                        self.assertEqual(summary['totals']['potentially_missing'], 0)
+                        self.assertEqual(summary['totals']['unable_to_verify'], 1)
+                        self.assertFalse(summary['recovery_authorized'])
+                        self.assertFalse(summary['execution_supported'])
+                        self.assertTrue(all(not row['eligible_for_recovery'] for row in result['rows']))
+                        for role in roles:
+                            self.assertIn(f'offline_{role}_creation_time_missing', summary['blockers'])
+                            self.assertNotIn(f'offline_{role}_creation_time_invalid', summary['blockers'])
+                            self.assertIsNone(summary['export_provenance'][role]['created_at'])
+                        if consistent:
+                            for role, path in (('employees', self.employee_path), ('checkins', self.checkin_path)):
+                                self.assertEqual(summary['input_hashes'][role], offline.digest(path))
+
+    def test_malformed_or_contradictory_creation_times_are_not_treated_as_missing(self):
+        original = json.loads(json.dumps(self.evidence))
+        for role in ('employees', 'checkins'):
+            for value in ('REPLACE_WITH_TIMEZONE_AWARE_EXPORT_TIME', '', 'unknown',
+                          '2026-10-12T00:00:00', '2026-13-12T00:00:00+00:00',
+                          '2999-01-01T00:00:00+00:00', 123):
+                for consistent in (False, True):
+                    with self.subTest(role=role, value=value, consistent=consistent):
+                        self.evidence = json.loads(json.dumps(original))
+                        self.evidence['export_set_consistent'] = consistent
+                        self.evidence['files'][role]['created_at'] = value
+                        self.approve()
+                        summary = self.compare()['summary']
+                        self.assertIn(f'offline_{role}_creation_time_invalid', summary['blockers'])
+                        self.assertNotIn(f'offline_{role}_creation_time_missing', summary['blockers'])
+                        self.assertEqual(summary['status'], 'unverified')
+                        self.assertEqual(summary['totals']['potentially_missing'], 0)
+
+    def test_valid_creation_times_do_not_substitute_for_verified_completeness(self):
+        self.checkin_rows = []
+        self.write_csvs(); self.refresh()
+        result = self.compare()
+        self.assertEqual(result['summary']['status'], 'complete')
+        self.assertEqual(result['summary']['totals']['potentially_missing'], 1)
+        self.assertFalse(result['rows'][0]['eligible_for_recovery'])
+        self.evidence['files']['checkins']['count_verified'] = False
+        self.approve()
+        summary = self.compare()['summary']
+        self.assertEqual(summary['status'], 'unverified')
+        self.assertEqual(summary['totals']['potentially_missing'], 0)
+        self.assertFalse(any('creation_time' in reason for reason in summary['blockers']))
+
     def test_duplicate_and_malformed_csv_rows_are_not_silently_removed(self):
         for content in ('ID,Employee,Time,Log Type,Device ID\nx,E,2026-10-11 08:00:00,,D\nx,E,2026-10-11 09:00:00,,D\n',
                         'ID,Employee,Time,Log Type,Device ID\nx,E\n',

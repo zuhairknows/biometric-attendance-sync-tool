@@ -154,6 +154,19 @@ def compare(*, directory, evidence_name, evidence_hash, snapshot, employees, che
     before_source = digest(source)
     source_rows = SQLiteRepository(source).read(start, end, devices)
     blockers, imported, observed = [], {}, dict(evidence=evidence_hash, snapshot=before_source)
+    # Unknown retrieval times must stay unknown, including when other evidence
+    # is already unverified. Never substitute file timestamps or the current time.
+    for role in ('employees', 'checkins'):
+        try:
+            value = files.get(role, {}).get('created_at')
+            if value is None:
+                blockers.append(f'offline_{role}_creation_time_missing')
+            else:
+                created = dt.datetime.fromisoformat(value)
+                require(created.tzinfo is not None and created <= dt.datetime.now(dt.timezone.utc),
+                        f'offline_{role}_creation_time_invalid')
+        except Exception:
+            blockers.append(f'offline_{role}_creation_time_invalid')
     try:
         require(evidence.get('schema') == 'attendance-offline-evidence-v1'
                 and evidence.get('export_set_consistent') is True
@@ -169,11 +182,9 @@ def compare(*, directory, evidence_name, evidence_hash, snapshot, employees, che
             require(observed[role] == meta.get('sha256'), 'offline_export_hash_mismatch')
             rows = read_csv(path, required, meta.get('sha256'))
             parsed = urlsplit(meta.get('origin', ''))
-            created = dt.datetime.fromisoformat(meta.get('created_at', ''))
             require(parsed.scheme == 'https' and parsed.hostname and not parsed.username
                     and not parsed.password and not parsed.query and not parsed.fragment
                     and parsed.path in ('', '/') and meta['origin'] == contract.get('site_url')
-                    and created.tzinfo is not None and created <= dt.datetime.now(dt.timezone.utc)
                     and meta.get('count_verified') is True and bool(meta.get('count_reference'))
                     and type(meta.get('independent_count')) is int and meta['independent_count'] == len(rows),
                     'offline_export_count_or_origin_unverified')

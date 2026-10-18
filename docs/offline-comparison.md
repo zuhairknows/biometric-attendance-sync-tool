@@ -39,6 +39,11 @@ reviewed evidence, never from assumptions:
    export; independent full database counts and references. Counting the CSV itself
    is not independent evidence. Record actual filters; a filtered Employee export
    or additional Checkin filters cannot establish absence.
+   If the original retrieval time was not recorded, omit `created_at` or use JSON
+   `null`. This adds a specific missing-creation-time blocker and always forces
+   Unverified, even if all other evidence is verified. Do not invent a time or use
+   the file modification time; placeholders, malformed, timezone-free and future
+   timestamps remain invalid. A valid timestamp alone never verifies completeness.
 2. Inclusive export coverage containing the selected range, verified timezone,
    timestamp precision, deployed duplicate rules, historical payload settings and
    the unchanged seven Phase 2A claims. Unknown claims stay false. These are reviewed
