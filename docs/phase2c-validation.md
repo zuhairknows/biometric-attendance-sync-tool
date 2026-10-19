@@ -201,3 +201,25 @@ private paths/permissions/output separation, WAL-sidecar rejection, empty ranges
 Flask selection/export and monitoring-only denial. The committed synthetic sample
 also passed CSV SHA256/JSON count/disabled-recovery checks. Phase 1 modules and the
 Phase 2A client, engine and API CLI are unchanged.
+
+## Stage 1 local recovery preview
+
+The relevant regression run passed **487 tests** (the existing 476 plus the initial
+11 preview tests). The final focused run passed **13 preview tests**, including two
+additional checks for recovery-input rejection and controller cancellation/deadline
+failures. All 489 distinct cases passed; this is synthetic/mocked evidence only.
+
+```powershell
+$env:PYTHONPATH='tests'
+.\.venv\Scripts\python.exe -B -m unittest test_recovery_preview -q
+```
+
+Coverage includes all six local classifications, hold precedence, prior attempt
+evidence, invalid timestamps retained, empty ranges, device/date/form validation,
+CSRF/Host protection, investigation-only access and monitoring/recovery route denial,
+approved source hash and private ACL failure, WAL/SHM/journal rejection, changed
+inputs/reports, interrupted reads, unique protected publication, CSV formula escaping,
+per-device counts and unchanged snapshot bytes. A real bounded synthetic preview
+worker and Flask result/export workflow are exercised. No production API, device,
+Windows service operation or synchronization transport was used. Phase 1 modules,
+the Phase 2A API workflow and Offline Comparison logic remain unchanged.

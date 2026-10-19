@@ -90,4 +90,5 @@ def create_demo(*, monitor_only=False, investigation_only=False):
         simulation=str(scenario), normal_lock=str(root / 'synthetic-normal.sqlite3'),
         start=str(start), end=str(end), site=contract['site_url'])
     values['device_config'] = str(configuration)
+    values['backup_hash'] = recovery.file_hash(source)
     return temporary, controller, values

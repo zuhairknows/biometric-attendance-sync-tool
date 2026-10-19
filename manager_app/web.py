@@ -21,7 +21,7 @@ from .state import State
 ORIGIN = 'http://127.0.0.1:8765'
 MONITOR_ENDPOINTS = frozenset({'dashboard_page', 'devices_page', 'refresh', 'job_page', 'job_status', 'static', 'favicon'})
 INVESTIGATION_ENDPOINTS = MONITOR_ENDPOINTS | {'investigation_page', 'investigate', 'investigation_export',
-    'offline_page', 'offline_run', 'offline_export'}
+    'offline_page', 'offline_run', 'offline_export', 'preview_page', 'preview_run', 'preview_export'}
 
 
 def create_app(controller, values, *, demo=False, monitor_only=False, investigation_only=False):
@@ -320,6 +320,52 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
                     raise ValueError('completed_report_unverified')
                 diagnostic.emit('complete', 'result_complete' if result['summary']['status'] == 'complete' else 'result_unverified')
         return launch('Verify offline protected CSV/JSON', verify, lambda _: None, url_for('offline_page'))
+
+    @app.get('/investigation/recovery-preview')
+    def preview_page():
+        from historical_attendance.recovery_preview import CATEGORIES as PREVIEW_CATEGORIES
+        result = state.recovery_preview
+        classification = request.args.get('classification', '')
+        if classification and classification not in PREVIEW_CATEGORIES:
+            abort(400)
+        keys = ('id', 'device_id', 'punch_timestamp', 'state', 'range_status', 'classification', 'reason')
+        rows = [{k: row.get(k, '') for k in keys} for row in (result or {}).get('rows', [])
+                if not classification or row['classification'] == classification]
+        return render_template('recovery_preview.html', result=result, categories=PREVIEW_CATEGORIES,
+                               table=paginate(rows))
+
+    @app.post('/investigation/recovery-preview/run')
+    def preview_run():
+        fields({'start', 'end', 'floor', 'devices', 'backup_ack'})
+        start, end = (request.form.get(k, '').replace('T', ' ') for k in ('start', 'end'))
+        start, end = (v + ':00' if len(v) == 16 else v for v in (start, end))
+        selected, floor = request.form.getlist('devices'), request.form.get('floor', '')
+        allowed = {d['device'] for d in state.devices if not floor or d['floor'] == floor}
+        if (local_time(start) > local_time(end) or floor not in ('', 'FP1', 'FP2')
+                or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed
+                or request.form.get('backup_ack') != '1'):
+            abort(400)
+        values = dict(state.values, start=start, end=end)
+        def task():
+            state.recovery_preview = None  # Failed reruns cannot expose an older success.
+            return controller.preview_recovery(values, selected)
+        return launch('Local historical recovery preview and protected export', task,
+            lambda result: setattr(state, 'recovery_preview', result), url_for('preview_page'))
+
+    @app.post('/investigation/recovery-preview/export')
+    def preview_export():
+        from historical_attendance.recovery_preview import verify_export, PreviewError
+        fields(set())
+        if not state.recovery_preview:
+            abort(409)
+        def verify():
+            try:
+                verify_export(state.recovery_preview, backup=state.values['backup'],
+                    backup_hash=state.values.get('backup_hash', ''), directory=state.values['output'],
+                    acl_check=controller.acl_check)
+            except PreviewError as error:
+                raise ManagerError(str(error)) from None
+        return launch('Verify protected local preview CSV/JSON', verify, lambda _: None, url_for('preview_page'))
 
     @app.get('/recovery')
     def recovery_page():

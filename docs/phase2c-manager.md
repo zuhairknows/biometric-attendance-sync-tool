@@ -29,7 +29,53 @@ No synchronization-service restart is required.
 local synthetic ERPNext fixture. It never contacts ERPNext, SCM or devices. Demo
 state is removed on graceful shutdown. Start here on a review computer.
 
-## Enforced monitoring-only startup
+## Stage 1: local Historical Recovery Preview
+
+In `--investigation-only` mode, open **Investigation → Historical Recovery Preview**.
+This reads local delivery evidence only. It makes no ERPNext or device requests and
+requires no API contract or credentials. Existing API investigation prerequisites
+remain unchanged. Recovery approval, simulation and execution stay blocked.
+
+Use the existing isolated manager environment and protected startup profile. Add
+`backup_hash` to the existing `backup`, `output` and `device_config` settings:
+
+```powershell
+# Run on the approved offline backup, never the live production SQLite file.
+(Get-FileHash -LiteralPath 'C:\BiometricReview\inputs\approved.sqlite3' -Algorithm SHA256).Hash.ToLowerInvariant()
+& '.\Start Biometric Manager.bat' --investigation-only --profile 'C:\BiometricReview\private\manager.json'
+```
+
+Independently review the snapshot, then place that SHA256 in `backup_hash` and its
+absolute path in `backup`. The snapshot must be self-contained rollback-journal
+SQLite with no WAL/SHM/journal sidecars, in a private input directory outside the
+checkout and production service directories. Both input file and parent must pass
+the existing private ACL checks. Keep it unchanged; do not calculate and silently
+approve a replacement hash after a failed run. Use an existing private, separate
+`output` directory meeting the manager's normal report safeguards. No ACL or service
+configuration changes are performed by this workflow.
+
+Choose dates (inclusive, original device wall time) and configured devices, confirm
+the snapshot acknowledgement, then select **Preview & export**. The manually
+initiated job has a 120-second bound. Completed CSV/JSON files are published directly
+to protected output with unique names. **Verify protected CSV / JSON** checks those
+files and the approved source again; it does not download employee data.
+
+The six classifications describe **local evidence**: untouched pending candidates,
+locally synchronized records, historical holds, attempted/uncertain records,
+locally unmatched employees, and invalid/ambiguous evidence. Unknown timestamps
+remain visible with `range_status=unknown` even when outside the requested range
+cannot be determined. Classification/search filters affect display only; reports
+include all selected records and per-device counts. Detailed reports contain private
+original source/audit fields and must remain protected.
+
+**No record is confirmed missing in ERPNext.** Candidate mapping, timezone,
+destination duplicate identity and effective cutover policy require later verified
+checks. Synced/duplicate states do not prove current ERPNext existence. Every row
+has `eligible_for_recovery=false`; the separate `local-recovery-preview-v1` summary
+is not accepted as a verified Phase 2A recovery input. Holds and all ledger states
+remain unchanged. Monitoring-only mode denies this workflow, including direct URLs.
+
+## Enforced monitoring-only startup (Dashboard and Devices)
 
 Use `--monitor-only` to allow only Dashboard, Devices, static assets, diagnostics
 refresh and its read-only job pages/status. Investigation, recovery, approval,

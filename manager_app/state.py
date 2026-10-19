@@ -12,6 +12,7 @@ class State:
         self.dashboard = None
         self.investigation = None
         self.offline = None
+        self.recovery_preview = None
         self.batches = []
         self.lock = threading.Lock()
         self.thread = None

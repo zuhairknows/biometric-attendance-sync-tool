@@ -14,6 +14,7 @@ from historical_attendance import recovery
 from historical_attendance.bounded import run_bounded
 from historical_attendance.recovery_store import RecoveryStore
 from historical_attendance.recovery_simulation import SimulationTarget
+from historical_attendance import recovery_preview
 from scripts import investigate_attendance as investigation_cli
 from scripts.attendance_reconciliation import child_file
 from scripts.capture_history_safety import service_state, check_directory_acl
@@ -47,6 +48,7 @@ INVESTIGATION_FAILURES = {
     'completed_report_unverified': 'The completion receipt and protected CSV/JSON reports could not be verified together. Do not use any artifacts as completed evidence.',
     'investigation_blocked_or_cancelled': 'The investigation failed without a recognized safe diagnostic. Review approved inputs and permissions; no verified result is available.',
 }
+INVESTIGATION_FAILURES.update(recovery_preview.MESSAGES)
 
 
 def utc_time(value):
@@ -80,6 +82,13 @@ def _offline_task(**options):
         # Only fixed diagnostics cross the child boundary, including when the
         # log itself becomes unavailable. This is never a successful report.
         return [], dict(diagnostic_failure=dict(stage=failure.stage, code=failure.code, reference=failure.reference))
+
+
+def _preview_task(**options):
+    try:
+        return [], recovery_preview.preview(**options)
+    except recovery_preview.PreviewError as error:
+        return [], dict(preview_failure=str(error))
 
 
 class Settings:
@@ -129,6 +138,23 @@ class Controller:
     def close(self):
         # Cancels only this app's bounded work. Never issues a service-control call.
         self.cancelled.set()
+
+    def preview_recovery(self, values, devices):
+        try:
+            self._paths(values['backup'], values['output'])
+            source = recovery_preview.snapshot(values['backup'], values.get('backup_hash', ''), self.acl_check)
+            directory = recovery_preview.output(values['output'], source, self.acl_check)
+            options = dict(backup=str(source), backup_hash=values.get('backup_hash', ''),
+                directory=str(directory), start=values['start'], end=values['end'],
+                devices=devices, acl_check=self.acl_check)
+            result = run_bounded(_preview_task, options, seconds=120, directory=directory,
+                                 cancelled=self.cancelled.is_set)[1]
+            if 'preview_failure' in result:
+                raise recovery_preview.PreviewError(result['preview_failure'])
+            return result
+        except Exception as error:
+            code = str(error)
+            raise ManagerError(code if code in recovery_preview.MESSAGES else 'preview_failed') from None
 
     def dashboard(self, ledger_path):
         data = dict(service='Unavailable', integrity='Unavailable', total=0, pending=0, retry=0,

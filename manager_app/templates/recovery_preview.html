@@ -1,0 +1,28 @@
+{% extends 'base.html' %}{% from 'macros.html' import token,pager,empty %}
+{% block title %}Historical Recovery Preview{% endblock %}
+{% block subtitle %}Local delivery state only. ERPNext destination unverified. Not authorized for recovery.{% endblock %}
+{% block body %}
+<p class="notice warning">No record is confirmed missing in ERPNext. No employee lookup, API call, approval or delivery is performed.</p>
+{% if job and job.status == 'blocked' and job.destination == url_for('preview_page') %}<p class="notice warning" role="alert">{{ job.error }}</p>{% endif %}
+<section class="card panel"><h2>Approved snapshot scope</h2>
+<form method="post" action="{{ url_for('preview_run') }}" data-investigation>{{ token(csrf) }}
+<div class="form-grid">
+<label>Date From · original device wall time<input type="datetime-local" name="start" step="1" value="{{ profile.get('start','')|replace(' ','T') }}" required></label>
+<label>Date To · inclusive<input type="datetime-local" name="end" step="1" value="{{ profile.get('end','')|replace(' ','T') }}" required></label>
+<label>Factory floor<select name="floor" data-floor><option value="">All floors</option><option>FP1</option><option>FP2</option></select></label>
+<div class="device-picker">{% for d in devices %}<label class="check" data-device-floor="{{ d.floor }}"><input type="checkbox" name="devices" value="{{ d.device }}" {{ 'checked' if d.device == 'FP1_DEVICE_01' }}>{{ d.device }}</label>{% endfor %}</div>
+</div>
+{% if device_warning %}<p class="notice warning">{{ device_warning }}</p>{% endif %}
+<p class="caption">The snapshot path and approved SHA256 are fixed in the private startup profile. No API contract or credentials are needed for this local preview.</p>
+<label class="check"><input type="checkbox" name="backup_ack" value="1" required>I confirm the selected startup-profile input is an approved, protected offline SQLite snapshot.</label>
+<button {{ 'disabled' if not devices }}>Preview &amp; export</button></form></section>
+{% if result %}<section class="card panel"><h2>Local state preview · destination unverified</h2>
+<p>“Already synchronized” describes the ledger state only. Candidates require destination and employee verification before any future recovery.</p>
+<div class="count-strip">{% for key,count in result.summary.totals.items() %}<span><strong>{{ count }}</strong> {{ key }}</span>{% endfor %}</div>
+<form method="post" action="{{ url_for('preview_export') }}">{{ token(csrf) }}<button class="secondary">Verify protected CSV / JSON</button></form>
+<form class="filters" method="get"><label>Classification<select name="classification"><option value="">All</option>{% for c in categories %}<option value="{{ c }}" {{ 'selected' if request.args.get('classification') == c }}>{{ c }}</option>{% endfor %}</select></label><label>Search<input name="q" maxlength="100" value="{{ request.args.get('q','') }}"></label><button>Filter</button></form>
+<div class="table-scroll"><table><thead><tr><th>Record</th><th>Device</th><th>Source time</th><th>Local state</th><th>Range</th><th>Classification</th><th>Reason</th></tr></thead><tbody>{% for r in table.rows %}<tr><td>{{ r.id }}</td><td>{{ r.device_id }}</td><td>{{ r.punch_timestamp }}</td><td>{{ r.state }}</td><td>{{ r.range_status }}</td><td>{{ r.classification }}</td><td>{{ r.reason }}</td></tr>{% endfor %}</tbody></table></div>{{ pager(table) }}
+<details><summary>Limitations</summary><ul>{% for note in result.summary.limitations %}<li>{{ note }}</li>{% endfor %}</ul></details>
+<p class="caption">CSV/JSON reports are already saved in protected output. No browser download. Employee identifiers are hidden here; detailed source evidence remains private.</p></section>
+{% else %}<section class="card">{{ empty('No completed local preview') }}</section>{% endif %}
+{% endblock %}
