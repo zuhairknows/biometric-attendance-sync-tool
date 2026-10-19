@@ -26,6 +26,12 @@ SCHEMA = (
 )
 
 
+def intent_state_allows_confirmation(row, held):
+    """Only reconcile an existing intent in its supported current queue states."""
+    return row is not None and (row['state'] in ('delivering', 'retry', 'synced', 'duplicate')
+        or (held and row['state'] == 'rejected' and row['error_category'] == 'cutover_hold'))
+
+
 def install(ledger):
     """Optional additive tables; Phase 1 schema/state semantics stay version 1."""
     names = [sql.split()[2] for sql in SCHEMA]
@@ -213,9 +219,7 @@ class Coordinator:
         require(current is not None and identity(current) == choice['identity'], 'canonical_source_changed')
         prior_source = self.ledger.db.execute('SELECT 1 FROM sr_intents WHERE punch_id=?', (i,)).fetchone()
         if prior_source:
-            require(current['state'] in ('delivering', 'retry', 'synced', 'duplicate')
-                or (held and current['state'] == 'rejected' and current['error_category'] == 'cutover_hold'),
-                'current_quarantine_requires_separate_resolution')
+            require(intent_state_allows_confirmation(current, held), 'current_quarantine_requires_separate_resolution')
         if not prior_source and not canonical_untouched(self.ledger, current, held=held):
             with self.ledger.db:
                 self.event(request_id, i, 'Skipped', 'live_delivery_state_changed')
@@ -233,8 +237,11 @@ class Coordinator:
             with self.ledger.db:
                 self.ledger.db.execute('BEGIN IMMEDIATE')
                 current = self.ledger.db.execute('SELECT * FROM punches WHERE id=?', (i,)).fetchone()
-                require(identity(current) == choice['identity'], 'canonical_source_changed')
-                require(canonical_untouched(self.ledger, current, held=held) or prior_source, 'canonical_source_changed')
+                require(current is not None and identity(current) == choice['identity'], 'canonical_source_changed')
+                # A prior intent burns POST permission; it cannot authorize overwriting
+                # a quarantine introduced while the destination read was in flight.
+                require((prior_source and intent_state_allows_confirmation(current, held))
+                    or (not prior_source and canonical_untouched(self.ledger, current, held=held)), 'canonical_source_changed')
                 self.ledger.db.execute('INSERT OR IGNORE INTO sr_intents(identity,punch_id,second,employee,request_id,checkin_name) VALUES(?,?,?,?,?,?)',
                     (key, i, str(stamp), result['employee'], request_id, result['checkin_names']))
                 self.ledger.db.execute("UPDATE punches SET state='delivering',attempt_count=attempt_count+1,last_attempt=?,lease_until=?,updated_at=? WHERE id=?",

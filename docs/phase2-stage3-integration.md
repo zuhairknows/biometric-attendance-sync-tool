@@ -72,6 +72,10 @@ remains closed. Do not deploy or change production configuration for this stage.
 
 ## Deadline finding and production gates
 
+The [final readiness review](phase2-final-readiness.md) records the current
+NO-GO checklist, confirmed state-race correction and precise read-only deployment
+evidence steps. It does not authorize production operations.
+
 **The current transport cannot guarantee a hard 120-second execution bound.**
 Local source inspection used Requests **2.34.2** (`adapters.py`, `sessions.py`) and
 urllib3 **2.8.0** (`util/timeout.py`). Numeric Requests timeouts become connect/read

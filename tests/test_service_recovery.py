@@ -234,6 +234,29 @@ class ServiceRecoveryTests(unittest.TestCase):
         self.assertNotIn('POST', self.target.calls)
         self.assertEqual(self.rows('sr_items')[0]['status'], 'Needs Review')
 
+    def test_prior_intent_confirmation_cannot_overwrite_new_quarantine(self):
+        self.target.data['next_send'] = 'crash_after'
+        self.target._save()
+        self.request()
+        with self.assertRaises(KeyboardInterrupt):
+            self.tick()
+        self.target = SimulationTarget(self.remote, max_requests=10000)
+        compare = Coordinator.compare
+
+        def quarantine_after_read(coordinator, *args, **kwargs):
+            result = compare(coordinator, *args, **kwargs)
+            # Simulate a state change while the independent remote read is running.
+            self.update("UPDATE punches SET state='rejected',error_category='unmatched_employee' WHERE id=1")
+            return result
+
+        with mock.patch.object(Coordinator, 'compare', quarantine_after_read):
+            self.tick()
+        self.assertNotIn('POST', self.target.calls)
+        self.assertEqual(self.rows()[0]['state'], 'rejected')
+        self.assertEqual(self.rows()[0]['error_category'], 'unmatched_employee')
+        self.assertEqual(self.rows()[0]['attempt_count'], 1)
+        self.assertEqual(self.rows('sr_items')[0]['status'], 'Needs Review')
+
     def test_duplicate_requests_and_duplicate_normal_source_do_not_repost(self):
         self.request()
         self.request()
