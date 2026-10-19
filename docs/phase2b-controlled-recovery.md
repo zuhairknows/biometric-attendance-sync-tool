@@ -111,6 +111,11 @@ and Skipped rows never submit. A Completed command is not production authorizati
 
 ## Verification and genuine production blockers
 
+The later [Stage 2 service-owned backend](phase2-stage2-service-recovery.md) adds a
+synthetic-only service handoff and selected-hold authorization design. It does not
+enable this CLI's live transport or authorize production execution. The limitations
+below describe the original Phase 2B CLI.
+
 Run the focused suite with `PYTHONPATH=tests`:
 `py -B -m unittest test_historical_recovery -v`.
 It uses synthetic SQLite, mocked ERPNext and a local process holding the Phase 1 mutex.

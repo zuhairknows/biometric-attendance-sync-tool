@@ -172,7 +172,13 @@ class Ledger:
                                 (*legacy, now, json.dumps(report)))
         return report
 
-    def claim(self, now=None, lease_seconds=120):
+    def recovery_overlap(self, row):
+        if not self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sr_intents'").fetchone():
+            return False
+        return self.db.execute('SELECT 1 FROM sr_intents WHERE second=? LIMIT 1',
+            (row['punch_timestamp'][:19],)).fetchone() is not None if row['punch_timestamp'] else False
+
+    def claim(self, now=None, lease_seconds=120, *, allow_recovery_overlap=False):
         now = time.time() if now is None else now
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
@@ -185,11 +191,16 @@ class Ledger:
             # Alternate new and retry work so a large outage backlog cannot starve new attendance.
             states = ('retry', 'pending') if destination['prefer_retry'] else ('pending', 'retry')
             row = None
+            # Without the service's verified recovery guard, overlapping identities
+            # cannot enter normal POST delivery (including after restart/gate removal).
+            fence = ''
+            if not allow_recovery_overlap and self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sr_intents'").fetchone():
+                fence = ' AND NOT EXISTS (SELECT 1 FROM sr_intents WHERE second=substr(punches.punch_timestamp,1,19))'
             for state in states:
                 # An outage leaves many untouched rows pending, not just retrying. Alternate
                 # oldest/newest pending work too, so fresh captures can progress in that backlog.
                 order = 'next_retry DESC,id DESC' if state == 'pending' and destination['prefer_recent'] else 'next_retry,id'
-                row = self.db.execute('SELECT * FROM punches WHERE state=? AND next_retry<=? ORDER BY ' + order + ' LIMIT 1', (state, now)).fetchone()
+                row = self.db.execute('SELECT * FROM punches WHERE state=? AND next_retry<=?' + fence + ' ORDER BY ' + order + ' LIMIT 1', (state, now)).fetchone()
                 if row:
                     break
             if row is None:

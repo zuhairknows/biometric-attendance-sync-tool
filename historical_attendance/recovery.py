@@ -59,8 +59,8 @@ def verify_batch(store, batch, fingerprint):
     return metadata
 
 
-def prepare(store, ledger_path, summary_path, summary_sha256, contract_path, contract_sha256, *, receipt_review, acl_check=None):
-    """Only externally pinned complete Phase 2A artifacts can seed a batch.
+def preparation(ledger_path, summary_path, summary_sha256, contract_path, contract_sha256, *, receipt_review):
+    """Return a validated plan without creating a queue or changing any source.
 
     receipt_review references the operator's verified supervisor completion receipt;
     it is an explicit review assertion, not cryptographic proof of a deployment.
@@ -77,8 +77,7 @@ def prepare(store, ledger_path, summary_path, summary_sha256, contract_path, con
             and not any(Path(str(source_path) + suffix).exists() for suffix in ('-wal', '-shm', '-journal')),
             'self_contained_rollback_journal_backup_required')
     source_hash = file_hash(source_path)
-    protection = {} if acl_check is None else dict(acl_check=acl_check)
-    validate_output(store.path.parent, ledger_path=source_path, input_paths=[summary_path, contract_path], **protection)
+    # Pure validation is also used by the service handoff; it creates no queue or database.
     require(summary.get('schema') == 'attendance-investigation-v1' and summary.get('status') == 'complete'
             and summary.get('blockers') == [] and 'compatibility_status' not in summary
             and summary.get('purpose') is None and summary.get('recovery_authorized') is False
@@ -123,7 +122,6 @@ def prepare(store, ledger_path, summary_path, summary_sha256, contract_path, con
             (source_path, source_hash), (contract_path, contract_sha256),
             (summary_path, summary_sha256), (detail_path, specs[0]['sha256']))])
     bindings(metadata)
-    batch_id = uuid.uuid4().hex
     planned = []
     for report in reports:
         if report['classification'] != 'potentially_missing':
@@ -136,6 +134,16 @@ def prepare(store, ledger_path, summary_path, summary_sha256, contract_path, con
         require(not report['employee'].startswith("'"), 'escaped_employee_name_requires_review')
         planned.append(planned_item(original, report['employee']))
     planned.sort(key=lambda item: item['id'])
+    return metadata, planned
+
+
+def prepare(store, ledger_path, summary_path, summary_sha256, contract_path, contract_sha256, *, receipt_review, acl_check=None):
+    metadata, planned = preparation(ledger_path, summary_path, summary_sha256, contract_path, contract_sha256,
+        receipt_review=receipt_review)
+    protection = {} if acl_check is None else dict(acl_check=acl_check)
+    validate_output(store.path.parent, ledger_path=Path(metadata['source']),
+        input_paths=[Path(entry['path']) for entry in metadata['inputs'][1:]], **protection)
+    batch_id = uuid.uuid4().hex
     fingerprint = digest(dict(metadata=metadata, items=planned))
     with store.exclusive(), store.db:
         store.db.execute('INSERT INTO batches VALUES(?,?,?)', (batch_id, fingerprint, json.dumps(metadata)))

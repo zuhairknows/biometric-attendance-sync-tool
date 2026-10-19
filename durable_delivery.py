@@ -75,6 +75,18 @@ def backoff(attempt, base=30, maximum=3600, jitter=random.random):
     return min(maximum, delay * (1 + 0.2 * jitter()))
 
 
+def wait_for_slot(last_request, rate, clock, sleep, stop_requested):
+    """Shared interruptible pacing for the normal writer and its recovery lane."""
+    remaining = max(0, 1 / rate - (clock() - last_request)) if last_request is not None else 0
+    while remaining > 0:
+        if stop_requested():
+            return False
+        chunk = min(remaining, 0.5)
+        sleep(chunk)
+        remaining -= chunk
+    return not stop_requested()
+
+
 class FrappeClient:
     def __init__(self, config, request):
         app = 'hrms' if getattr(config, 'ERPNEXT_VERSION', 14) > 13 else 'erpnext'
@@ -139,20 +151,14 @@ class FrappeClient:
 
 def deliver_batch(ledger, client, batch_size=100, rate=2, base=30, maximum=3600,
                   auth_cooldown=900, lease_seconds=120, clock=time.time,
-                  sleep=time.sleep, stop_requested=lambda: False, logger=None, not_before=None):
+                  sleep=time.sleep, stop_requested=lambda: False, logger=None, not_before=None,
+                  recovery_guard=None):
     """Claim only one row at a time; an entire backlog is never loaded into memory."""
     processed = 0
-    last_request = None
+    last_request = getattr(recovery_guard, 'last_request_time', None)
     def pace_confirmation_read():
         nonlocal last_request
-        remaining = max(0, 1 / rate - (clock() - last_request)) if last_request is not None else 0
-        while remaining > 0:
-            if stop_requested():
-                return False
-            chunk = min(remaining, 0.5)
-            sleep(chunk)
-            remaining -= chunk
-        if stop_requested():
+        if not wait_for_slot(last_request, rate, clock, sleep, stop_requested):
             return False
         last_request = clock()
         return True
@@ -169,7 +175,8 @@ def deliver_batch(ledger, client, batch_size=100, rate=2, base=30, maximum=3600,
                 remaining -= chunk
         if stop_requested():
             break
-        row = ledger.claim(clock(), lease_seconds)
+        row = (ledger.claim(clock(), lease_seconds, allow_recovery_overlap=True) if recovery_guard
+               else ledger.claim(clock(), lease_seconds))
         if row is None:
             break
         last_request = clock()
@@ -182,7 +189,15 @@ def deliver_batch(ledger, client, batch_size=100, rate=2, base=30, maximum=3600,
             continue
         # A crash, timeout or 5xx can hide a remote commit. Never blindly POST it again.
         needs_confirmation = row['attempt_count'] > 1 and row['error_category'] not in ('authentication', 'rate_limited', 'peer_uncertain')
-        if not needs_confirmation and ledger.has_uncertain_peer(row):
+        guarded = None
+        if recovery_guard and ledger.recovery_overlap(row):
+            guarded = recovery_guard(row, pace_confirmation_read)
+            # Guard reads participate in the same pacing as the following normal POST.
+            if guarded is None and not pace_confirmation_read():
+                guarded = ('retry', 0, 'confirmation_pending', 'Recovery overlap verification interrupted', None)
+        if guarded is not None:
+            outcome, guidance = guarded, 0
+        elif not needs_confirmation and ledger.has_uncertain_peer(row):
             outcome = ('retry', 0, 'peer_uncertain', 'Related source identity is uncertain; no POST attempted', None)
             guidance = 0
         elif needs_confirmation:
