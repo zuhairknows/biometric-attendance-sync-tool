@@ -73,13 +73,16 @@ Unselected holds and existing capture/retry policies are unchanged.
 
 Each dispatch has **120 seconds from dispatch**, at most **128 total HTTP attempts**
 persisted across restarts, at most **10 selected items**, and HTTP timeouts capped at
-**10 seconds** (or remaining deadline). Approval expires after 24 hours. One request
+**3 seconds connect / 10 seconds read inactivity** (each capped by the remaining
+deadline). Redirects are denied at the budget boundary. Approval expires after 24 hours. One request
 is processed per existing service tick. Cancellation/deadlines are checked at pacing,
 HTTP and publication boundaries; late responses cannot yield a success receipt.
 The deadline is cooperative for an in-flight Phase 1 transport call: socket inactivity
 timeouts are not a hard end-to-end deadline against a continuously trickling server.
-That transport behavior is an explicit production gate; no second sending process
-is introduced to enforce it. Exhausted/cancelled requests remain Needs Review.
+The selected minimal controlled-test policy accepts this finite-request behavior
+with explicit operational acknowledgement that an in-flight call can delay normal
+delivery. It does not require or claim a hard wall-clock bound; no second sending
+process or automatic retry is introduced. Exhausted/cancelled requests remain Needs Review.
 
 The archived Phase 1 staging harness keeps its original source pins and will
 correctly reject these changed service modules. Development regression tests use

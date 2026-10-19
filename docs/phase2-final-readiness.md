@@ -8,15 +8,19 @@ change contracts, ACLs, service configuration, queue states or historical holds.
 
 - The 120-second dispatch deadline is **cooperative**, not a hard execution bound.
   `Budget` checks wall and monotonic time, durably counts at most 128 HTTP attempts,
-  caps each socket timeout at ten seconds and refuses late success. Requests can
+  enforces connect/read inactivity limits of three/ten seconds (each further
+  limited by remaining budget), denies redirects and refuses late success. Requests can
   nevertheless block beyond the deadline (DNS or a continuously trickling body).
   Input/ACL validation also takes elapsed time; the budget cannot interrupt it.
   The loopback-only deadline regression demonstrates the transport limitation.
   Cancellation stops subsequent work; it cannot recall an in-flight remote commit.
   Do not detach a sender, terminate the service or retry POST to enforce a deadline.
   A hard bound needs separately reviewed cancellable I/O in the existing service;
-  it is not supplied by changing Requests' timeout argument. This remains a blocker
-  to claiming bounded recovery that cannot delay normal synchronization.
+  it is not supplied by changing Requests' timeout argument. The selected minimal
+  policy is finite requests, not a hard elapsed-time guarantee. Controlled-test
+  approval must explicitly accept possible normal-delivery delay during an
+  in-flight call. Do not claim a worst-case duration of 128 times ten seconds.
+  The budget adds no automatic retries; uncertain POST permission stays consumed.
 - Confirmed and corrected: the prior-intent, Already Exists path checked current
   quarantine before remote reads but accepted any later state when committing the
   local confirmation. It now repeats the supported-state check inside BEGIN
@@ -191,9 +195,16 @@ recovery evidence. Unknown contract claims stay false; no flags are changed here
 
 ## GO / NO-GO checklist
 
-- [ ] Hard-deadline/normal-sync-blocking transport limitation resolved and reviewed.
-- [ ] Effective deployed GET/POST rules, full destination visibility, employee DB
-  equality, duplicate atomicity/quiescence, timezone and historical payload verified.
+- [ ] Finite-request policy accepted: at most ten records, 128 persisted HTTP
+  attempts across restarts, three/ten-second connect/read inactivity limits,
+  cooperative 120-second cutoff, no uncertain POST replay. Potential in-flight
+  delay to normal synchronization explicitly accepted; no hard deadline claimed.
+- [ ] Service API identity independently bound to its actual configuration, with
+  effective Employee/Checkin read visibility including the time field's permission
+  level, get_count and complete pages checked against independent control sets.
+- [ ] Both hostnames bound to the same site/database; effective deployed GET/POST
+  rules, employee DB equality, duplicate atomicity/quiescence, timezone/precision
+  and historical payload verified. Unknown claims remain false.
 - [ ] Actual service/operator tokens, protected inputs/handoff ACLs, canonical
   binding, single-writer ownership and isolated Windows restart proof verified.
 - [ ] Complete independent Phase 2A evidence; exact selected records, any separate
@@ -205,15 +216,30 @@ Any unchecked item means **NO-GO for recovery**. Read-only evidence collection m
 be separately authorized while synchronization continues. No code/configuration
 flag in this review enables production sending.
 
+For the first separately approved production test, select **one** verified,
+untouched, non-held record from the protected snapshot. Keep synchronization
+running; use the existing service writer only. Approval and dispatch stay separate.
+Require independent pre-send and post-send destination proof and retained audit.
+If the outcome is uncertain, stop further dispatch, preserve the intent and review
+the destination independently. Do not replay or reset the source. Starting with a
+held record is unnecessary; any later held test needs its own specific authorization.
+
 ## Local validation
 
-The focused service/manager/deadline run passed **55 tests in 17.115 seconds**.
-The final sequential relevant regression run passed **544 tests in 103.016 seconds**:
+The focused service/manager/deadline run passed **61 tests in 18.024 seconds**.
+After extending the Windows abrupt-exit test, the final sequential relevant
+regression run passed **550 tests in 105.022 seconds**, with no skips on win32:
 manager service handoff, deadline, service recovery, preview, offline diagnostics/
 comparison, restricted modes, manager/web, historical investigation/recovery,
 production-verification guards, durable sync, ERPNext sync, service hardening,
 Phase 1 release/remaining checks, uncertain confirmation, reconciliation and Frappe
-exports. The new quarantine-race test failed before the fix. Source-pin regression
+exports. New coverage checks strict phase timeouts, redirect denial, request-cap
+exhaustion, no automatic timeout retry, cancellation during HTTP, incomplete
+destination counts and actual Windows cross-process global mutex exclusion at
+both ledger paths, release and abrupt-owner-exit recovery. Existing tests retain
+handoff/approval separation, manager-no-POST, crash/restart reconciliation, holds,
+duplicate prevention and independent confirmation. The earlier quarantine-race
+regression remains covered. Source-pin regression
 and git diff confirm no Phase 1 source changes from the starting commit. Validation
 uses synthetic SQLite and mocked/file-backed ERPNext; the deadline test uses only
 a loopback receiver. No production access, sending, service operation or deployment

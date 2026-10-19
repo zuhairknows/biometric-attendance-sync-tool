@@ -47,6 +47,8 @@ def install(ledger):
 
 
 class Budget:
+    """Finite calls, not a hard wall-clock limit: Requests timeouts are inactivity limits."""
+
     def __init__(self, request, options, *, stopped, clock=time.time, monotonic=time.monotonic, sleep=time.sleep):
         self.transport, self.options, self.stopped = request, options, stopped
         self.clock, self.monotonic, self.sleep = clock, monotonic, sleep
@@ -75,8 +77,12 @@ class Budget:
         self.used += 1
         self.last = self.monotonic()
         self.last_wall = self.clock()
-        kwargs['timeout'] = min(10, self.end - self.monotonic(), self.deadline - self.clock())
-        require(kwargs['timeout'] > 0, 'recovery_budget_or_cancellation')
+        remaining = min(self.end - self.monotonic(), self.deadline - self.clock())
+        require(remaining > 0, 'recovery_budget_or_cancellation')
+        # Explicit connect/read limits cannot be widened by a caller. Neither
+        # interrupts DNS or a trickling body; the checks below reject late success.
+        kwargs['timeout'] = (min(3, remaining), min(10, remaining))
+        kwargs['allow_redirects'] = False
         response = self.transport(method, url, **kwargs)
         # A late HTTP success is not allowed to become a successful recovery receipt.
         if self.stopped() or self.monotonic() >= self.end or self.clock() >= self.deadline:

@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import shutil
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -142,7 +144,8 @@ class ServiceRecoveryTests(unittest.TestCase):
         self.request()
         send = self.target.request
         def transport(method, url, **kwargs):
-            self.assertLessEqual(kwargs['timeout'], 10)
+            self.assertLessEqual(kwargs['timeout'][0], 3)
+            self.assertLessEqual(kwargs['timeout'][1], 10)
             self.assertFalse(kwargs['allow_redirects'])
             if method == 'POST':
                 self.assertEqual(self.rows()[0]['state'], 'delivering')
@@ -331,6 +334,35 @@ class ServiceRecoveryTests(unittest.TestCase):
         except Exception as error:
             errors.append(type(error))
 
+    @unittest.skipUnless(sys.platform == 'win32', 'Actual Windows global mutex required')
+    def test_global_writer_lock_excludes_other_process_and_releases_on_exit(self):
+        # This child only probes ownership; it never opens SQLite or sends HTTP.
+        script = '''
+import sys
+from durable_startup import worker_lock, StartupError
+try:
+    with worker_lock(sys.argv[1]):
+        pass
+except StartupError:
+    sys.exit(17)
+'''
+        def probe(path):
+            return subprocess.run([sys.executable, '-B', '-c', script, str(path)],
+                cwd=Path(__file__).resolve().parents[1], capture_output=True, timeout=15).returncode
+
+        with worker_lock(self.live):
+            self.assertEqual(probe(self.live), 17)
+            # Windows ownership is global, including a different ledger path.
+            self.assertEqual(probe(self.root / 'other.sqlite3'), 17)
+        self.assertEqual(probe(self.live), 0)
+        crash = "import os,sys; from durable_startup import worker_lock\nwith worker_lock(sys.argv[1]): os._exit(24)"
+        result = subprocess.run([sys.executable, '-B', '-c', crash, str(self.live)],
+            cwd=Path(__file__).resolve().parents[1], capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 24)
+        # The crashed owner cannot strand ownership or start a second sender.
+        self.assertEqual(probe(self.live), 0)
+        self.assertEqual(self.target.calls, [])
+
     def test_changed_inputs_and_unapproved_contract_are_blocked(self):
         self.request()
         self.config.HISTORICAL_RECOVERY_CONTRACT_SHA256 = '0'*64
@@ -359,7 +391,8 @@ class ServiceRecoveryTests(unittest.TestCase):
         times = []
         def transport(method, url, **kwargs):
             times.append(self.clock())
-            self.assertLessEqual(kwargs['timeout'], 10)
+            self.assertLessEqual(kwargs['timeout'][0], 3)
+            self.assertLessEqual(kwargs['timeout'][1], 10)
             result = send(method, url, **kwargs)
             if method == 'POST':
                 self.clock.sleep(121)
@@ -391,6 +424,21 @@ class ServiceRecoveryTests(unittest.TestCase):
         self.target._save()
         self.tick()
         self.assertNotIn('POST', self.target.calls)
+        self.assertEqual(self.rows('sr_items')[0]['status'], 'Needs Review')
+
+    def test_incomplete_checkin_visibility_blocks_intent_and_submission(self):
+        self.request()
+        send = self.target.request
+        def incomplete_count(method, url, **kwargs):
+            if url.endswith('/frappe.client.get_count') and kwargs['params']['doctype'] == 'Employee Checkin':
+                return response(200, {'message': 1})  # Resource pages actually contain zero.
+            return send(method, url, **kwargs)
+        self.target.request = incomplete_count
+        self.tick()
+        self.assertNotIn('POST', self.target.calls)
+        self.assertEqual(self.rows('sr_intents'), [])
+        self.assertEqual(self.rows()[0]['state'], 'pending')
+        self.assertEqual(self.rows()[0]['attempt_count'], 0)
         self.assertEqual(self.rows('sr_items')[0]['status'], 'Needs Review')
 
     def test_private_acl_request_hash_and_schema_checks_are_preserved(self):

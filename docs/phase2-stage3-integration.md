@@ -89,7 +89,8 @@ existing writer call returns late; its budget rejects the response and prevents 
 next call. It proves fail-closed outcomes, **not** hard execution-time cancellation.
 The receiver thread is only a test server; no additional sending worker is introduced.
 
-The persisted 128-request cap, ten-item limit, 10-second HTTP timeout cap,
+The persisted 128-request cap, ten-item limit, three-second connect and ten-second
+read-inactivity timeout caps (both limited further by remaining budget),
 120-second dispatch deadline, source/destination intent fencing and cancellation
 remain enforced. They cannot interrupt a blocking in-flight Requests call at an
 absolute deadline. Abandoning that call in a sender thread/process would risk a
@@ -100,7 +101,12 @@ writer and reconciliation of uncertain commits. That can be designed within the
 existing service without another sender, but is outside this Phase 1-preserving
 change and has not been implemented or certified.
 
-Production remains **NO-GO**. In addition to the transport gap, independently verify
+For controlled testing the chosen policy is finite requests with these strict
+timeouts and fail-closed late/uncertain outcomes, not a hard execution deadline.
+It introduces no automatic transport retries or extra sending workers. Explicit
+operational acceptance of potential delay to normal synchronization is required.
+
+Production remains **NO-GO**. In addition to that policy acceptance, independently verify
 the effective Frappe GET/POST handlers/hooks, full visibility, employee database
 equality, duplicate uniqueness, timezone/precision and historical payload policy;
 actual Windows service/operator token and ACL access; service ownership/restart
