@@ -14,7 +14,7 @@ from historical_attendance.diagnostics import DiagnosticError
 from historical_attendance.reporting import validate_output
 from historical_attendance.recovery import file_hash
 from scripts.attendance_reconciliation import local_time
-from .controller import ManagerError
+from .controller import ManagerError, INVESTIGATION_FAILURES
 from .profile import device_catalog
 from .state import State
 
@@ -93,8 +93,10 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
                 diagnostic = trace.fail(ValueError('request_rejected') if isinstance(error, HTTPException) else error)
             except DiagnosticError as log_error:
                 diagnostic = log_error
-        return render_template('error.html', code=status,
-            diagnostic=diagnostic.message if isinstance(diagnostic, DiagnosticError) else None), status
+        message = diagnostic.message if isinstance(diagnostic, DiagnosticError) else None
+        if isinstance(error, ManagerError) and str(error) in ('service_profile_incomplete', 'service_diagnostics_unavailable'):
+            message = INVESTIGATION_FAILURES[str(error)]
+        return render_template('error.html', code=status, diagnostic=message), status
 
     @app.context_processor
     def context():
@@ -109,7 +111,7 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
     def fields(allowed):
         if set(request.form) - (set(allowed) | {'csrf'}):
             raise ManagerError('unexpected_form_fields')
-        for name in set(request.form) - {'devices', 'ids'}:
+        for name in set(request.form) - {'devices', 'ids', 'hold_ids'}:
             if len(request.form.getlist(name)) != 1:
                 raise ManagerError('duplicate_form_fields')
 
@@ -369,7 +371,60 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
 
     @app.get('/recovery')
     def recovery_page():
-        return render_template('recovery.html', table=paginate(state.batches))
+        return render_template('recovery.html', table=paginate(state.batches), service_requests=state.service_requests)
+
+    @app.post('/recovery/service/prepare')
+    def service_prepare():
+        fields({'ids', 'receipt', 'preview_hash'})
+        ids = [int(i) for i in request.form.getlist('ids')]
+        preview = state.recovery_preview
+        if not preview or request.form.get('preview_hash') != preview['summary']['source_file_sha256']:
+            abort(409)
+        receipt = request.form.get('receipt', '')
+        workflow = controller.service_workflow(state.values)
+        def accept(identity):
+            # Backend-generated UUID only; no user URL or private path enters this link.
+            state.job['destination'] = '/recovery/service/' + identity
+        return launch('Verify evidence and prepare service request', lambda: workflow.prepare(preview, ids, receipt),
+                      accept, url_for('recovery_page'))
+
+    @app.post('/recovery/service/refresh')
+    def service_refresh():
+        fields(set())
+        return launch('Read private service request list', controller.service_workflow(state.values).listing,
+            lambda rows: setattr(state, 'service_requests', rows), url_for('recovery_page'))
+
+    @app.get('/recovery/service/<identity>')
+    def service_request_page(identity):
+        if state.closed or not state.lock.acquire(blocking=False):
+            abort(409)
+        try:
+            data = controller.service_workflow(state.values).details(identity)
+        finally:
+            state.lock.release()
+        return render_template('service_request.html', data=data)
+
+    @app.post('/recovery/service/<identity>/<action>')
+    def service_request_action(identity, action):
+        if action not in ('approve', 'dispatch', 'cancel'):
+            abort(404)
+        fields({'fingerprint', 'ids', 'hold_ids', 'reference', 'hold_reference', 'confirmed'})
+        if request.form.get('confirmed') != '1':
+            abort(400)
+        workflow = controller.service_workflow(state.values)
+        fingerprint, reference = request.form.get('fingerprint', ''), request.form.get('reference', '')
+        if action == 'approve':
+            ids = [int(i) for i in request.form.getlist('ids')]
+            held = [int(i) for i in request.form.getlist('hold_ids')]
+            if not ids or len(ids) > 10 or len(ids) != len(set(ids)) or len(held) != len(set(held)):
+                abort(400)
+            request_hold = request.form.get('hold_reference', '')
+            task = lambda: workflow.approve(identity, fingerprint, ids, held, reference, request_hold)
+        elif action == 'dispatch':
+            task = lambda: workflow.dispatch(identity, fingerprint, reference)
+        else:
+            task = lambda: workflow.cancel(identity, reference)
+        return launch('Service request ' + action, task, lambda _: None, url_for('service_request_page', identity=identity))
 
     @app.post('/recovery/refresh')
     def refresh_batches():

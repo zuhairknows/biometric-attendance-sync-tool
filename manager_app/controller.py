@@ -10,6 +10,7 @@ import tempfile
 import threading
 
 from sync_ledger import Ledger
+from durable_startup import private_storage
 from historical_attendance import recovery
 from historical_attendance.bounded import run_bounded
 from historical_attendance.recovery_store import RecoveryStore
@@ -49,6 +50,8 @@ INVESTIGATION_FAILURES = {
     'investigation_blocked_or_cancelled': 'The investigation failed without a recognized safe diagnostic. Review approved inputs and permissions; no verified result is available.',
 }
 INVESTIGATION_FAILURES.update(recovery_preview.MESSAGES)
+INVESTIGATION_FAILURES['service_profile_incomplete'] = 'Recovery handoff blocked: supply the approved snapshot/hash, Phase 2A summary/hash, contract/hash, canonical recovery ledger and private inbox in the startup profile. No approval or dispatch was accepted.'
+INVESTIGATION_FAILURES['service_diagnostics_unavailable'] = 'Recovery handoff blocked before private diagnostics could be created. Check the approved diagnostics/output directory, private ACLs and separation from all inputs. No public or temporary log fallback was used.'
 
 
 def utc_time(value):
@@ -121,10 +124,12 @@ class Settings:
 
 
 class Controller:
-    def __init__(self, *, service_query=service_state, acl_check=check_directory_acl, cli=investigation_cli.main, sandbox_root=None):
+    def __init__(self, *, service_query=service_state, acl_check=check_directory_acl, cli=investigation_cli.main, sandbox_root=None,
+                 storage_check=private_storage):
         self.service_query = service_query
         self.acl_check = acl_check
         self.cli = cli
+        self.storage_check = storage_check
         self.cancelled = threading.Event()
         self.last_investigation = None
         self.sandbox_root = Path(sandbox_root).resolve() if sandbox_root else None
@@ -138,6 +143,10 @@ class Controller:
     def close(self):
         # Cancels only this app's bounded work. Never issues a service-control call.
         self.cancelled.set()
+
+    def service_workflow(self, values):
+        from .recovery_handoff import Workflow
+        return Workflow(self, values)
 
     def preview_recovery(self, values, devices):
         try:

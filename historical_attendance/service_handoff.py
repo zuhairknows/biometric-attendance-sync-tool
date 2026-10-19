@@ -79,12 +79,17 @@ def reference(value):
 
 
 def prepare_request(inbox, live_ledger, *, ledger_path, summary_path, summary_sha256,
-                    contract_path, contract_sha256, receipt_review, now=time.time):
+                    contract_path, contract_sha256, receipt_review, selected_ids=None, now=time.time):
     """No submission and no live-ledger writes; only fully verified Phase 2A evidence."""
     inbox.check()
     arguments = dict(ledger_path=str(ledger_path), summary_path=str(summary_path), summary_sha256=summary_sha256,
         contract_path=str(contract_path), contract_sha256=contract_sha256, receipt_review=reference(receipt_review))
     metadata, items = recovery.preparation(**arguments)
+    if selected_ids is not None:
+        require(selected_ids and len(selected_ids) <= MAX_ITEMS and len(set(selected_ids)) == len(selected_ids)
+            and all(type(i) is int for i in selected_ids), 'selected_approval_invalid')
+        items = [item for item in items if item['id'] in selected_ids]
+        require({item['id'] for item in items} == set(selected_ids), 'selection_not_verified')
     require(metadata['contract']['verification'].get('read_only_api_verified') is True, 'read_only_api_unverified')
     for entry in metadata['inputs']:
         inbox.storage_check(Path(entry['path']), service_sid=inbox.trusted_sid)
@@ -111,6 +116,7 @@ def prepare_request(inbox, live_ledger, *, ledger_path, summary_path, summary_sh
             candidates.append(dict(id=original['id'], identity=identity(original),
                 identity_key=original['identity_key'], employee=item['employee'], held=held))
     require(candidates and len(candidates) <= 100, 'narrow_verified_candidate_scope_required')
+    require(selected_ids is None or {c['id'] for c in candidates} == set(selected_ids), 'selection_not_verified')
     request_id = uuid.uuid4().hex
     created = now()
     draft = dict(schema='service-recovery-request-v1', id=request_id, evidence=arguments,

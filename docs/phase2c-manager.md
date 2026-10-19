@@ -31,6 +31,11 @@ state is removed on graceful shutdown. Start here on a review computer.
 
 ## Stage 1: local Historical Recovery Preview
 
+The later [Stage 3 operator handoff](phase2-stage3-integration.md) connects selected
+preview records to separately verified evidence, approval, dispatch and service
+status in normal/demo mode. Production execution remains disabled; restricted
+startup modes retain their read-only behavior.
+
 In `--investigation-only` mode, open **Investigation → Historical Recovery Preview**.
 This reads local delivery evidence only. It makes no ERPNext or device requests and
 requires no API contract or credentials. Existing API investigation prerequisites

@@ -2,5 +2,9 @@
 {% block title %}Recovery management{% endblock %}{% block subtitle %}Review existing pinned batches and their durable audit history.{% endblock %}
 {% block heading_action %}<form method="post" action="{{ url_for('refresh_batches') }}">{{ token(csrf) }}<button>Load existing batches</button></form>{% endblock %}
 {% block body %}<div class="notice safety">Simulation Only — Live Recovery Disabled</div>
+{% if job and job.status == 'blocked' and job.destination == url_for('recovery_page') %}<p class="notice warning" role="alert">{{ job.error }}</p>{% endif %}
+<section class="card panel"><h2>Service-owned recovery requests</h2><p>Start with <a href="{{ url_for('preview_page') }}">Historical Recovery Preview</a>. Independent Phase 2A evidence, record approval and a separate dispatch confirmation are required. Production execution stays disabled.</p>
+<form method="post" action="{{ url_for('service_refresh') }}">{{ token(csrf) }}<button class="secondary">Refresh service requests</button></form>
+{% for row in service_requests %}<p><a href="{{ url_for('service_request_page',identity=row.id) }}">Request {{ row.id[:12] }}</a> · {{ row.status }}</p>{% else %}<p>No service requests loaded.</p>{% endfor %}</section>
 <section class="card panel"><div class="panel-heading"><div><h2>Recovery batches</h2><p>Approval and execution are restricted to verified synthetic workflows.</p></div></div>
 {% if table.rows %}<div class="table-scroll"><table><thead><tr><th>Batch</th><th>Prepared · UTC</th><th>Pinned fingerprint</th><th></th></tr></thead><tbody>{% for row in table.rows %}<tr><td class="mono">{{ row.id[:12] }}</td><td>{{ row.created }}</td><td class="mono">{{ row.fingerprint[:16] }}…</td><td><a href="{{ url_for('batch_page',identity=row.id) }}">Review batch →</a></td></tr>{% endfor %}</tbody></table></div>{{ pager(table) }}{% else %}{{ empty('No batches loaded') }}{% endif %}</section>{% endblock %}

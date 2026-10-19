@@ -14,6 +14,7 @@ class State:
         self.offline = None
         self.recovery_preview = None
         self.batches = []
+        self.service_requests = []
         self.lock = threading.Lock()
         self.thread = None
         self.job = None

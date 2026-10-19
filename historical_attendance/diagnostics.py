@@ -9,6 +9,9 @@ from contextlib import contextmanager
 from scripts.capture_history_safety import preflight_output
 
 STAGES = {
+    'recovery_evidence': 'Review the independently approved Phase 2A summary/hash, contract, snapshot and selected scope. Local preview, offline and compatibility-only reports cannot authorize recovery.',
+    'recovery_handoff': 'Check private inbox access and the exact request fingerprint. Approval and dispatch are separate; held records need their own selected authorization.',
+    'recovery_status': 'Check read-only access to the canonical service ledger and unchanged handoff. No service restart or queue reset is required.',
     'diagnostics': 'Check the approved diagnostics directory, private ACLs and write access. No console or temporary-directory fallback is used.',
     'request': 'Check the selected files, devices, date range and acknowledgement. Refresh the form if its session expired.',
     'profile': 'Check offline_directory, offline_evidence, offline_evidence_hash and output in the private startup profile.',
@@ -65,6 +68,12 @@ LEDGER_ERRORS = {
     'SQLite foreign key check failed': 'source_foreign_keys_failed',
 }
 CODES.update(LEDGER_ERRORS.values())
+CODES.update('''recovery_preview_required recovery_evidence_required recovery_production_disabled
+recovery_scope_changed recovery_handoff_changed canonical_source_changed canonical_ledger_binding_required
+canonical_ledger_binding_changed selection_not_verified request_changed approval_changed request_expired
+explicit_selected_hold_authorization_required selected_approval_invalid read_only_api_unverified
+complete_reconciliation_required comparison_contract_unverified snapshot_must_be_separate_from_live_ledger
+recovery_profile_incomplete recovery_request_not_found recovery_ledger_unavailable'''.split())
 EVENTS = {'check', 'passed', 'failed', 'unverified', 'complete'}
 
 
@@ -100,7 +109,7 @@ class DiagnosticError(Exception):
 
 
 class Trace:
-    def __init__(self, values, acl_check):
+    def __init__(self, values, acl_check, *, kind='offline'):
         self.reference, self.stage = uuid.uuid4().hex, 'diagnostics'
         try:
             self.directory = preflight_output(values.get('diagnostics_directory') or values.get('output', ''), acl_check=acl_check)
@@ -109,7 +118,9 @@ class Trace:
                 imports = Path(values['offline_directory']).resolve()
                 if self.directory == imports or imports in self.directory.parents:
                     raise ValueError('diagnostic_directory_separation')
-            self.path = self.directory / ('offline-' + self.reference + '.jsonl')
+            if kind not in ('offline', 'recovery'):
+                raise ValueError
+            self.path = self.directory / (kind + '-' + self.reference + '.jsonl')
             with self.path.open('x', encoding='utf-8'):
                 pass
             self.emit('check', 'ok')
