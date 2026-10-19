@@ -171,7 +171,7 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
         destination = request.form.get('destination', 'dashboard_page')
         if destination not in ('dashboard_page', 'devices_page'):
             abort(400)
-        return launch('Read-only diagnostics', lambda: controller.dashboard(state.values.get('monitor_ledger', '')),
+        return launch('Read-only diagnostics', lambda: controller.dashboard(state.values.get('monitor_ledger', ''), values=state.values),
             lambda result: setattr(state, 'dashboard', result), url_for(destination))
 
     @app.get('/devices')

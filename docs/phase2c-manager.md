@@ -25,6 +25,9 @@ After an approved manager update, reload Dashboard/Devices before using their fo
 an old document may retain the previous referrer policy or session CSRF token.
 No synchronization-service restart is required.
 
+For ledger-read failures, safe private diagnostics and ordinary-user logon startup,
+see [monitoring diagnosis and startup](manager-ledger-read-diagnostics.md).
+
 `--demo` uses disposable synthetic punches, 12 synthetic device definitions and a
 local synthetic ERPNext fixture. It never contacts ERPNext, SCM or devices. Demo
 state is removed on graceful shutdown. Start here on a review computer.

@@ -56,7 +56,8 @@ def create_demo(*, monitor_only=False, investigation_only=False):
     if monitor_only:
         # Monitoring previews need no investigation report, recovery batch or transport.
         controller = Controller(service_query=lambda: 'RUNNING (demo)', acl_check=demo_acl, sandbox_root=root)
-        return temporary, controller, dict(monitor_ledger=str(source), device_config=str(configuration))
+        return temporary, controller, dict(monitor_ledger=str(source), device_config=str(configuration),
+            diagnostics_directory=str(output))
     contract = dict(schema='attendance-investigation-contract-v1', destination_environment='synthetic',
         site_url='https://manager.example.test', site_timezone='Asia/Riyadh', timestamp_precision='seconds',
         duplicate_key='employee_time_log_type', coverage_start=str(start), coverage_end=str(end),

@@ -1,4 +1,4 @@
-"""Private, allowlisted offline action diagnostics. Never serialize exceptions/inputs."""
+"""Private, allowlisted management diagnostics. Never serialize exceptions/inputs."""
 import csv
 import json
 from pathlib import Path
@@ -9,6 +9,12 @@ from contextlib import contextmanager
 from scripts.capture_history_safety import preflight_output
 
 STAGES = {
+    'monitor_path': 'Check the configured absolute ledger path and the manager account access. No database is created.',
+    'monitor_open_schema': 'Check database/sidecar access and the deployed ledger schema version. Do not migrate, repair or change journal mode.',
+    'monitor_snapshot': 'The read-only transaction could not start. Retry manually after startup; do not stop synchronization.',
+    'monitor_integrity': 'Full integrity and foreign-key checks must pass; quick_check alone does not establish this.',
+    'monitor_counts': 'The verified ledger diagnostics could not be read. Preserve the source and review the diagnostic code.',
+    'monitor_display': 'Stored diagnostics could not be rendered. No partial healthy result was accepted; do not edit ledger values to bypass this check.',
     'recovery_evidence': 'Review the independently approved Phase 2A summary/hash, contract, snapshot and selected scope. Local preview, offline and compatibility-only reports cannot authorize recovery.',
     'recovery_handoff': 'Check private inbox access and the exact request fingerprint. Approval and dispatch are separate; held records need their own selected authorization.',
     'recovery_status': 'Check read-only access to the canonical service ledger and unchanged handoff. No service restart or queue reset is required.',
@@ -68,6 +74,8 @@ LEDGER_ERRORS = {
     'SQLite foreign key check failed': 'source_foreign_keys_failed',
 }
 CODES.update(LEDGER_ERRORS.values())
+CODES.update('''sqlite_busy sqlite_locked sqlite_cantopen sqlite_readonly sqlite_ioerr
+sqlite_corrupt sqlite_notadb diagnostic_value_invalid'''.split())
 CODES.update('''recovery_preview_required recovery_evidence_required recovery_production_disabled
 recovery_scope_changed recovery_handoff_changed canonical_source_changed canonical_ledger_binding_required
 canonical_ledger_binding_changed selection_not_verified request_changed approval_changed request_expired
@@ -118,7 +126,7 @@ class Trace:
                 imports = Path(values['offline_directory']).resolve()
                 if self.directory == imports or imports in self.directory.parents:
                     raise ValueError('diagnostic_directory_separation')
-            if kind not in ('offline', 'recovery'):
+            if kind not in ('offline', 'recovery', 'monitor'):
                 raise ValueError
             self.path = self.directory / (kind + '-' + self.reference + '.jsonl')
             with self.path.open('x', encoding='utf-8'):

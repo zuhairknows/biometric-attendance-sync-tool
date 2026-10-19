@@ -80,6 +80,16 @@ class MonitorOnlyTests(ManagerFixture):
             self.assertNotIn(b'href="/recovery"', response.data)
             self.assertIn(b'exports are disabled', response.data)
 
+    def test_refresh_displays_safe_ledger_failure_and_writes_private_monitor_log(self):
+        with mock.patch('manager_app.controller.Ledger', side_effect=PermissionError('PRIVATE_SECRET employee attendance')):
+            self.complete_refresh('devices_page')
+        for path in ('/', '/devices'):
+            page = self.get(path)
+            self.assertIn(b'monitor_open_schema / permission_denied', page.data)
+            self.assertNotIn(b'PRIVATE_SECRET', page.data)
+        self.assertEqual(self.state.dashboard['integrity'], 'Unavailable')
+        self.assertTrue(list(self.root.rglob('monitor-*.jsonl')))
+
     def test_rendered_dashboard_and_devices_forms_accept_browser_origin(self):
         for monitor_only in (True, False):
             app = create_app(self.controller, self.values, demo=True, monitor_only=monitor_only)
@@ -231,8 +241,10 @@ class MonitorOnlyTests(ManagerFixture):
             temporary, controller, values = create_demo(monitor_only=True)
             self.addCleanup(temporary.cleanup)
             self.addCleanup(controller.close)
-            self.assertEqual(set(values), {'monitor_ledger', 'device_config'})
-            self.assertEqual(controller.dashboard(values['monitor_ledger'])['total'], 3)
+            self.assertEqual(set(values), {'monitor_ledger', 'device_config', 'diagnostics_directory'})
+            result = controller.dashboard(values['monitor_ledger'], values=values)
+            self.assertEqual(result['total'], 3)
+            self.assertEqual(result['errors'], [])
             for operation in (investigate, prepare, export):
                 operation.assert_not_called()
 

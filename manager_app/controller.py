@@ -165,7 +165,9 @@ class Controller:
             code = str(error)
             raise ManagerError(code if code in recovery_preview.MESSAGES else 'preview_failed') from None
 
-    def dashboard(self, ledger_path):
+    def dashboard(self, ledger_path, *, values=None):
+        from .monitoring import MonitoringTrace
+        trace = MonitoringTrace(self, values, ledger_path)
         data = dict(service='Unavailable', integrity='Unavailable', total=0, pending=0, retry=0,
                     failed=0, holds=0, states={}, last_delivery='Not recorded', devices=[], errors=[],
                     refreshed=dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'))
@@ -174,29 +176,42 @@ class Controller:
         except Exception:
             data['errors'].append('Service status unavailable; access or installation could not be verified.')
         try:
+            trace.enter('monitor_path')
             self._paths(ledger_path)
+            trace.enter('monitor_open_schema')
+            # Publish only a fully checked/formatted snapshot. A display error must
+            # not leave an earlier integrity='OK' or partially populated devices.
+            snapshot = dict(data, devices=[])
             with Ledger(Path(ledger_path), readonly=True) as ledger:
+                trace.enter('monitor_snapshot')
                 ledger.db.execute('PRAGMA query_only=ON')
                 ledger.db.execute('BEGIN')
+                trace.enter('monitor_integrity')
                 ledger.verify_integrity()
+                trace.enter('monitor_counts')
                 diagnostics = ledger.diagnostics()
-                data.update(integrity='OK', total=diagnostics['total'], pending=diagnostics['states']['pending'],
-                    retry=diagnostics['states']['retry'], failed=diagnostics['quarantined'],
-                    holds=diagnostics['held_historical'], states=diagnostics['states'],
-                    last_delivery=utc_time(diagnostics['last_successful_delivery']))
                 failures = {r[0]: r[1] for r in ledger.db.execute("SELECT device_id,COUNT(*) FROM punches WHERE state IN ('rejected','unmatched_employee','invalid_record') GROUP BY device_id")}
                 ids = {r[0] for r in ledger.db.execute('SELECT DISTINCT device_id FROM punches')}
                 states = {r['device_id']: dict(r) for r in ledger.db.execute('SELECT * FROM device_state')}
+                trace.enter('monitor_display')
+                snapshot.update(integrity='OK', total=diagnostics['total'], pending=diagnostics['states']['pending'],
+                    retry=diagnostics['states']['retry'], failed=diagnostics['quarantined'],
+                    holds=diagnostics['held_historical'], states=diagnostics['states'],
+                    last_delivery=utc_time(diagnostics['last_successful_delivery']))
                 for device in sorted(ids | states.keys()):
                     state = states.get(device, {})
-                    data['devices'].append(dict(device=device,
+                    snapshot['devices'].append(dict(device=device,
                         fetch='OK' if state.get('fetch_ok') else 'Failed / unknown',
                         last_fetch=state.get('last_successful_fetch') or 'Not recorded',
                         backlog=diagnostics['pending_per_device'].get(device, 0),
                         failed=failures.get(device, 0),
                         last_delivery=utc_time(state.get('last_successful_delivery'))))
-        except Exception:
-            data['errors'].append('Ledger unavailable or integrity/schema check failed. No state was changed.')
+            data = snapshot
+            trace.emit('complete', 'ok')
+        except Exception as error:
+            data['errors'].append(trace.failure(error))
+        if trace.warning:
+            data['errors'].append(trace.warning)
         return data
 
     def investigate(self, values, devices, key, secret, production_ack, backup_ack):
