@@ -83,6 +83,11 @@ explicit_selected_hold_authorization_required selected_approval_invalid read_onl
 complete_reconciliation_required comparison_contract_unverified snapshot_must_be_separate_from_live_ledger
 recovery_profile_incomplete recovery_request_not_found recovery_ledger_unavailable'''.split())
 EVENTS = {'check', 'passed', 'failed', 'unverified', 'complete'}
+# Monitor-only failure metadata. Never accept arbitrary operation names or text.
+MONITOR_OPEN_OPERATIONS = frozenset(('unknown', 'source_connect', 'source_busy_timeout',
+    'source_foreign_keys', 'source_tables', 'source_schema_version', 'reference_connect',
+    'reference_schema_build', 'reference_schema_read', 'source_schema_compare',
+    'source_destination_state', 'reference_close', 'source_close_on_error'))
 
 
 def safe_code(error):
@@ -119,6 +124,7 @@ class DiagnosticError(Exception):
 class Trace:
     def __init__(self, values, acl_check, *, kind='offline'):
         self.reference, self.stage = uuid.uuid4().hex, 'diagnostics'
+        self.kind = kind
         try:
             self.directory = preflight_output(values.get('diagnostics_directory') or values.get('output', ''), acl_check=acl_check)
             # Diagnostics must not write into the approved import/source directory.
@@ -136,15 +142,25 @@ class Trace:
             code = safe_code(error)
             raise DiagnosticError('diagnostics', code if code != 'unexpected_error' else 'diagnostics_unavailable', self.reference) from None
 
-    def emit(self, event, code):
+    def emit(self, event, code, *, monitor_operation=None, sqlite_code=None):
         try:
             if event not in EVENTS or code not in CODES or self.stage not in STAGES:
                 raise ValueError
+            record = dict(reference=self.reference, stage=self.stage, code=code, event=event)
+            if monitor_operation is not None or sqlite_code is not None:
+                # Only this specific SQLite failure can extend the four-field schema.
+                # Numeric codes preserve extended errors without serializing exceptions.
+                if (self.kind != 'monitor' or self.stage != 'monitor_open_schema' or event != 'failed'
+                        or monitor_operation not in MONITOR_OPEN_OPERATIONS
+                        or type(sqlite_code) is not int or not 0 <= sqlite_code <= 2147483647):
+                    raise ValueError
+                record.update(operation=monitor_operation, sqlite_code=sqlite_code,
+                    sqlite_primary=sqlite_code & 255)
             if self.path.is_symlink() or self.path.resolve().parent != self.directory:
                 raise ValueError
-            # Fixed four-field schema: deliberately no paths, arguments, times or rows.
+            # No paths, exception arguments, times or rows, including monitor details.
             with self.path.open('a', encoding='utf-8') as stream:
-                stream.write(json.dumps(dict(reference=self.reference, stage=self.stage, code=code, event=event)) + '\n')
+                stream.write(json.dumps(record) + '\n')
                 stream.flush()
         except Exception as error:
             code = safe_code(error)

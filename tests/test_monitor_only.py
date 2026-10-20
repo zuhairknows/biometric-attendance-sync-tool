@@ -1,6 +1,9 @@
 """Monitoring gate acceptance: synthetic files, mocked service, no live integrations."""
 from contextlib import ExitStack
 from html.parser import HTMLParser
+import json
+from pathlib import Path
+import sqlite3
 import unittest
 from unittest import mock
 
@@ -70,6 +73,41 @@ class MonitorOnlyTests(ManagerFixture):
                 with self.client.head(path, base_url=ORIGIN) as response:
                     self.assertEqual(response.status_code, 200)
         self.assertIn(b'FP2_DEVICE_12', self.get('/devices').data)
+
+    def test_background_refresh_reports_reference_open_failure_then_repeated_refreshes_recover(self):
+        actual_connect = sqlite3.connect
+        connections = []
+        def connect(target, **options):
+            connections.append(target)
+            if target == ':memory:':
+                error = sqlite3.OperationalError('PRIVATE_SECRET SYNTHETIC_EMP 2026-10-11')
+                error.sqlite_errorcode = 782
+                raise error
+            return actual_connect(target, **options)
+
+        with mock.patch('sync_ledger.sqlite3.connect', side_effect=connect):
+            response = self.complete_refresh()
+        self.assertEqual(len(connections), 2)
+        self.assertEqual(connections[-1], ':memory:')
+        self.assertEqual(self.state.dashboard['integrity'], 'Unavailable')
+        for page in ('/', '/devices'):
+            text = self.get(page).get_data(as_text=True)
+            self.assertIn('reference_connect', text)
+            self.assertIn('SQLite code: 782 (primary 14)', text)
+            self.assertNotIn('PRIVATE_SECRET', text)
+        directory = Path(self.values.get('diagnostics_directory') or self.values['output'])
+        records = [json.loads(line) for p in directory.glob('monitor-*.jsonl')
+            for line in p.read_text().splitlines()]
+        failed = [r for r in records if r['event'] == 'failed']
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0]['operation'], 'reference_connect')
+        self.assertEqual(failed[0]['sqlite_code'], 782)
+        # Connections are per-job and closed; refresh never reuses thread-bound SQLite handles.
+        with mock.patch('sync_ledger.sqlite3.connect', wraps=actual_connect) as opened:
+            for destination in ('dashboard_page', 'devices_page', 'dashboard_page'):
+                self.complete_refresh(destination)
+                self.assertEqual(self.state.dashboard['integrity'], 'OK')
+        self.assertEqual(opened.call_count, 6)
 
     def test_navigation_hides_disabled_sections_and_labels_mode(self):
         for path in ('/', '/devices'):

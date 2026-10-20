@@ -34,8 +34,10 @@ outside service/input directories and pass existing output/ACL checks. No direct
 or ACL is created or repaired by refresh. Direct Controller.dashboard callers can
 pass values=profile to enable the same logging.
 
-Each manual refresh writes monitor-<random-reference>.jsonl with only reference,
-stage, code and event. No paths, credentials, employee/device identifiers, attendance
+Each manual refresh writes monitor-<random-reference>.jsonl with reference,
+stage, code and event. SQLite failures in monitor_open_schema additionally contain
+an allowlisted operation and integer sqlite_code/sqlite_primary (see below).
+No paths, credentials, employee/device identifiers, attendance
 timestamps, records, exception text or traces are logged. Browser failures show the
 fixed stage/code and reference. If logging fails, a separate safe warning appears;
 the actual ledger failure is still shown. There is no public/console/temp fallback.
@@ -121,6 +123,54 @@ URI escaping, user_version=0, unchanged source/files, incomplete schema despite
 quick_check=ok, extended CANTOPEN location, missing source and a reserved service
 writer. The full relevant suite passed **572 tests in 125.059 seconds**. No manager,
 Phase 1, service, ledger-state or recovery execution code changed for this probe.
+
+### Passing probe, failing web refresh: targeted operation diagnostic
+
+The subsequent IT-SUPPORT evidence establishes that the separate probe passes,
+but not which statement fails inside the running manager. The production cause
+remains unproven. The web path is `/refresh` -> `State.start` -> one new background
+thread -> `Controller.dashboard` -> `Ledger(readonly=True)`. The per-manager lock
+rejects overlapping jobs. Each refresh creates one source connection and one
+`:memory:` reference connection, and closes them; it does not reuse a connection
+created on another thread. The probe instead opens the source three times
+sequentially (two URI tests and the exact constructor). The web transaction,
+query_only and integrity checks start only after monitor_open_schema succeeds.
+No manager SQLite overrides, temporary-directory settings or environment changes
+were found in this monitoring path. The probe's fresh `-I -S` process and the
+manager's long-running application/job-thread context differ; neither proves
+an environmental cause. PID parent/child evidence alone does not establish one.
+
+The diagnostic update inspects only trusted Ledger failure frames and matches
+their exact statement against fixed labels. It adds no DB connections, callbacks,
+retries, locks, changes to Phase 1 or duplicated schema validation. Unknown/missing
+source metadata produces `operation: unknown`; the original error is retained.
+Only a monitor_open_schema SQLite failure can add these three fields to its
+private JSONL record (offline/recovery records retain their four-field schema):
+
+```json
+{"reference":"<existing random reference>","stage":"monitor_open_schema","code":"sqlite_cantopen","event":"failed","operation":"reference_connect","sqlite_code":782,"sqlite_primary":14}
+```
+
+This is a synthetic example, **not production evidence**. The browser shows the
+same safe operation and integer codes. Labels distinguish source_connect,
+source_busy_timeout, source_foreign_keys, source_tables, source_schema_version,
+reference_connect, reference_schema_build, reference_schema_read,
+source_schema_compare, source_destination_state, reference_close and
+source_close_on_error. Execute/fetch/iteration failures belong to their containing
+statement. No source statement, path, traceback, environment value or record is
+serialized. Existing private ACL/path checks and logging-failure warnings remain.
+
+Synthetic tests distinguish these twelve locations, including extended code 782,
+and exercise a real background refresh failure followed by repeated successful
+jobs. Existing reserved/committing/exclusive-writer tests remain: exclusive lock
+timeout returns SQLITE_BUSY (5), so contention alone is not evidence explaining
+the observed SQLITE_CANTOPEN (14). No lock/journal/retry correction is justified.
+After a separately approved deployment, refresh once and collect only the failed
+record and matching reference. This identifies the SQLite statement and extended
+code needed for the next narrow diagnosis; do not change the ledger or service.
+Validation: **577 relevant tests passed in 125.526 seconds**, including Phase 1,
+monitor-only/CSRF/Host restrictions, investigation, offline, recovery and concurrent
+SQLite writer regressions. This is synthetic evidence, not a production diagnosis.
 
 ## Safe rollout and rollback (instructions only)
 

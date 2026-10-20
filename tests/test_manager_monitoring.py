@@ -11,6 +11,8 @@ from manager_app.demo import create_demo
 from sync_ledger import Ledger
 from historical_attendance.diagnostics import STAGES, CODES
 from historical_attendance.diagnostics import Trace
+from historical_attendance.diagnostics import MONITOR_OPEN_OPERATIONS, DiagnosticError
+from manager_app.monitoring import _OPEN_STATEMENTS
 
 
 class MonitoringTests(unittest.TestCase):
@@ -29,7 +31,14 @@ class MonitoringTests(unittest.TestCase):
         records = [json.loads(line) for p in self.logs.glob('monitor-*.jsonl') for line in p.read_text().splitlines()]
         self.assertTrue(records)
         for r in records:
-            self.assertEqual(set(r), {'reference', 'stage', 'code', 'event'})
+            expected = {'reference', 'stage', 'code', 'event'}
+            if 'operation' in r:
+                expected |= {'operation', 'sqlite_code', 'sqlite_primary'}
+                self.assertEqual((r['stage'], r['event']), ('monitor_open_schema', 'failed'))
+                self.assertIn(r['operation'], MONITOR_OPEN_OPERATIONS)
+                self.assertIs(type(r['sqlite_code']), int)
+                self.assertEqual(r['sqlite_primary'], r['sqlite_code'] & 255)
+            self.assertEqual(set(r), expected)
             self.assertIn(r['stage'], STAGES)
             self.assertIn(r['code'], CODES)
         encoded = json.dumps(records)
@@ -57,6 +66,114 @@ class MonitoringTests(unittest.TestCase):
         self.assertTrue(any(r['event'] == 'complete' for r in self.records()))
         self.assertFalse(any(q.startswith(('INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP')) for q in queries))
         self.assertEqual(self.source.read_bytes(), before)
+
+    def test_each_constructor_sqlite_operation_preserves_extended_code_and_privacy(self):
+        import gc
+        self.addCleanup(gc.collect)  # Fault-injected cursor tracebacks can retain fixture handles.
+        # Fail at actual Ledger statements, rather than fabricating traceback frames.
+        # The injected errors reproduce locations, not the unproven production cause.
+        cases = [
+            ('source_connect', 'connect', False, ''),
+            ('reference_connect', 'connect', True, ''),
+            ('source_busy_timeout', 'execute', False, 'PRAGMA busy_timeout=10000'),
+            ('source_foreign_keys', 'execute', False, 'PRAGMA foreign_keys=ON'),
+            ('source_tables', 'execute', False, "SELECT name FROM sqlite_master WHERE type='table'"),
+            ('source_schema_version', 'execute', False, 'SELECT version FROM schema_version'),
+            ('reference_schema_build', 'execute', True, 'CREATE TABLE schema_version (version INTEGER NOT NULL)'),
+            ('reference_schema_read', 'fetchall', True, 'SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL'),
+            ('source_schema_compare', 'fetchone', False, 'SELECT sql FROM sqlite_master WHERE type=? AND name=?'),
+            ('source_destination_state', 'fetchall', False, 'SELECT id,cooldown_until,prefer_retry,prefer_recent FROM destination_state'),
+            ('reference_close', 'close', True, ''),
+            ('source_close_on_error', 'close', False, ''),
+        ]
+        actual_connect = sqlite3.connect
+        before, entries = self.source.read_bytes(), set(self.source.parent.iterdir())
+        for operation, call, reference, statement in cases:
+            with self.subTest(operation=operation):
+                def fail():
+                    error = sqlite3.OperationalError('PRIVATE_SECRET SYNTHETIC_EMP 2026-10-11 ' + str(self.source))
+                    error.sqlite_errorcode = 782
+                    error.sqlite_errorname = 'SQLITE_CANTOPEN_FULLPATH'
+                    raise error
+
+                class Cursor:
+                    def __getattr__(cursor, name):
+                        if name == call:
+                            fail()
+                        return getattr(cursor.actual, name)
+
+                class Connection(sqlite3.Connection):
+                    def execute(db, sql, *args):
+                        # Force initialization to unwind so its source close can fail.
+                        if operation == 'source_close_on_error' and not db.reference:
+                            raise ValueError('PRIVATE_SECRET')
+                        targeted = db.reference == reference and sql == statement
+                        if targeted and call == 'execute':
+                            fail()
+                        result = super().execute(sql, *args)
+                        if targeted and call.startswith('fetch'):
+                            cursor = Cursor()
+                            cursor.actual = result
+                            return cursor
+                        return result
+
+                    def close(db):
+                        super().close()
+                        if call == 'close' and db.reference == reference:
+                            fail()
+
+                opened = []
+                def connect(target, **options):
+                    is_reference = target == ':memory:'
+                    opened.append(target)
+                    if not is_reference:
+                        self.assertEqual(options, dict(uri=True, timeout=10))
+                        self.assertTrue(target.endswith('?mode=ro'))
+                    if call == 'connect' and is_reference == reference:
+                        fail()
+                    db = actual_connect(target, **options, factory=Connection)
+                    db.reference = is_reference
+                    return db
+
+                with mock.patch('sync_ledger.sqlite3.connect', side_effect=connect):
+                    result = self.refresh()
+                self.assert_failure(result, 'monitor_open_schema', 'sqlite_cantopen')
+                record = [r for r in self.records() if r['event'] == 'failed'
+                    and r['reference'] in str(result['errors'])][-1]
+                self.assertEqual((record['operation'], record['sqlite_code'], record['sqlite_primary']),
+                    (operation, 782, 14))
+                self.assertIn('Operation: ' + operation, str(result['errors']))
+                self.assertIn('SQLite code: 782 (primary 14)', str(result['errors']))
+                self.assertNotIn('PRIVATE_SECRET', str(result))
+                self.assertLessEqual(len(opened), 2)  # No diagnostic/retry connection.
+                self.assertEqual(self.source.read_bytes(), before)
+                self.assertEqual(set(self.source.parent.iterdir()), entries)
+
+    def test_statement_labels_are_bound_to_the_reviewed_ledger_source(self):
+        import inspect
+        for function, statements in _OPEN_STATEMENTS:
+            lines = {s.strip() for s in inspect.getsource(function).splitlines()}
+            self.assertTrue(set(statements) <= lines)
+            self.assertTrue(set(statements.values()) <= MONITOR_OPEN_OPERATIONS)
+
+    def test_unavailable_source_metadata_keeps_the_actual_sqlite_error(self):
+        self.source.rename(self.source.with_suffix('.parked'))
+        with mock.patch('manager_app.monitoring.inspect.getsourcelines', side_effect=OSError()):
+            result = self.refresh()
+        self.assert_failure(result, 'monitor_open_schema', 'sqlite_cantopen')
+        self.assertEqual(self.records()[-1]['operation'], 'unknown')
+
+    def test_monitor_metadata_is_typed_allowlisted_and_unavailable_to_offline_logs(self):
+        for kind, operation, number in [('offline', 'source_connect', 14),
+                ('monitor', 'PRIVATE_SECRET', 14), ('monitor', 'source_connect', 'PRIVATE_SECRET'),
+                ('monitor', 'source_connect', True), ('monitor', 'source_connect', -1)]:
+            with self.subTest(kind=kind, operation=operation, number=number):
+                trace = Trace(self.values, self.controller.acl_check, kind=kind)
+                trace.stage = 'monitor_open_schema'
+                before = trace.path.read_bytes()
+                with self.assertRaises(DiagnosticError):
+                    trace.emit('failed', 'sqlite_cantopen', monitor_operation=operation, sqlite_code=number)
+                self.assertEqual(trace.path.read_bytes(), before)
 
     def test_missing_database_after_boot_is_not_created_and_manual_refresh_recovers(self):
         ready = self.source.with_suffix('.parked')

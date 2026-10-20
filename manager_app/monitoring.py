@@ -1,8 +1,51 @@
-"""Safe monitor diagnostics using the existing private, four-field JSONL writer."""
+"""Safe monitor diagnostics; never alter the ledger's connection or schema checks."""
+import inspect
 from pathlib import Path
 import sqlite3
 
 from historical_attendance.diagnostics import Trace, DiagnosticError, STAGES, safe_code
+from sync_ledger import Ledger
+
+
+# Associate trusted Ledger statements with fixed labels. Read source only on error;
+# do not trace SQL, monkeypatch sqlite3, or add a second diagnostic DB connection.
+_OPEN_STATEMENTS = (
+    (Ledger.__init__, {
+        "self.db = sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True, timeout=10) if readonly else sqlite3.connect(str(self.path), timeout=10)": 'source_connect',
+        "self.db.execute('PRAGMA busy_timeout=10000')": 'source_busy_timeout',
+        "self.db.execute('PRAGMA foreign_keys=ON')": 'source_foreign_keys',
+        'self.db.close()': 'source_close_on_error',
+    }),
+    (Ledger._initialize, {
+        '''tables = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}''': 'source_tables',
+        "versions = self.db.execute('SELECT version FROM schema_version').fetchall()": 'source_schema_version',
+    }),
+    (Ledger._validate_schema, {
+        "reference = sqlite3.connect(':memory:')": 'reference_connect',
+        'reference.execute(sql)': 'reference_schema_build',
+        '''expected = reference.execute("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL").fetchall()''': 'reference_schema_read',
+        "actual = self.db.execute('SELECT sql FROM sqlite_master WHERE type=? AND name=?', (kind, name)).fetchone()": 'source_schema_compare',
+        "rows = self.db.execute('SELECT id,cooldown_until,prefer_retry,prefer_recent FROM destination_state').fetchall()": 'source_destination_state',
+        'reference.close()': 'reference_close',
+    }),
+)
+
+
+def open_failure_operation(error):
+    """Inspect trusted frames locally; emit only a fixed operation, never a trace."""
+    operation = 'unknown'
+    frame = error.__traceback__
+    while frame:
+        for function, statements in _OPEN_STATEMENTS:
+            if frame.tb_frame.f_code is function.__code__:
+                try:
+                    lines, first = inspect.getsourcelines(function)
+                    statement = lines[frame.tb_lineno - first].strip()
+                    operation = statements.get(statement, operation)
+                except (OSError, TypeError, IndexError):
+                    pass  # Missing source must not replace or conceal the SQLite failure.
+        frame = frame.tb_next
+    return operation
 
 
 def failure_code(error, stage):
@@ -48,10 +91,10 @@ class MonitoringTrace:
             + '). Check diagnostics_directory private ACLs, write access and separation from service/input directories. No console or temporary log fallback was used.')
         self.trace = None
 
-    def emit(self, event, code):
+    def emit(self, event, code, **details):
         if self.trace:
             try:
-                self.trace.emit(event, code)
+                self.trace.emit(event, code, **details)
             except Exception as error:
                 self.unavailable(error)
 
@@ -63,6 +106,13 @@ class MonitoringTrace:
 
     def failure(self, error):
         code = failure_code(error, self.stage)
-        self.emit('failed', code)
+        details, message = {}, ''
+        number = getattr(error, 'sqlite_errorcode', None)
+        if (self.stage == 'monitor_open_schema' and isinstance(error, sqlite3.Error)
+                and type(number) is int and 0 <= number <= 2147483647):
+            operation = open_failure_operation(error)
+            details = dict(monitor_operation=operation, sqlite_code=number)
+            message = f' Operation: {operation}; SQLite code: {number} (primary {number & 255}).'
+        self.emit('failed', code, **details)
         return (f'Ledger unavailable: {self.stage} / {code}. Diagnostic {self.reference}. '
-            + STAGES[self.stage] + ' No state was changed.')
+            + STAGES[self.stage] + message + ' No state was changed.')
