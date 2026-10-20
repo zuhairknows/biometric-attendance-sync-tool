@@ -215,6 +215,82 @@ Validation: **582 relevant tests passed in 118.899 seconds**. New synthetic case
 cover actual-frame source substitution, matching probe/profile bindings, private
 metadata validation and the real background refresh/form-override boundary.
 
+### Main-thread/worker comparison retained only as a local test fixture
+
+The manager imports sqlite3 on the main thread and opens each ledger inside the
+State refresh worker. No manager-specific per-thread SQLite configuration or
+shared connection handle was found. A normal HTTP request runs on a Waitress
+thread, so the local fixture uses a Python signal to perform the comparison on
+its actual main loop thread, followed by a State worker. The two connections are
+sequential and read-only; neither repeats schema/health checks or sends data.
+
+The uncommitted production CLI/console hook was removed after the local approach
+was adopted. The comparison now lives under tests/ and rejects a controller
+without the synthetic sandbox. The application launcher and runtime are unchanged
+from 08a0afd. No diagnostic-only production release is proposed.
+
+### Local reproduction on ZUHAIR-PC (2026-10-20)
+
+Run from the development checkout, with local port 8765 free. The test refuses to
+attach to an existing manager and does not stop any unrelated process:
+
+```powershell
+$env:PYTHONPATH = 'tests'
+& .\.venv\Scripts\python.exe -B -m unittest test_manager_http_sqlite -v
+```
+
+The parent creates a synthetic ledger, then launches a fresh venv Python process.
+That process runs the real runtime.serve/Waitress main loop, Flask routes, cookies,
+CSRF checks, job polling and State refresh worker on 127.0.0.1:8765. Its first
+SQLite connection is observed through a test-only audit hook: it is the HTTP
+refresh worker's source connection, not a preparatory main-thread open. The audit
+hook permits only the synthetic source URI and :memory: and denies off-loopback
+connections. No production config, database, devices or ERPNext APIs are used.
+Test paths use the existing demo sandbox ACL guard; production ACL compatibility
+is not established. A second case queries only the local Windows EventLog service
+read-only and uses a filename containing spaces, percent/hash and Unicode.
+
+Local observations:
+
+- Cold-start and repeated real HTTP Dashboard/Devices refreshes pass.
+- Main-thread and background-job opens both pass in that running process. The
+  test's control pipe raises SIGBREAK only within its owned child process.
+- A reserved DELETE-journal writer allows refresh. An exclusive SQLite lock
+  produces SQLITE_BUSY, and refresh recovers after rollback.
+- A deliberately held **read-only native Windows handle with share mode zero**
+  reproduces source_connect / SQLITE_CANTOPEN (14), with all seven context flags
+  true. A separate native open confirms ERROR_SHARING_VIOLATION (32). Releasing
+  only this test handle restores refresh; ledger bytes remain unchanged.
+- Monitoring-only route restrictions remain enforced. Owned child processes and
+  synthetic fixtures are cleaned up; no local listener is left behind.
+
+The last case proves a mechanism capable of producing the same diagnostic. It
+does **not** establish that such a handle exists on IT-SUPPORT, or explain the
+reported persistent web-only pattern. No unconditional thread/URI/SQLite fix is
+justified, and moving connections to the main thread would be speculative.
+
+Development environment actually inspected: Python 3.11.9 (64-bit), SQLite 3.45.1
+(threadsafety=3), Flask 3.1.3, Waitress 3.0.2, Windows build 10.0.26200, NTFS,
+non-elevated token, Defender real-time protection enabled and Controlled Folder
+Access disabled (0). Only SQLite 3.45.1 is independently supplied for production;
+production OS/build, package versions, effective token, security/filter policy and
+native file-open result are not verified here. requirements-manager.txt permits
+version ranges, so the branch alone does not prove identical installed packages.
+The local Temp fixture does not recreate production ProgramData storage policy.
+
+The ordinary production failure was not reproduced locally. Do not ship another
+diagnostic-only release or change SQLite, journal mode, permissions, retries or
+the service on the strength of these tests. The remaining decisive evidence is
+the native Windows result for the actual failed manager file open (and an owning
+handle/process if sharing is denied). Obtaining that from IT-SUPPORT requires
+separate approval. No IT-SUPPORT filesystem or service was accessed in this work.
+
+Final validation after keeping the comparison test-only: **590 relevant tests
+passed in 141.229 seconds**, no skips. The eight new local tests passed separately
+in 19.085 seconds. git diff --check passed. Application, Phase 1 and recovery
+modules are unchanged; only these synthetic tests/fixtures and documentation are
+proposed for review. Nothing was committed, pushed or deployed.
+
 ## Safe rollout and rollback (instructions only)
 
 1. Review the local fix and tests, then transfer its exact approved source to a
