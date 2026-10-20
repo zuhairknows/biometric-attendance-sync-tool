@@ -2,9 +2,15 @@
 import inspect
 from pathlib import Path
 import sqlite3
+import _sqlite3
+import threading
 
-from historical_attendance.diagnostics import Trace, DiagnosticError, STAGES, safe_code
+from historical_attendance.diagnostics import Trace, DiagnosticError, STAGES, safe_code, MONITOR_SOURCE_BINDING_FIELDS
 from sync_ledger import Ledger
+
+# The successful standalone probe enforces this exact target. Do not export it or
+# a reversible path hash; compare locally and publish only tri-state flags.
+PROBE_TARGET = Path('C:/ProgramData/ERPNextBiometricPushService/sync.sqlite3')
 
 
 # Associate trusted Ledger statements with fixed labels. Read source only on error;
@@ -48,6 +54,38 @@ def open_failure_operation(error):
     return operation
 
 
+def source_failure_binding(error, argument, profile_path):
+    """Compare the failed constructor's actual path, without another SQLite open."""
+    result = dict.fromkeys(MONITOR_SOURCE_BINDING_FIELDS)
+    result.update(builtin_sqlite_connect=sqlite3.connect is _sqlite3.connect,
+        background_thread=threading.current_thread() is not threading.main_thread())
+    frame = error.__traceback__
+    while frame:
+        # Only read the known constructor's self.path/readonly, never arbitrary locals.
+        if frame.tb_frame.f_code is _OPEN_STATEMENTS[0][0].__code__:
+            try:
+                path = frame.tb_frame.f_locals['self'].path
+                result['readonly_argument'] = frame.tb_frame.f_locals['readonly'] is True
+                if not isinstance(path, Path) or not path.is_absolute():
+                    break
+                actual_uri = path.as_uri() + '?mode=ro'
+                # URI comparisons are exact, including spelling/escaping. Resolved
+                # comparisons separately identify harmless path spelling differences.
+                if isinstance(profile_path, str) and Path(profile_path).is_absolute():
+                    profile = Path(profile_path)
+                    result['argument_equals_profile'] = (actual_uri == profile.as_uri() + '?mode=ro'
+                        and Path(argument).as_uri() + '?mode=ro' == actual_uri)
+                    result['resolved_equals_profile'] = path.resolve().as_uri() == profile.resolve().as_uri()
+                target = PROBE_TARGET.resolve()
+                result['resolved_equals_probe_target'] = path.resolve().as_uri() == target.as_uri()
+                result['uri_equals_probe'] = actual_uri == target.as_uri() + '?mode=ro'
+            except Exception:
+                pass  # Missing metadata is unknown, never a replacement for CANTOPEN.
+            break
+        frame = frame.tb_next
+    return result
+
+
 def failure_code(error, stage):
     # Numeric SQLite codes distinguish lock/IO failures without logging SQL or paths.
     if isinstance(error, sqlite3.Error):
@@ -66,6 +104,8 @@ class MonitoringTrace:
     def __init__(self, controller, values, ledger_path):
         self.trace, self.warning = None, None
         self.stage, self.reference = 'monitor_path', 'not-recorded'
+        self.ledger_path = ledger_path
+        self.profile_ledger = values.get('monitor_ledger') if values is not None else None
         # Direct callers may omit logging; the Flask route supplies its private profile.
         if values is None:
             return
@@ -113,6 +153,11 @@ class MonitoringTrace:
             operation = open_failure_operation(error)
             details = dict(monitor_operation=operation, sqlite_code=number)
             message = f' Operation: {operation}; SQLite code: {number} (primary {number & 255}).'
+            if operation == 'source_connect':
+                binding = source_failure_binding(error, self.ledger_path, self.profile_ledger)
+                details['monitor_source'] = binding
+                # Values remain in private diagnostics; the browser gets a fixed hint.
+                message += ' Source/profile and worker-context comparisons are in the private diagnostic record.'
         self.emit('failed', code, **details)
         return (f'Ledger unavailable: {self.stage} / {code}. Diagnostic {self.reference}. '
             + STAGES[self.stage] + message + ' No state was changed.')

@@ -172,6 +172,49 @@ Validation: **577 relevant tests passed in 125.526 seconds**, including Phase 1,
 monitor-only/CSRF/Host restrictions, investigation, offline, recovery and concurrent
 SQLite writer regressions. This is synthetic evidence, not a production diagnosis.
 
+### Source-connect failure with an equivalent standalone connection passing
+
+The reviewed web path has no ledger substitution, temporary database, credential
+or environment override. The SCM query opens/query/closes service handles; it does
+not impersonate another account or change the working directory. The approved
+startup profile resolves the path once, State copies it, and /refresh passes that
+value unchanged. Its worker creates the connection on the thread that uses it.
+The same reviewed Ledger statement uses Path.as_uri() + '?mode=ro', uri=True and
+timeout=10. There is no confirmed correction to make to that connection policy.
+
+On **source_connect failure only**, the same private record now includes one
+`source_binding` object. Its keys are fixed; values are true/false/null only:
+
+| Flag | Comparison performed locally in the failing refresh worker |
+| --- | --- |
+| argument_equals_profile | Actual failing Ledger path, dashboard argument and supplied profile produce exactly the same URI. |
+| resolved_equals_profile | Actual failing path and profile resolve to exactly the same URI. |
+| resolved_equals_probe_target | Actual path resolves to the production ledger target already enforced by the successful standalone probe. |
+| uri_equals_probe | Actual constructor URI exactly matches the resolved target URI used by that probe, including mode=ro. |
+| readonly_argument | The trusted failing Ledger constructor received readonly=True. |
+| builtin_sqlite_connect | sqlite3.connect is the underlying _sqlite3.connect, without a Python-level connector replacement. |
+| background_thread | The failure occurred outside the process main thread. |
+
+The path/readonly values come from the trusted failing constructor frame, not just
+the intended configuration. URI arguments are reconstructed from that frame and
+the reviewed statement; there is no global interception of SQLite. Comparisons
+read path metadata but never open another SQLite connection. No path, URI, hash,
+process environment value, record or trace is emitted. A null flag means the
+comparison was unavailable. These comparisons do not authorize another target.
+
+If argument/profile flags differ, investigate the web binding. If only the probe
+target flags differ, the failed job is not using the exact URI/target tested by
+that probe (even a spelling difference is reported). If all path flags and
+readonly/builtin flags are true, path/argument substitution is not supported as
+the cause of that failure; a process/OS/transient access cause remains unverified.
+A background-thread flag alone does not establish a threading defect. After
+separate review/deployment approval, collect this record from one manual refresh;
+do not repeat standalone connection tests, retry inside the app or change SQLite,
+permissions, service state, journal mode or the existing recovery gates.
+Validation: **582 relevant tests passed in 118.899 seconds**. New synthetic cases
+cover actual-frame source substitution, matching probe/profile bindings, private
+metadata validation and the real background refresh/form-override boundary.
+
 ## Safe rollout and rollback (instructions only)
 
 1. Review the local fix and tests, then transfer its exact approved source to a

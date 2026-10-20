@@ -88,6 +88,9 @@ MONITOR_OPEN_OPERATIONS = frozenset(('unknown', 'source_connect', 'source_busy_t
     'source_foreign_keys', 'source_tables', 'source_schema_version', 'reference_connect',
     'reference_schema_build', 'reference_schema_read', 'source_schema_compare',
     'source_destination_state', 'reference_close', 'source_close_on_error'))
+MONITOR_SOURCE_BINDING_FIELDS = frozenset(('argument_equals_profile', 'resolved_equals_profile',
+    'resolved_equals_probe_target', 'uri_equals_probe', 'readonly_argument',
+    'builtin_sqlite_connect', 'background_thread'))
 
 
 def safe_code(error):
@@ -142,12 +145,12 @@ class Trace:
             code = safe_code(error)
             raise DiagnosticError('diagnostics', code if code != 'unexpected_error' else 'diagnostics_unavailable', self.reference) from None
 
-    def emit(self, event, code, *, monitor_operation=None, sqlite_code=None):
+    def emit(self, event, code, *, monitor_operation=None, sqlite_code=None, monitor_source=None):
         try:
             if event not in EVENTS or code not in CODES or self.stage not in STAGES:
                 raise ValueError
             record = dict(reference=self.reference, stage=self.stage, code=code, event=event)
-            if monitor_operation is not None or sqlite_code is not None:
+            if monitor_operation is not None or sqlite_code is not None or monitor_source is not None:
                 # Only this specific SQLite failure can extend the four-field schema.
                 # Numeric codes preserve extended errors without serializing exceptions.
                 if (self.kind != 'monitor' or self.stage != 'monitor_open_schema' or event != 'failed'
@@ -156,6 +159,13 @@ class Trace:
                     raise ValueError
                 record.update(operation=monitor_operation, sqlite_code=sqlite_code,
                     sqlite_primary=sqlite_code & 255)
+                if monitor_source is not None:
+                    # Tri-state comparisons only: never serialize a path/hash/environment.
+                    if (monitor_operation != 'source_connect' or not isinstance(monitor_source, dict)
+                            or set(monitor_source) != MONITOR_SOURCE_BINDING_FIELDS
+                            or any(v is not None and type(v) is not bool for v in monitor_source.values())):
+                        raise ValueError
+                    record['source_binding'] = monitor_source
             if self.path.is_symlink() or self.path.resolve().parent != self.directory:
                 raise ValueError
             # No paths, exception arguments, times or rows, including monitor details.

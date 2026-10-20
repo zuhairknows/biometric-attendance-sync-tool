@@ -12,6 +12,7 @@ from sync_ledger import Ledger
 from historical_attendance.diagnostics import STAGES, CODES
 from historical_attendance.diagnostics import Trace
 from historical_attendance.diagnostics import MONITOR_OPEN_OPERATIONS, DiagnosticError
+from historical_attendance.diagnostics import MONITOR_SOURCE_BINDING_FIELDS
 from manager_app.monitoring import _OPEN_STATEMENTS
 
 
@@ -38,6 +39,11 @@ class MonitoringTests(unittest.TestCase):
                 self.assertIn(r['operation'], MONITOR_OPEN_OPERATIONS)
                 self.assertIs(type(r['sqlite_code']), int)
                 self.assertEqual(r['sqlite_primary'], r['sqlite_code'] & 255)
+            if 'source_binding' in r:
+                expected.add('source_binding')
+                self.assertEqual(r['operation'], 'source_connect')
+                self.assertEqual(set(r['source_binding']), MONITOR_SOURCE_BINDING_FIELDS)
+                self.assertTrue(all(v is None or type(v) is bool for v in r['source_binding'].values()))
             self.assertEqual(set(r), expected)
             self.assertIn(r['stage'], STAGES)
             self.assertIn(r['code'], CODES)
@@ -155,6 +161,56 @@ class MonitoringTests(unittest.TestCase):
             lines = {s.strip() for s in inspect.getsource(function).splitlines()}
             self.assertTrue(set(statements) <= lines)
             self.assertTrue(set(statements.values()) <= MONITOR_OPEN_OPERATIONS)
+
+    def test_probe_target_binding_is_the_same_as_the_existing_standalone_probe(self):
+        from scripts.probe_manager_ledger import TARGET
+        from manager_app.monitoring import PROBE_TARGET
+        self.assertEqual(PROBE_TARGET, TARGET)
+
+    def test_real_source_connect_failure_reports_same_target_without_another_connection(self):
+        # A missing fixture produces a genuine SQLite CANTOPEN, without wrapping
+        # sqlite3.connect (which the diagnostic would correctly flag as overridden).
+        self.source.rename(self.source.with_suffix('.parked'))
+        entries = set(self.source.parent.iterdir())
+        with mock.patch('manager_app.monitoring.PROBE_TARGET', self.source):
+            result = self.refresh()
+        record = [r for r in self.records() if r['event'] == 'failed'][-1]
+        self.assertEqual(record['sqlite_code'], 14)
+        flags = record['source_binding']
+        self.assertEqual(flags, {name: name != 'background_thread' for name in MONITOR_SOURCE_BINDING_FIELDS})
+        self.assertNotIn(str(self.source), str(result))
+        self.assertEqual(set(self.source.parent.iterdir()), entries)
+
+    def test_source_substitution_is_compared_using_the_actual_failed_ledger_frame(self):
+        other = self.source.parent / 'PRIVATE_SECRET-other.sqlite3'
+        def redirected(path, readonly):
+            self.assertEqual(Path(path), self.source)
+            self.assertTrue(readonly)
+            return Ledger(other, readonly=True)
+        with mock.patch('manager_app.controller.Ledger', side_effect=redirected), \
+                mock.patch('manager_app.monitoring.PROBE_TARGET', self.source):
+            result = self.refresh()
+        flags = self.records()[-1]['source_binding']
+        self.assertFalse(flags['argument_equals_profile'])
+        self.assertFalse(flags['resolved_equals_profile'])
+        self.assertFalse(flags['resolved_equals_probe_target'])
+        self.assertFalse(flags['uri_equals_probe'])
+        self.assertTrue(flags['readonly_argument'])
+        self.assertTrue(flags['builtin_sqlite_connect'])
+        self.assertNotIn('PRIVATE_SECRET', str(result))
+        self.assertFalse(other.exists())
+
+    def test_binding_metadata_cannot_log_strings_or_appear_on_other_operations(self):
+        for operation, values in [('source_connect', dict.fromkeys(MONITOR_SOURCE_BINDING_FIELDS, 'PRIVATE_SECRET')),
+                ('source_tables', dict.fromkeys(MONITOR_SOURCE_BINDING_FIELDS, True)),
+                ('source_connect', {'path': str(self.source)})]:
+            trace = Trace(self.values, self.controller.acl_check, kind='monitor')
+            trace.stage = 'monitor_open_schema'
+            before = trace.path.read_bytes()
+            with self.assertRaises(DiagnosticError):
+                trace.emit('failed', 'sqlite_cantopen', monitor_operation=operation,
+                    sqlite_code=14, monitor_source=values)
+            self.assertEqual(trace.path.read_bytes(), before)
 
     def test_unavailable_source_metadata_keeps_the_actual_sqlite_error(self):
         self.source.rename(self.source.with_suffix('.parked'))

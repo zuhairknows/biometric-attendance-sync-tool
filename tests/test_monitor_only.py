@@ -109,6 +109,29 @@ class MonitorOnlyTests(ManagerFixture):
                 self.assertEqual(self.state.dashboard['integrity'], 'OK')
         self.assertEqual(opened.call_count, 6)
 
+    def test_web_source_failure_compares_actual_worker_path_without_accepting_form_overrides(self):
+        from historical_attendance.diagnostics import MONITOR_SOURCE_BINDING_FIELDS
+        parked = self.source.with_suffix('.parked')
+        self.source.rename(parked)
+        original_values = dict(self.state.values)
+        try:
+            with mock.patch('manager_app.monitoring.PROBE_TARGET', self.source):
+                self.complete_refresh()
+            self.assertEqual(self.state.dashboard['integrity'], 'Unavailable')
+            directory = Path(self.values.get('diagnostics_directory') or self.values['output'])
+            records = [json.loads(line) for p in directory.glob('monitor-*.jsonl')
+                for line in p.read_text().splitlines()]
+            failed = [r for r in records if r['event'] == 'failed']
+            self.assertEqual(len(failed), 1)
+            self.assertEqual(failed[0]['source_binding'], dict.fromkeys(MONITOR_SOURCE_BINDING_FIELDS, True))
+            self.assertEqual(self.state.values, original_values)
+            self.assertNotIn(str(self.source), self.get('/').get_data(as_text=True))
+            with mock.patch.object(self.state, 'start') as start:
+                self.assertEqual(self.post('/refresh', {'monitor_ledger': 'PRIVATE_SECRET'}).status_code, 400)
+                start.assert_not_called()
+        finally:
+            parked.rename(self.source)
+
     def test_navigation_hides_disabled_sections_and_labels_mode(self):
         for path in ('/', '/devices'):
             response = self.get(path)
