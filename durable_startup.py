@@ -50,8 +50,14 @@ def cutover_time(value):
         raise StartupError('cutover_requires_local_second_precision') from None
 
 
-def private_storage(path, service_sid=None):
+def private_storage(path, service_sid=None, *, monitor_sid=None, config_path=None, monitor_author_sid=None):
     """Verify a local private directory and all entries; never change permissions."""
+    if monitor_sid is not None:
+        # This is deliberately separate from the unrestricted service SID.
+        if service_sid is not None or config_path is None:
+            raise StartupError('monitor_storage_scope_invalid')
+        from monitor_storage import validate
+        return validate(path, monitor_sid, config_path, monitor_author_sid)
     path = Path(path)
     if (not path.is_absolute() or str(path).startswith('\\\\') or not path.parent.is_dir()
             or path.parent.resolve() == Path(path.anchor)):
@@ -98,6 +104,36 @@ foreach ($item in $items) {
             raise StartupError('ledger_storage_not_private')
     except (OSError, ValueError, subprocess.TimeoutExpired):
         raise StartupError('ledger_storage_verification_failed') from None
+
+
+def canonical_storage(path, config, *, storage_check=private_storage):
+    """Apply the optional reader policy only to this service's canonical ledger."""
+    sid = getattr(config, 'DURABLE_MONITOR_READONLY_SID', None)
+    if sid is None:
+        return storage_check(path)  # Preserve strict behavior and frozen adapters.
+    from monitor_storage import canonical_sid, PolicyError
+    from durable_sync import database_path
+    import types
+    try:
+        canonical_sid(sid)
+        author = getattr(config, 'HISTORICAL_REQUEST_AUTHOR_SID', None)
+        if author is not None:
+            canonical_sid(author)  # Reject noncanonical aliases that could evade separation.
+        if sid == author:
+            raise StartupError('monitor_recovery_role_conflict')
+        # A browser/profile or arbitrary request object cannot supply the policy.
+        if not isinstance(config, types.ModuleType) or config.__name__ != 'local_config':
+            raise StartupError('monitor_configuration_untrusted')
+        source = Path(config.__file__)
+        if not source.is_absolute() or source.suffix.lower() != '.py':
+            raise StartupError('monitor_configuration_untrusted')
+        canonical = database_path(config)
+        configured = Path(getattr(config, 'DURABLE_DB_PATH', canonical))
+        if Path(path) != canonical or configured.absolute() != canonical or source.absolute() != source.resolve():
+            raise StartupError('monitor_storage_scope_invalid')
+    except (PolicyError, AttributeError, TypeError, ValueError):
+        raise StartupError('monitor_configuration_untrusted') from None
+    return storage_check(path, monitor_sid=sid, config_path=source, monitor_author_sid=author)
 
 
 @contextmanager

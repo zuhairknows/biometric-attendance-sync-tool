@@ -268,3 +268,9 @@ HISTORICAL_RECOVERY_ENABLED = False
 # HISTORICAL_RECOVERY_CONTRACT_SHA256 = 'independently approved contract SHA256'
 # HISTORICAL_RECOVERY_RELEASE = r'C:\ProgramData\ERPNextBiometricRelease\release.json'
 # HISTORICAL_RECOVERY_RELEASE_SHA256 = 'independently approved release SHA256'
+
+
+# Optional monitoring compatibility: an administrator must independently approve
+# the actual Windows user SID. Keep unset until ACL/token acceptance is complete.
+# This grants no NTFS permission and never authorizes historical recovery.
+# DURABLE_MONITOR_READONLY_SID = 'S-1-5-21-<domain>-<domain>-<domain>-<user-RID>'

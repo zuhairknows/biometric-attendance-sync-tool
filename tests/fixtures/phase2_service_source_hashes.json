@@ -1,5 +1,6 @@
 {
-  "durable_sync.py": "a50728ce45c09e566d37b59ebfa9aca41a835f8286a42d9175fd488ba1e382b4",
+  "durable_sync.py": "50becdebeb006b2f150ddff72dafac940201bc4d33ed52a5669f07f7aa18923f",
   "durable_delivery.py": "ceeb65c3161de7d2ac4fd19f1544c3351f8d658e6fddf7fd640e90f49e31a82b",
-  "sync_ledger.py": "5e6713142f432b808c7bba50a5f55798733c5c981657e381f09576fde7bc7a2d"
+  "sync_ledger.py": "5e6713142f432b808c7bba50a5f55798733c5c981657e381f09576fde7bc7a2d",
+  "durable_startup.py": "c677c6ebd664e814548b81f0389beb2684cc606ba92b4a7c165aef3fce8aaa67"
 }

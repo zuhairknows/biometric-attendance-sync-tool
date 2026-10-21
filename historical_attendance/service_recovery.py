@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 
 from durable_delivery import FrappeClient, backoff, wait_for_slot
-from durable_startup import activation_path, private_storage, validate_activation, worker_lock
+from durable_startup import activation_path, private_storage, validate_activation, worker_lock, canonical_storage
 from .client import ReadOnlyFrappeClient, VerificationError
 from .engine import investigate
 from . import recovery
@@ -372,7 +372,7 @@ def service_tick(ledger, config, activation, boundary, options, *, stop_requeste
     if type(target) not in (SimulationTarget, ServiceTarget):
         return None
     require(target.config.ERPNEXT_URL == config.ERPNEXT_URL and target.url == config.ERPNEXT_URL.rstrip('/'), 'synthetic_destination_mismatch')
-    storage_check(ledger.path)
+    canonical_storage(ledger.path, config, storage_check=storage_check)
     with worker_lock(ledger.path):
         require(validate_activation(ledger.path, config) == activation, 'activation_changed')
         inbox = Inbox(config.HISTORICAL_RECOVERY_INBOX, trusted_sid=getattr(config, 'HISTORICAL_REQUEST_AUTHOR_SID', None), storage_check=storage_check)

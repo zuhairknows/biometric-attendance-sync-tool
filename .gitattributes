@@ -30,3 +30,7 @@ scripts/phase1_staging_engine_crash.py text eol=lf
 # The separately reviewed Windows wrapper hashes use CRLF bytes.
 erpnext_sync_win.py text eol=crlf
 SMWinservice.py text eol=crlf
+
+# Monitoring ACL policy/native helper use stable reviewed source bytes.
+monitor_storage.py text eol=lf
+monitor_storage_windows.py text eol=lf

@@ -10,7 +10,7 @@ import time
 from durable_delivery import FrappeClient, deliver_batch
 from punch_normalization import import_boundary, normalize
 from sync_ledger import Ledger
-from durable_startup import private_storage, worker_lock, validate_activation, cutover_time
+from durable_startup import private_storage, worker_lock, validate_activation, cutover_time, canonical_storage
 
 
 class LegacyStatusSnapshot:
@@ -122,7 +122,7 @@ def update_shifts(ledger, engine, stop_requested=lambda: False):
 
 def run(engine, stop_requested=lambda: False):
     path = database_path(engine.config)
-    private_storage(path)
+    canonical_storage(path, engine.config, storage_check=private_storage)
     with worker_lock(path):
         validate_activation(path, engine.config)
         return _run_locked(engine, stop_requested)

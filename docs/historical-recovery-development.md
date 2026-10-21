@@ -157,3 +157,11 @@ Follow [deployment, operation and rollback](historical-recovery-deployment.md).
 Keep the preserved monitoring/service paths, narrow read grant and private profile
 until their separately approved production replacement. No production readiness
 claim or permission to send experimental Checkins is implied by this report.
+
+## Subsequent monitoring ACL development candidate
+
+The 755-test and fresh-clone results above describe the preserved baseline.
+The optional LocalSystem monitoring-reader compatibility fix has separate
+[policy and acceptance requirements](monitoring-acl-compatibility.md) and
+[development validation evidence](validation/monitoring-acl-compatibility.txt).
+It does not authorize production replacement or historical recovery.

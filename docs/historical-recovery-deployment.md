@@ -4,6 +4,17 @@ This is a release procedure for a **separately approved deployment**. Developmen
 acceptance does not authorize using these commands on IT-SUPPORT. Recovery ships
 disabled. See [development status and evidence](historical-recovery-development.md).
 
+## Optional monitoring ACL compatibility
+
+The baseline validator rejects the additional production monitoring reader.
+For the reviewed opt-in development fix, see
+[monitoring ACL compatibility](monitoring-acl-compatibility.md). Provision
+DURABLE_MONITOR_READONLY_SID only in administrator-controlled service
+configuration, after actual SID, effective access and isolated LocalSystem SCM
+acceptance. Do not change ACLs, copy a placeholder SID or enable recovery to make
+startup pass. Additional immediate children and configuration/ancestor trust can
+still block deployment.
+
 ## Preserve the working installation
 
 The production reference supplied for this mission is:

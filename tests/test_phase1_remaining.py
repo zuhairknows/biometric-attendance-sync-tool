@@ -42,11 +42,11 @@ class RemainingChecks(unittest.TestCase):
         hashes = dict(HASHES, **{
             'erpnext_sync_win.py': '121a6cf92b53cbd45e24b3f0411fb97ae2e669dc168638a094574e0cfe6d41ad',
             'SMWinservice.py': 'c0f20a35cec74705d4875da51ac5e09597a376433c056c07e61055c022d3c006'})
-        # Stage 2 intentionally changes only these three service integration files.
+        # Stage 2 integration plus the reviewed monitoring-only startup policy.
         # Keep archived Phase 1 harness hashes intact; this overlay is development
         # regression evidence and does not certify the new source for production.
         overlay = json.loads((ROOT / 'tests/fixtures/phase2_service_source_hashes.json').read_text(encoding='utf-8'))
-        self.assertEqual(set(overlay), {'durable_sync.py', 'durable_delivery.py', 'sync_ledger.py'})
+        self.assertEqual(set(overlay), {'durable_sync.py', 'durable_startup.py', 'durable_delivery.py', 'sync_ledger.py'})
         hashes.update(overlay)
         for name, digest in hashes.items():
             self.assertEqual(hashlib.sha256((ROOT / name).read_bytes()).hexdigest(), digest, name)
