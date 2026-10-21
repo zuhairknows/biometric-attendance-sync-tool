@@ -1,5 +1,11 @@
 # Phase 2C local web manager
 
+> Archived development evidence through `29a440c`. The later
+> [historical recovery development report](historical-recovery-development.md)
+> and [release procedure](historical-recovery-deployment.md) supersede the
+> synthetic-only service gate and transport limitations described below.
+> Production deployment and activation still require independent approval.
+
 Flask replaces Tkinter. The desktop implementation remains at commit
 `ac8cd7248a7159449d3b48a8c7d055d875f47d52` for rollback/reference. This manager
 has no synchronization service, device client or live recovery transport.

@@ -1,5 +1,11 @@
 # Stage 2: service-owned recovery backend (synthetic validation only)
 
+> Archived development evidence through `29a440c`. The later
+> [historical recovery development report](historical-recovery-development.md)
+> and [release procedure](historical-recovery-deployment.md) supersede the
+> synthetic-only service gate and transport limitations described below.
+> Production deployment and activation still require independent approval.
+
 **Production execution is disabled in code. Do not deploy or change production
 configuration.** The Flask manager retains its investigation-only restrictions;
 there are no new execution routes or controls. Stage 1 previews, offline reports

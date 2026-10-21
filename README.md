@@ -23,8 +23,11 @@ The reconciliation tool creates reports only; it never creates Employee Checkins
 The separate [Phase 2C local web manager](docs/phase2c-manager.md) provides manual
 read-only monitoring, historical investigation, batch review and synthetic recovery
 simulation. Use `Start Biometric Manager.bat --demo` after installing the isolated
-manager dependencies. It opens `http://127.0.0.1:8765`; live recovery is unavailable
-and the existing Windows service stays independent.
+manager dependencies. It opens `http://127.0.0.1:8765`; recovery is disabled by
+default and the existing Windows service stays independent. The completed service
+lane requires separately approved release evidence and selected-record approval.
+See the [development status](docs/historical-recovery-development.md) and
+[deployment, activation and rollback guide](docs/historical-recovery-deployment.md).
 
 Prepare its inputs with the [read-only Frappe export procedure](docs/phase1-frappe-export-procedure.md).
 Export defaults to an offline plan; a live export requires separate approval and verified site/source evidence.

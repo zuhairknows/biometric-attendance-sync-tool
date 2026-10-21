@@ -1,5 +1,11 @@
 # Historical recovery: final readiness gate
 
+> Archived development evidence through `29a440c`. The later
+> [historical recovery development report](historical-recovery-development.md)
+> and [release procedure](historical-recovery-deployment.md) supersede the
+> synthetic-only service gate and transport limitations described below.
+> Production deployment and activation still require independent approval.
+
 **NO-GO for production recovery.** This is a development review, not deployment
 evidence or permission to send. Keep the existing Windows service running. Do not
 change contracts, ACLs, service configuration, queue states or historical holds.

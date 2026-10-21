@@ -1,5 +1,11 @@
 # Stage 3: operator handoff integration (production execution disabled)
 
+> Archived development evidence through `29a440c`. The later
+> [historical recovery development report](historical-recovery-development.md)
+> and [release procedure](historical-recovery-deployment.md) supersede the
+> synthetic-only service gate and transport limitations described below.
+> Production deployment and activation still require independent approval.
+
 Use the existing manager's normal/demo mode. `--monitor-only` and
 `--investigation-only` continue to reject all recovery actions on the server,
 including direct URLs. No new application, sender, database or service is added.
