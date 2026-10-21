@@ -258,3 +258,13 @@ shift_type_device_mapping = [
 # customized integration as idempotent/already synchronized.
 
 allowed_exceptions = [1, 2, 3]
+
+# Historical recovery stays off during installation and monitoring. Activation
+# requires the separate release procedure; a flag alone cannot authorize sends.
+HISTORICAL_RECOVERY_COORDINATION = False
+HISTORICAL_RECOVERY_ENABLED = False
+# HISTORICAL_RECOVERY_INBOX = r'C:\ProgramData\ERPNextBiometricPushService\recovery-inbox'
+# HISTORICAL_REQUEST_AUTHOR_SID = 'SID of the explicitly authorized operator'
+# HISTORICAL_RECOVERY_CONTRACT_SHA256 = 'independently approved contract SHA256'
+# HISTORICAL_RECOVERY_RELEASE = r'C:\ProgramData\ERPNextBiometricRelease\release.json'
+# HISTORICAL_RECOVERY_RELEASE_SHA256 = 'independently approved release SHA256'

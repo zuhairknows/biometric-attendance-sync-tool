@@ -53,6 +53,9 @@ def main(argv=None, *, request=None, acl_check=check_directory_acl, runner=run_b
     parser.add_argument('--request-timeout-seconds', type=int, default=10, help='Connect/read timeout (default: 10)')
     parser.add_argument('--production-read-only', action='store_true', help='Compatibility reads only; never reconcile production')
     parser.add_argument('--acknowledge-production', help='Repeat the exact production HTTPS origin as acknowledgement')
+    parser.add_argument('--reconciliation-release', help='Separately approved private release evidence; otherwise compatibility only')
+    parser.add_argument('--reconciliation-release-sha256')
+    parser.add_argument('--canonical-ledger', help='Canonical binding for release verification; never opened writable')
     failure_category = 'investigation_failed'
     try:
         args = parser.parse_args(argv)
@@ -76,21 +79,32 @@ def main(argv=None, *, request=None, acl_check=check_directory_acl, runner=run_b
         elif args.acknowledge_production:
             failure_category = 'investigation_production_ack_required'
             raise ValueError
+        compatibility_only = args.production_read_only
+        extra_inputs = []
+        if args.reconciliation_release:
+            from historical_attendance.release import validate
+            # Validation does not turn missing contract claims true. The engine
+            # still checks every visibility/mapping/precision claim separately.
+            validate(args.reconciliation_release, args.reconciliation_release_sha256,
+                site=origin, contract_hash=args.contract_sha256, ledger=args.canonical_ledger,
+                storage_check=lambda path: acl_check(Path(path).parent))
+            compatibility_only = False
+            extra_inputs = [Path(args.reconciliation_release), Path(args.canonical_ledger)]
         failure_category = 'investigation_source_unavailable'
         source = Path(args.ledger_copy).resolve(strict=True)
         if not Path(args.ledger_copy).is_absolute():
             raise ValueError
         failure_category = 'investigation_output_unverified'
-        directory = validate_output(args.output, ledger_path=source, input_paths=[contract_path], acl_check=acl_check)
+        directory = validate_output(args.output, ledger_path=source, input_paths=[contract_path, *extra_inputs], acl_check=acl_check)
         failure_category = 'investigation_execution_failed'
         rows, summary = runner(execute_investigation, dict(source=source, start=args.start, end=args.end,
             devices=args.device, contract=contract, site_url=args.site_url, max_requests=args.max_get_requests,
-            request_timeout=args.request_timeout_seconds, compatibility_only=args.production_read_only,
+            request_timeout=args.request_timeout_seconds, compatibility_only=compatibility_only,
             directory=directory, contract_digest=digest, deadline_seconds=args.deadline_seconds,
-            request=request, acl_check=acl_check, input_paths=[contract_path]),
+            request=request, acl_check=acl_check, input_paths=[contract_path, *extra_inputs]),
             seconds=args.deadline_seconds, directory=directory)
         receipt = dict(status=summary['status'], records=summary['totals']['records'])
-        if args.production_read_only:
+        if compatibility_only:
             receipt['compatibility_status'] = summary['compatibility_status']
         print(json.dumps(receipt))
         return 2 if summary['blockers'] else 0

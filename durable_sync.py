@@ -156,13 +156,16 @@ def _run_locked(engine, stop_requested):
         client = FrappeClient(config, engine.requests.request)
         activation = validate_activation(ledger.path, config)
         live_boundary = max(filter(None, (import_boundary(config.IMPORT_START_DATE), cutover_time(activation['cutover_time']))))
-        # The recovery lane runs only under this existing writer's ownership. Its
-        # production gate is closed; no configuration flag enables live recovery.
+        # The existing writer owns recovery; release rejection must not prevent
+        # ordinary polling/delivery. Pending intents still fence normal delivery.
         recovery_guard = None
         # Disabled Phase 1/frozen diagnostic bundles need no historical modules.
         if getattr(config, 'HISTORICAL_RECOVERY_COORDINATION', False) is True:
             from historical_attendance.service_recovery import service_tick
-            recovery_guard = service_tick(ledger, config, activation, live_boundary, options, stop_requested=stop_requested)
+            try:
+                recovery_guard = service_tick(ledger, config, activation, live_boundary, options, stop_requested=stop_requested)
+            except Exception:
+                engine.error_logger.error('Historical recovery blocked; review private release prerequisites')
         deliver_batch(ledger, client, **options, stop_requested=stop_requested, logger=engine.info_logger,
                       not_before=live_boundary, recovery_guard=recovery_guard)
         if not stop_requested():

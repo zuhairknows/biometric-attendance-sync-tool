@@ -197,7 +197,8 @@ class OperatorRecoveryTests(fixtures.ManagerFixture):
         for action in ('approve', 'dispatch', 'cancel'):
             self.finish(self.post(f'/recovery/service/{self.identity}/{action}', dict(ids=['1'],
                 fingerprint='0'*64, reference='SYNTHETIC', confirmed='1')), success=False)
-            self.assertIn('recovery_production_disabled', self.state.job['error'])
+            self.assertTrue(any(code in self.state.job['error'] for code in
+                ('recovery_production_disabled', 'recovery_handoff_changed')))
         self.assertEqual(list(self.inbox.glob('*.approved.json')), [])
         contract.write_bytes(original)
 

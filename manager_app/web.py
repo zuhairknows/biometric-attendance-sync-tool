@@ -41,6 +41,11 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
         devices, device_warning = [], 'Device configuration could not be verified. No configuration code was executed.'
     state = State(controller, values, devices)
     app.extensions['manager'] = state
+    # Loopback alone does not authenticate another Windows user's local process.
+    # A normal recovery manager requires the private, one-use launcher URL before
+    # issuing handoff actions. Demo/restricted monitoring keeps its existing UX.
+    app.extensions['operator_entry'] = (secrets.token_urlsafe(32)
+        if not demo and not monitor_only and not investigation_only else None)
 
     @app.before_request
     def protect():
@@ -54,6 +59,8 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
         # Run before parsing forms/CSRF or invoking any route/business operation.
         if allowed_endpoints is not None and request.endpoint not in allowed_endpoints:
             abort(403)
+        if (not demo and request.path.startswith('/recovery') and not session.get('operator_authorized')):
+            abort(403)
         if request.method == 'POST':
             token = session.get('csrf', '')
             supplied = request.form.get('csrf', '')
@@ -61,6 +68,17 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
                     or request.headers.get('Origin', ORIGIN) != ORIGIN
                     or request.headers.get('Sec-Fetch-Site', 'same-origin') not in ('same-origin', 'none')):
                 abort(403)
+
+    @app.get('/unlock')
+    def unlock_operator():
+        expected = app.extensions.get('operator_entry')
+        supplied = request.args.get('token', '')
+        if not expected or not hmac.compare_digest(expected, supplied):
+            abort(403)
+        session.clear()
+        session['operator_authorized'] = True
+        app.extensions['operator_entry'] = None
+        return redirect(url_for('dashboard_page'), code=303)
 
     @app.after_request
     def headers(response):
@@ -406,7 +424,7 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
 
     @app.post('/recovery/service/<identity>/<action>')
     def service_request_action(identity, action):
-        if action not in ('approve', 'dispatch', 'cancel'):
+        if action not in ('approve', 'dispatch', 'cancel', 'export'):
             abort(404)
         fields({'fingerprint', 'ids', 'hold_ids', 'reference', 'hold_reference', 'confirmed'})
         if request.form.get('confirmed') != '1':
@@ -422,8 +440,10 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
             task = lambda: workflow.approve(identity, fingerprint, ids, held, reference, request_hold)
         elif action == 'dispatch':
             task = lambda: workflow.dispatch(identity, fingerprint, reference)
-        else:
+        elif action == 'cancel':
             task = lambda: workflow.cancel(identity, reference)
+        else:
+            task = lambda: workflow.export(identity)
         return launch('Service request ' + action, task, lambda _: None, url_for('service_request_page', identity=identity))
 
     @app.post('/recovery/refresh')

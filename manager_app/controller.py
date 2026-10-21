@@ -231,6 +231,11 @@ class Controller:
             args.extend(['--device', device])
         if production_ack:
             args.extend(['--production-read-only', '--acknowledge-production', values['site'].rstrip('/')])
+            if values.get('recovery_release'):
+                self._paths(values['recovery_release'], values['recovery_ledger'])
+                args.extend(['--reconciliation-release', values['recovery_release'],
+                    '--reconciliation-release-sha256', values.get('recovery_release_hash', ''),
+                    '--canonical-ledger', values['recovery_ledger']])
         # Use the CLI's exact acknowledgement, contract, privacy and bounded-worker gates.
         # Environment credentials exist only for this explicitly initiated action.
         old = {k: os.environ.get(k) for k in ('INVESTIGATION_API_KEY', 'INVESTIGATION_API_SECRET')}

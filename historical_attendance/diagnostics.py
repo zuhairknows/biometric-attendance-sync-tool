@@ -82,6 +82,9 @@ canonical_ledger_binding_changed selection_not_verified request_changed approval
 explicit_selected_hold_authorization_required selected_approval_invalid read_only_api_unverified
 complete_reconciliation_required comparison_contract_unverified snapshot_must_be_separate_from_live_ledger
 recovery_profile_incomplete recovery_request_not_found recovery_ledger_unavailable'''.split())
+CODES.update('''recovery_release_path_invalid recovery_release_disabled recovery_release_binding_invalid
+recovery_release_expired recovery_release_prerequisites_missing recovery_release_approval_missing
+recovery_release_code_changed recovery_release_address_invalid'''.split())
 EVENTS = {'check', 'passed', 'failed', 'unverified', 'complete'}
 # Monitor-only failure metadata. Never accept arbitrary operation names or text.
 MONITOR_OPEN_OPERATIONS = frozenset(('unknown', 'source_connect', 'source_busy_timeout',

@@ -63,9 +63,20 @@ class Workflow:
     def gate(self):
         v = self.values
         contract = verified_json(v['contract'], v['contract_hash'])[0]
-        handoff.require(contract.get('destination_environment') == 'synthetic'
-            and contract['site_url'].endswith('.example.test'), 'recovery_production_disabled')
+        if not (contract.get('destination_environment') == 'synthetic' and contract['site_url'].endswith('.example.test')):
+            from historical_attendance.release import validate
+            handoff.require(v.get('recovery_release') and v.get('recovery_release_hash'), 'recovery_production_disabled')
+            validate(v['recovery_release'], v['recovery_release_hash'], site=contract['site_url'],
+                contract_hash=v['contract_hash'], ledger=v['recovery_ledger'],
+                storage_check=lambda path: self.controller.storage_check(path, service_sid=v.get('recovery_service_sid') or None))
         handoff.require(contract.get('verification', {}).get('read_only_api_verified') is True, 'read_only_api_unverified')
+
+    def can_operate(self):
+        try:
+            self.gate()
+            return True
+        except Exception:
+            return False
 
     def load(self, inbox, identity):
         v = self.values
@@ -148,7 +159,8 @@ class Workflow:
 
     def cancel(self, identity, reference):
         def operation(inbox):
-            self.gate()
+            # ACL-authorized cancellation remains available after release expiry
+            # or revocation; it cannot create a submission permission.
             _, _, request = self.load(inbox, identity)
             handoff.require(request is not None, 'recovery_request_not_found')
             if inbox.path(identity, 'cancel').exists():
@@ -169,6 +181,31 @@ class Workflow:
         def operation(inbox):
             return [dict(id=i, status='Dispatched' if inbox.path(i, 'request').exists()
                 else 'Approved' if inbox.path(i, 'approved').exists() else 'Pending Approval') for i in self.catalog(inbox)]
+        return self.run('recovery_status', operation)
+
+    def export(self, identity):
+        """Publish a point-in-time CSV and JSON audit in the private output folder."""
+        import csv
+        import json
+        import uuid
+        from collections import Counter
+        from scripts.reconcile_attendance import publish
+        data = self.details(identity)  # Includes canonical source/request checks.
+        def operation(inbox):
+            v = self.values
+            output = validate_output(v['output'], ledger_path=v['recovery_ledger'],
+                input_paths=[v['backup'], v['contract'], v['recovery_summary']], acl_check=self.controller.acl_check)
+            stem = 'recovery_service_' + identity + '_' + uuid.uuid4().hex
+            def write(stream):
+                writer = csv.DictWriter(stream, fieldnames=('id', 'held', 'status', 'reason'))
+                writer.writeheader()
+                writer.writerows(data['rows'])
+            detail = publish(output, stem + '.csv', write)
+            report = dict(schema='service-recovery-report-v1', request_id=identity,
+                exported_at=time.time(), counts=dict(Counter(r['status'] for r in data['rows'])),
+                cancelled=data['cancelled'], expired=data['expired'], events=data['events'],
+                reports=[detail], notice='Point-in-time audit. Queued and Needs Review are not recovered records.')
+            return publish(output, stem + '.json', lambda s: json.dump(report, s, indent=2, sort_keys=True))
         return self.run('recovery_status', operation)
 
     def details(self, identity):
@@ -217,8 +254,7 @@ class Workflow:
                 draft_hash=recovery.file_hash(inbox.path(identity, 'draft')),
                 approved_hash=recovery.file_hash(inbox.path(identity, 'approved')) if approved else '',
                 approved=approved is not None, dispatched=request is not None,
-                can_operate=(contract.get('destination_environment') == 'synthetic' and contract['site_url'].endswith('.example.test')
-                    and contract.get('verification', {}).get('read_only_api_verified') is True),
+                can_operate=self.can_operate(),
                 expired=time.time() >= (request['deadline'] if request else draft['expires_at']))
         return self.run('recovery_status', operation)
 

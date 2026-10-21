@@ -1,8 +1,4 @@
-"""Finite recovery lane owned by the existing service writer. Production is disabled.
-
-There is deliberately no live enable switch, CLI sender, thread or new database.
-Only the exact existing SimulationTarget can exercise execution in synthetic tests.
-"""
+"""Bounded recovery lane owned by the existing service writer; disabled by default."""
 import json
 import math
 from pathlib import Path
@@ -83,6 +79,12 @@ class Budget:
         # interrupts DNS or a trickling body; the checks below reject late success.
         kwargs['timeout'] = (min(3, remaining), min(10, remaining))
         kwargs['allow_redirects'] = False
+        # Only our service transport understands an absolute remaining allowance.
+        # Keep existing Requests/simulation adapters' public arguments unchanged.
+        from .https_transport import HTTPS
+        from .release import ServiceTarget
+        if type(getattr(self.transport, '__self__', None)) in (HTTPS, ServiceTarget):
+            kwargs['_remaining'] = remaining
         response = self.transport(method, url, **kwargs)
         # A late HTTP success is not allowed to become a successful recovery receipt.
         if self.stopped() or self.monotonic() >= self.end or self.clock() >= self.deadline:
@@ -126,11 +128,15 @@ class Coordinator:
         recovery.bindings(dict(inputs=draft['input_bindings']))
         metadata, planned = recovery.preparation(**draft['evidence'])
         require(metadata['inputs'] == draft['input_bindings'], 'request_inputs_changed')
-        require(self.target.path != self.ledger.path.resolve()
-            and all(self.target.path != Path(e['path']).resolve() for e in metadata['inputs'])
-            and not self.target.path.is_relative_to(self.inbox.directory.resolve()), 'simulation_input_overlap')
-        require(metadata['contract'].get('destination_environment') == 'synthetic'
-            and metadata['contract']['site_url'] == self.target.url == self.config.ERPNEXT_URL.rstrip('/')
+        if type(self.target) is SimulationTarget:
+            require(self.target.path != self.ledger.path.resolve()
+                and all(self.target.path != Path(e['path']).resolve() for e in metadata['inputs'])
+                and not self.target.path.is_relative_to(self.inbox.directory.resolve()), 'simulation_input_overlap')
+            require(metadata['contract'].get('destination_environment') == 'synthetic', 'service_contract_unverified')
+        else:
+            self.target.validate()
+            require(metadata['contract'].get('destination_environment') in ('staging', 'production'), 'service_contract_unverified')
+        require(metadata['contract']['site_url'] == self.target.url == self.config.ERPNEXT_URL.rstrip('/')
             and metadata['contract']['verification'].get('read_only_api_verified') is True
             and draft['contract_sha256'] == self.config.HISTORICAL_RECOVERY_CONTRACT_SHA256,
             'service_contract_unverified')
@@ -357,12 +363,13 @@ class Coordinator:
 
 def service_tick(ledger, config, activation, boundary, options, *, stop_requested=lambda: False,
                  target=None, storage_check=private_storage, clock=time.time, monotonic=time.monotonic, sleep=time.sleep):
-    """Called only inside the existing writer cycle. A real service cannot enable POST.
-
-    Production execution remains unconditionally unavailable: no config flag can
-    substitute for the exact synthetic transport argument, which the service never supplies.
-    """
-    if type(target) is not SimulationTarget:
+    """Existing writer only; enablement requires separately pinned release evidence."""
+    from .release import ServiceTarget
+    if target is None:
+        if getattr(config, 'HISTORICAL_RECOVERY_ENABLED', False) is not True:
+            return None
+        target = ServiceTarget(config, ledger.path, stop_requested, storage_check)
+    if type(target) not in (SimulationTarget, ServiceTarget):
         return None
     require(target.config.ERPNEXT_URL == config.ERPNEXT_URL and target.url == config.ERPNEXT_URL.rstrip('/'), 'synthetic_destination_mismatch')
     storage_check(ledger.path)

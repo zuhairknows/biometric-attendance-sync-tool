@@ -10,9 +10,9 @@ from .controller import ManagerError
 from scripts.capture_history_safety import check_directory_acl
 
 PATHS = ('monitor_ledger', 'backup', 'contract', 'output', 'workspace', 'simulation', 'normal_lock', 'device_config', 'offline_directory', 'diagnostics_directory',
-         'recovery_ledger', 'recovery_inbox', 'recovery_summary')
+         'recovery_ledger', 'recovery_inbox', 'recovery_summary', 'recovery_release')
 FIELDS = (*PATHS, 'contract_hash', 'backup_hash', 'site', 'start', 'end', 'offline_evidence', 'offline_evidence_hash',
-          'recovery_summary_hash', 'recovery_service_sid')
+          'recovery_summary_hash', 'recovery_service_sid', 'recovery_release_hash')
 
 
 def local_path(value):
