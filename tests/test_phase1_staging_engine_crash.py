@@ -11,7 +11,21 @@ import unittest
 
 from scripts.phase1_staging_engine_crash import EXPECTED_EXITS, HELPER_HASH, helper
 
-ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY = Path(__file__).resolve().parents[1]
+ROOT = REPOSITORY
+
+
+def setUpModule():
+    global ROOT, _frozen
+    from windows_powershell_environment import native_modules
+    unittest.enterModuleContext(native_modules())
+    from frozen_phase1 import materialize
+    _frozen, ROOT = materialize(REPOSITORY)
+
+
+def tearDownModule():
+    _frozen.cleanup()
+
 OPENSSL = shutil.which('openssl') or r'C:\Program Files\Git\usr\bin\openssl.exe'
 
 

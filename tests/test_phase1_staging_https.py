@@ -12,6 +12,12 @@ import unittest
 from scripts.phase1_staging_https import Isolation, IsolationError
 
 
+
+
+def setUpModule():
+    from windows_powershell_environment import native_modules
+    unittest.enterModuleContext(native_modules())
+
 ROOT = Path(__file__).resolve().parents[1]
 OPENSSL = shutil.which('openssl') or (r'C:\Program Files\Git\usr\bin\openssl.exe' if os.name == 'nt' else None)
 POWERSHELL = shutil.which('powershell.exe')

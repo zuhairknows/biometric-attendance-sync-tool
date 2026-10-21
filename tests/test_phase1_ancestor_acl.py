@@ -5,6 +5,12 @@ import subprocess
 import tempfile
 import unittest
 
+
+
+def setUpModule():
+    from windows_powershell_environment import native_modules
+    unittest.enterModuleContext(native_modules())
+
 ROOT = Path(__file__).resolve().parents[1]
 POWERSHELL = shutil.which('powershell.exe')
 REPAIR = ROOT / 'scripts' / 'repair_phase1_staging_ancestor_metadata.ps1'

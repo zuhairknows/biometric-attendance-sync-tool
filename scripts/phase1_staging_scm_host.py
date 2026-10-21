@@ -410,7 +410,14 @@ def package_runtime(destination):
     if destination.exists():
         raise ValueError('runtime_destination_already_exists')
     source = Path(sys.base_prefix)
-    site = source / 'Lib' / 'site-packages'
+    # Python/stdlib come from the base installation; pywin32 belongs to the
+    # interpreter environment used to invoke packaging. Python 3.11 -S hides
+    # a venv's prefix, so recognize its adjacent pyvenv.cfg explicitly.
+    environment = Path(sys.prefix)
+    candidate = Path(sys.executable).parent.parent
+    if (candidate / 'pyvenv.cfg').is_file():
+        environment = candidate
+    site = environment / 'Lib' / 'site-packages'
     names = ('_win32sysloader', 'servicemanager', 'win32api', 'win32event', 'win32service', 'win32security')
     inputs = [source / 'python.exe', source / ('python' + str(sys.version_info.major) + str(sys.version_info.minor) + '.dll')]
     inputs += list(source.glob('vcruntime*.dll'))

@@ -11,6 +11,12 @@ import sys
 import unittest
 
 
+
+
+def setUpModule():
+    from windows_powershell_environment import native_modules
+    unittest.enterModuleContext(native_modules())
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'scripts' / 'phase1_staging_service.cs'
 CSC = Path(os.environ.get('WINDIR', r'C:\Windows')) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
