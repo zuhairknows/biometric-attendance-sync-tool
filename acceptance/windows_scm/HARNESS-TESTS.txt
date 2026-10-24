@@ -1,0 +1,33 @@
+test_attempt_parameter_cannot_escape (test_repairs.EvidenceTests.test_attempt_parameter_cannot_escape) ... ok
+test_injected_failures_preserved_retry_and_cleanup (test_repairs.EvidenceTests.test_injected_failures_preserved_retry_and_cleanup) ... ok
+test_interruption_after_atomic_publish_is_successfully_recoverable (test_repairs.EvidenceTests.test_interruption_after_atomic_publish_is_successfully_recoverable) ... ok
+test_interruption_before_or_during_first_identity_write_is_recoverable (test_repairs.EvidenceTests.test_interruption_before_or_during_first_identity_write_is_recoverable) ... ok
+test_missing_required_file_tamper_and_new_unarchived_attempt_fail (test_repairs.EvidenceTests.test_missing_required_file_tamper_and_new_unarchived_attempt_fail) ... ok
+test_partial_collection_and_partial_seal_are_retained (test_repairs.EvidenceTests.test_partial_collection_and_partial_seal_are_retained) ... ok
+test_prepared_receipt_requires_consistent_backup_and_marker (test_repairs.EvidenceTests.test_prepared_receipt_requires_consistent_backup_and_marker) ... ok
+test_unknown_attempt_or_identity_is_never_adopted (test_repairs.EvidenceTests.test_unknown_attempt_or_identity_is_never_adopted) ... ok
+test_actual_native_owner_query_with_disposable_nonproduction_mutex (test_repairs.MutexTests.test_actual_native_owner_query_with_disposable_nonproduction_mutex) ... ok
+test_atomic_create_only_claim_releases_in_reverse_order (test_repairs.MutexTests.test_atomic_create_only_claim_releases_in_reverse_order) ... ok
+test_existing_mutex_fails_without_wait_or_takeover (test_repairs.MutexTests.test_existing_mutex_fails_without_wait_or_takeover) ... ok
+test_missing_or_lost_owner_never_acquires (test_repairs.MutexTests.test_missing_or_lost_owner_never_acquires) ... ok
+test_readonly_query_failure_is_fail_closed (test_repairs.MutexTests.test_readonly_query_failure_is_fail_closed) ... ok
+test_cleanup_gate_refuses_worker_and_unknown_never_kills (test_repairs.ProcessTests.test_cleanup_gate_refuses_worker_and_unknown_never_kills) ... ok
+test_manual_restoration_is_verified (test_repairs.ProcessTests.test_manual_restoration_is_verified) ... ok
+test_real_powershell_normalization_boundaries_and_missing_metadata (test_repairs.ProcessTests.test_real_powershell_normalization_boundaries_and_missing_metadata) ... ok
+test_reboot_finally_restores_after_verification_throws (test_repairs.ProcessTests.test_reboot_finally_restores_after_verification_throws) ... ok
+test_both_sources_parse_and_preflight_contains_no_direct_mutator (test_safety.SafetyTests.test_both_sources_parse_and_preflight_contains_no_direct_mutator) ... ok
+test_denied_access_probe_never_performs_mutations (test_safety.SafetyTests.test_denied_access_probe_never_performs_mutations) ... ok
+test_exact_candidate_and_fixed_disposable_targets (test_safety.SafetyTests.test_exact_candidate_and_fixed_disposable_targets) ... ok
+test_monitor_requires_the_approved_actual_token (test_safety.SafetyTests.test_monitor_requires_the_approved_actual_token) ... ok
+test_native_argument_forwarding_in_windows_powershell_51 (test_safety.SafetyTests.test_native_argument_forwarding_in_windows_powershell_51) ... ok
+test_no_caller_supplied_service_path_destination_or_credentials (test_safety.SafetyTests.test_no_caller_supplied_service_path_destination_or_credentials) ... ok
+test_only_complete_synthetic_payloads_are_allowed (test_safety.SafetyTests.test_only_complete_synthetic_payloads_are_allowed) ... ok
+test_real_destination_credentials_methods_and_redirects_never_create_transport (test_safety.SafetyTests.test_real_destination_credentials_methods_and_redirects_never_create_transport) ... ok
+test_real_loopback_tls_accepts_only_twelve_synthetic_normal_payloads (test_safety.SafetyTests.test_real_loopback_tls_accepts_only_twelve_synthetic_normal_payloads) ... ok
+test_socket_guard_rejects_every_nonfixture_destination_without_network (test_safety.SafetyTests.test_socket_guard_rejects_every_nonfixture_destination_without_network) ... ok
+test_uninstalled_host_refuses_runtime_modes_before_reading_receipt (test_safety.SafetyTests.test_uninstalled_host_refuses_runtime_modes_before_reading_receipt) ... ok
+
+----------------------------------------------------------------------
+Ran 28 tests in 8.347s
+
+OK

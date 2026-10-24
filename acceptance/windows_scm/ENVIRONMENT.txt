@@ -1,0 +1,6 @@
+Python 3.11.9 x64
+Accepted frozen pins: 19 MATCH
+Executable: C:\GitHub\biometric-attendance-sync-tool\.acceptance\acl-compat\.venv\Scripts\python.exe
+No broken requirements found.
+Elevated administrator: False
+2026-10-22T16:26:16.4851491+03:00
