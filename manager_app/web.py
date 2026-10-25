@@ -23,6 +23,19 @@ MONITOR_ENDPOINTS = frozenset({'dashboard_page', 'devices_page', 'refresh', 'job
 INVESTIGATION_ENDPOINTS = MONITOR_ENDPOINTS | {'investigation_page', 'investigate', 'investigation_export',
     'offline_page', 'offline_run', 'offline_export', 'preview_page', 'preview_run', 'preview_export'}
 
+# Fixed messages only: never echo submitted values, private paths or raw exceptions.
+PREVIEW_REQUEST_ERRORS = {
+    'preview_date_invalid': 'preview_date_invalid: Enter valid device-local dates and times; seconds are supported. Do not include a timezone.',
+    'preview_range_reversed': 'preview_range_reversed: Date From must be before or equal to the inclusive Date To.',
+    'preview_floor_invalid': 'preview_floor_invalid: Select All floors, FP1 or FP2.',
+    'preview_devices_missing': 'preview_devices_missing: Select at least one configured device.',
+    'preview_devices_duplicate': 'preview_devices_duplicate: A device was submitted more than once. Reload the preview page and select it once.',
+    'preview_devices_outside_scope': 'preview_devices_outside_scope: Selected devices must belong to the approved device configuration and selected floor. Reload the page and review the selection.',
+    'preview_snapshot_ack_required': 'preview_snapshot_ack_required: Confirm the approved offline snapshot acknowledgement.',
+    'unexpected_form_fields': 'preview_form_fields_invalid: Unexpected form fields. Reload the preview page from this manager session and try again.',
+    'duplicate_form_fields': 'preview_form_fields_duplicate: Repeated form fields. Reload the preview page from this manager session and try again.',
+}
+
 
 def create_app(controller, values, *, demo=False, monitor_only=False, investigation_only=False):
     if monitor_only and investigation_only:
@@ -112,6 +125,8 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
             except DiagnosticError as log_error:
                 diagnostic = log_error
         message = diagnostic.message if isinstance(diagnostic, DiagnosticError) else None
+        if request.endpoint == 'preview_run' and isinstance(error, ManagerError):
+            message = PREVIEW_REQUEST_ERRORS.get(str(error), message)
         if isinstance(error, ManagerError) and str(error) in ('service_profile_incomplete', 'service_diagnostics_unavailable'):
             message = INVESTIGATION_FAILURES[str(error)]
         return render_template('error.html', code=status, diagnostic=message), status
@@ -358,13 +373,26 @@ def create_app(controller, values, *, demo=False, monitor_only=False, investigat
     def preview_run():
         fields({'start', 'end', 'floor', 'devices', 'backup_ack'})
         start, end = (request.form.get(k, '').replace('T', ' ') for k in ('start', 'end'))
+        # datetime-local may omit zero seconds; preserve explicit seconds/fractions.
         start, end = (v + ':00' if len(v) == 16 else v for v in (start, end))
+        try:
+            first, last = local_time(start), local_time(end)
+        except ValueError:
+            raise ManagerError('preview_date_invalid') from None
+        if first > last:
+            raise ManagerError('preview_range_reversed')
         selected, floor = request.form.getlist('devices'), request.form.get('floor', '')
+        if floor not in ('', 'FP1', 'FP2'):
+            raise ManagerError('preview_floor_invalid')
+        if not selected:
+            raise ManagerError('preview_devices_missing')
+        if len(selected) != len(set(selected)):
+            raise ManagerError('preview_devices_duplicate')
         allowed = {d['device'] for d in state.devices if not floor or d['floor'] == floor}
-        if (local_time(start) > local_time(end) or floor not in ('', 'FP1', 'FP2')
-                or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed
-                or request.form.get('backup_ack') != '1'):
-            abort(400)
+        if not set(selected) <= allowed:
+            raise ManagerError('preview_devices_outside_scope')
+        if request.form.get('backup_ack') != '1':
+            raise ManagerError('preview_snapshot_ack_required')
         values = dict(state.values, start=start, end=end)
         def task():
             state.recovery_preview = None  # Failed reruns cannot expose an older success.

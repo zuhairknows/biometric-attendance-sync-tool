@@ -3,6 +3,7 @@ from contextlib import closing, ExitStack
 import csv
 import datetime as dt
 from pathlib import Path
+import json
 import sqlite3
 from unittest import mock
 
@@ -229,6 +230,74 @@ class PreviewWebTests(fixtures.ManagerFixture):
         self.assertEqual(self.client.get('/investigation/recovery-preview?classification=bad', base_url=ORIGIN).status_code, 400)
         self.assertEqual(self.client.get('/investigation/recovery-preview', base_url=ORIGIN,
             headers={'Host': 'evil.test'}).status_code, 400)
+
+    def test_reported_production_scope_with_private_profile_and_exact_end_boundary(self):
+        # Synthetic rows on the reported day prove inclusive seconds end to end.
+        with Ledger(self.source) as ledger:
+            for uid, timestamp in enumerate((dt.datetime(2026, 10, 16, 0, 1),
+                    dt.datetime(2026, 10, 16, 12, 59, 59), dt.datetime(2026, 10, 16, 13)), 30):
+                ledger.ingest([normalize(dict(user_id='SYNTHETIC', timestamp=timestamp,
+                    punch=0, status=1, uid=uid), dict(device_id='FP1_DEVICE_01',
+                    punch_direction=None))], 'FP1_DEVICE_01')
+        self.original = self.source.read_bytes()
+        self.values['backup_hash'] = file_hash(self.source)
+        from manager_app.profile import load_profile
+        profile = self.root / 'private-profile.json'
+        profile.write_text(json.dumps(self.values), encoding='utf-8')
+        values = load_profile(str(profile), acl_check=self.controller.acl_check)
+        self.state.values = values
+        with ExitStack() as stack:
+            for name in ('requests.sessions.Session.request', 'durable_delivery.FrappeClient.send',
+                    'historical_attendance.recovery.approve', 'historical_attendance.recovery.execute',
+                    'manager_app.controller.service_state'):
+                stack.enter_context(mock.patch(name, side_effect=AssertionError('forbidden')))
+            self.finish(self.post(start='2026-10-16T00:01', end='2026-10-16T12:59:59', floor=''))
+            self.assertEqual(self.state.job['status'], 'complete', self.state.job)
+            result = self.state.recovery_preview
+            self.assertEqual(result['summary']['total'], 2)
+            self.assertFalse(result['summary']['destination_verified'])
+            self.assertFalse(result['summary']['recovery_authorized'])
+            self.finish(self.post('/investigation/recovery-preview/export'))
+            self.assertEqual(self.state.job['status'], 'complete', self.state.job)
+
+    def test_fixed_request_categories_do_not_echo_submitted_values(self):
+        cases = [({'start': 'PRIVATE_SECRET'}, 'preview_date_invalid'),
+            ({'end': '2026-02-30T12:59:59'}, 'preview_date_invalid'),
+            ({'end': '2026-10-10T00:00'}, 'preview_range_reversed'),
+            ({'floor': 'PRIVATE_SECRET'}, 'preview_floor_invalid'),
+            ({'devices': []}, 'preview_devices_missing'),
+            ({'devices': ['FP1_DEVICE_01']*2}, 'preview_devices_duplicate'),
+            ({'devices': ['PRIVATE_SECRET']}, 'preview_devices_outside_scope'),
+            ({'floor': 'FP2'}, 'preview_devices_outside_scope'),
+            ({'backup_ack': ''}, 'preview_snapshot_ack_required'),
+            ({'backup': 'PRIVATE_SECRET'}, 'preview_form_fields_invalid'),
+            ({'start': [self.values['start']]*2}, 'preview_form_fields_duplicate')]
+        with mock.patch.object(self.controller, 'preview_recovery') as task:
+            for changes, category in cases:
+                with self.subTest(category=category):
+                    response = self.post(**changes)
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn(category.encode(), response.data)
+                    self.assertNotIn(b'PRIVATE_SECRET', response.data)
+                    self.assertNotIn(str(self.source).encode(), response.data)
+            task.assert_not_called()
+
+    def test_snapshot_failures_are_blocked_jobs_not_http400(self):
+        for hash_value in ('', '0'*64):
+            self.state.values['backup_hash'] = hash_value
+            self.finish(self.post())
+            self.assertEqual(self.state.job['status'], 'blocked')
+            self.assertIn('approved backup_hash', self.state.job['error'])
+            self.assertIsNone(self.state.recovery_preview)
+        self.state.values['backup_hash'] = file_hash(self.source)
+        sidecar = Path(str(self.source) + '-wal')
+        sidecar.write_bytes(b'')
+        try:
+            self.finish(self.post())
+            self.assertEqual(self.state.job['status'], 'blocked')
+            self.assertIsNone(self.state.recovery_preview)
+        finally:
+            sidecar.unlink()
 
     def test_monitor_gate_and_existing_recovery_gate(self):
         app = create_app(self.controller, self.values, monitor_only=True)
