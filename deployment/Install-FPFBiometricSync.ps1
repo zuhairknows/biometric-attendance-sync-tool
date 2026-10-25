@@ -149,7 +149,19 @@ function Native([string]$Exe,[string[]]$Arguments,[int]$Timeout=300) {
             $process.Kill();$process.WaitForExit();throw 'owned_child_timeout'
         }
         $stdout=$out.Result;$stderr=$err.Result
-        Require ($process.ExitCode -eq 0) ('native_failed_exit_'+$process.ExitCode)
+        if($process.ExitCode -ne 0){
+            # The reviewed Python helper emits fixed JSON codes. Never expose raw
+            # stderr: syntax/HTTP exceptions can include private configuration.
+            try {
+                $record=$stderr.Trim()|ConvertFrom-Json -ErrorAction Stop
+                if($record.status -ceq 'FAIL' -and $record.code -cmatch '^[a-z_]{1,80}$'){
+                    throw ('deployment_check_failed: '+$record.code)
+                }
+            } catch {
+                if($_.Exception.Message.StartsWith('deployment_check_failed: ')){throw}
+            }
+            throw ('native_failed_exit_'+$process.ExitCode)
+        }
         return $stdout.Trim()
     } finally {$process.Dispose()}
 }
@@ -165,7 +177,7 @@ function Safe-Python([string]$Exe) {
             if($item.PSIsContainer){$queue.Enqueue($item.FullName)}
         }
     }
-    $info=Native $Exe @('-I','-B','-c','import sys,struct,json; assert sys.version_info[:3]==(3,11,9) and struct.calcsize("P")==8; print(json.dumps(dict(base=sys.base_prefix,prefix=sys.prefix)))') | ConvertFrom-Json
+    $info=Native $Exe @('-I','-B','-c','import sys,struct,json,sysconfig; assert sysconfig.get_platform()=="win-amd64"; assert sys.version_info[:3]==(3,11,9) and struct.calcsize("P")==8; print(json.dumps(dict(base=sys.base_prefix,prefix=sys.prefix)))') | ConvertFrom-Json
     Require ($info.base -eq $base -and $info.prefix -eq $base) 'protected_base_python_required'
 }
 function Tool($r,[string]$Action,[string[]]$Extra=@(),[int]$Timeout=300) {
@@ -231,6 +243,10 @@ function Read-Receipt([string]$Path) {
         Require ($property.Name -notmatch '\\|:|(^|/)\.\.?(/|$)') 'receipt_code_path'
         Require ((Hash (Join-Path $r.code $property.Name)) -ceq $property.Value) 'installed_source_changed'
     }
+    # Recheck the actual protected base and installed pins/patch before upgrades
+    # or rollback; a receipt alone must not bless later environment drift.
+    Safe-Python $r.base_python
+    Tool $r 'runtime' @('--root',$r.package_root)|Out-Null
     return $r
 }
 function Same-Core($old,$new) {
@@ -278,7 +294,7 @@ function Start-Healthy($r,[switch]$Start) {
 
 # Read-only prerequisites apply before every stage, including recovery.
 Require ($env:OS -eq 'Windows_NT' -and [Environment]::Is64BitOperatingSystem -and
-         [Environment]::Is64BitProcess -and $PSVersionTable.PSVersion.Major -ge 5) 'windows_x64_powershell_required'
+         [Environment]::Is64BitProcess -and $PSVersionTable.PSEdition -eq 'Desktop' -and $PSVersionTable.PSVersion.Major -eq 5 -and $PSVersionTable.PSVersion.Minor -ge 1) 'windows_x64_powershell_required'
 Require ($HealthSeconds -ge 30 -and $HealthSeconds -le 1800) 'health_deadline_out_of_range'
 $AppRoot=Absolute $AppRoot;$DataRoot=Absolute $DataRoot
 Require ($AppRoot -ne $DataRoot -and -not (Below $AppRoot $DataRoot) -and -not (Below $DataRoot $AppRoot) -and

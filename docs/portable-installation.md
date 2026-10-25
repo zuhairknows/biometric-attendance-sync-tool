@@ -5,7 +5,7 @@ driver before elevation. Do not use legacy install.py for this workflow.
 
 ## Prerequisites
 
-Windows 11 x64, Windows PowerShell 5.1+ x64, local NTFS storage and protected
+Windows 11 x64, native Windows PowerShell 5.1 x64 (Desktop edition), local NTFS storage and protected
 official CPython 3.11.9 x64. An administrator separately approves runtime provenance,
 owner/ACL/ancestor replacement safety and the package SHA256. User-owned base
 Python and base venvs are rejected. No Python installation, PATH/association change,
@@ -34,7 +34,7 @@ Create dist beforehand. Use the accepted development interpreter; no downloads:
 ~~~powershell
 $Root='C:\GitHub\biometric-attendance-sync-tool'
 $Py=Join-Path $Root '.acceptance\acl-compat\.venv\Scripts\python.exe'
-& $Py -B "$Root\deployment\portable_release.py" build --root $Root --wheels "$Root\.acceptance\scm-wheels" --wheel-manifest-sha256 18082a6431702dfd3c193e4b4a78afa451c6025fbf65cc39ac5a58448ffbeb6e --version 2.0.0-rc1 --output "$Root\dist\fpf-biometric-sync-2.0.0-rc1.zip"
+& $Py -B "$Root\deployment\portable_release.py" build --root $Root --wheels "$Root\.acceptance\scm-wheels" --wheel-manifest-sha256 18082a6431702dfd3c193e4b4a78afa451c6025fbf65cc39ac5a58448ffbeb6e --version 2.0.0-rc2 --output "$Root\dist\fpf-biometric-sync-2.0.0-rc2.zip"
 ~~~
 Fixed ZIP dates/order/mode and stored bytes produce identical output for identical
 input bytes. Manifest records source commit and content identity; dirty candidates
@@ -51,7 +51,7 @@ storage, rehashed and validated before execution. No machine change in Preflight
 ~~~powershell
 $Driver='C:\ApprovedMedia\deployment\Install-FPFBiometricSync.ps1'
 $Common=@{
-  Package='C:\ApprovedMedia\fpf-biometric-sync-2.0.0-rc1.zip'
+  Package='C:\ApprovedMedia\fpf-biometric-sync-2.0.0-rc2.zip'
   PackageSha256='<independently approved lowercase SHA256>'
   PythonExe='C:\Program Files\ApprovedPython311\python.exe'
   Config='C:\ApprovedPrivateConfig\local_config.py'

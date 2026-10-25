@@ -395,5 +395,24 @@ if(-not $failed){throw 'untrusted owner accepted'}
             self.assertEqual(files[0].read_bytes(), b"")
 
 
+    def test_native_retains_fixed_helper_failure_code(self):
+        body = r"""
+$failed=$false
+try{Native 'PYTHON' @('-I','-B','-c','import json,sys; print(json.dumps(dict(status="FAIL",code="recovery_or_durable_gate")),file=sys.stderr);sys.exit(1)')}catch{
+if($_.Exception.Message -cne 'deployment_check_failed: recovery_or_durable_gate'){throw};$failed=$true}
+if(-not $failed){throw 'failure ignored'}
+"""
+        self.powershell(["Require", "Windows-Argument", "Native"], body.replace("PYTHON", sys.executable))
+
+    def test_native_does_not_expose_raw_private_stderr(self):
+        body = r"""
+$failed=$false
+try{Native 'PYTHON' @('-I','-B','-c','import sys;print("SYNTHETIC_PRIVATE_EXCEPTION",file=sys.stderr);sys.exit(1)')}catch{
+if($_.Exception.Message -cne 'native_failed_exit_1'){throw};$failed=$true}
+if(-not $failed){throw 'failure ignored'}
+"""
+        self.powershell(["Require", "Windows-Argument", "Native"], body.replace("PYTHON", sys.executable))
+
+
 if __name__ == "__main__":
     unittest.main()

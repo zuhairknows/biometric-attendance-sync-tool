@@ -2,12 +2,12 @@
 
 Baseline: 3fbf5e967240ac9b164f64567c8a34ff81f959cc.
 Local branch: codex/release-hardening.
-Candidate version: 2.0.0-rc1. Not production-installation certification.
+Candidate version: 2.0.0-rc2. Not production-installation certification.
 
 ## Executed automated checks
 
-- Complete suite: 807 tests passed; see portable-release-application-tests.txt.
-  Includes 780 existing tests and 27 new hardening regressions.
+- Complete suite: 809 tests passed; see portable-release-application-tests.txt.
+  Includes 780 existing tests and 29 new hardening regressions.
 - Existing SCM acceptance-harness regressions: 28 passed; see portable-release-harness-tests.txt.
 - Windows PowerShell 5.1 parser and AST-extracted helpers exercised without driver stages.
 - Real disposable SQLite backup/read-only checks retained source bytes, current device/
@@ -17,6 +17,8 @@ Candidate version: 2.0.0-rc1. Not production-installation certification.
 - Failure tests covered failed stops, unknown service command, missing Python metadata,
   core/config rollback drift, private-file protection failure, atomic receipt replacement,
   native argument quoting and default-owner rejection.
+- Native helper errors expose only fixed allowlisted codes; raw private stderr is not returned.
+- Final focused hardening run: 29 tests passed after the runtime-revalidation review.
 - Source diff confirms core service, durable ledger/delivery/startup, monitoring policy,
   historical recovery and manager application code unchanged from the baseline.
 - Development test token was not an elevated administrator.
@@ -34,7 +36,7 @@ Candidate version: 2.0.0-rc1. Not production-installation certification.
 | Network | Explicit CheckNetwork: configured TCP ports and one TLS GET, no redirects/device commands/experimental POST |
 | Registration | Fixed existing application service name; LocalSystem and delayed-auto; command binds protected runtime and entry point |
 | Stop/switch | Expected SCM command/account, bounded waits and worker exit; Python inventory/global mutex open-only absence; change ImagePath only |
-| Upgrade | Managed receipts and identical private config/core source; current-state SQLite backup/integrity check with activation hash; no migration/provision/restore |
+| Upgrade | Revalidate protected base/Python architecture and actual pins/patch before use; managed receipts and identical private config/core source; current-state SQLite backup/integrity check with activation hash; no migration/provision/restore |
 | Rollback | Stop failed candidate, recheck current state/intents, restore compatible old command and verify health; never restore pre-upgrade data |
 | Health | Stable actual PID/LocalSystem token and fresh logs for every configured device plus ordinary HTTP 200; critical events abort. No repeated full DB scans while waiting for logs |
 | Uninstall | Recognized stopped service registration only; retains all files, DB, config, activation and backups; pending deletion refused |
@@ -70,3 +72,11 @@ CRLF form. No venv, private configuration/profile or ledger enters the archive.
 
 GO for independent review and separately authorized isolated Windows acceptance.
 NO-GO for claiming this candidate is certified for unattended production installation.
+
+## Development SDK observation
+
+The existing accepted development venv has pyzk 0.9 in its original unpatched form.
+It was not modified. Artifact verification applied the published SpeedFace recipe
+only to a disposable copy from the approved wheel and confirmed exact resulting
+bytes. The target Prepare stage applies/verifies this recipe in its fresh venv.
+This is neither a target dependency installation nor hardware/SCM acceptance.
