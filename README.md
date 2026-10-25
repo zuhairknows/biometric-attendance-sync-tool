@@ -177,3 +177,8 @@ For ERPNext/HRMS v15, ZKTeco User ID/PIN should match the Employee Attendance De
 ### License
 
 This project is licensed under [GNU General Public License v3.0](LICENSE)
+
+
+## Portable Windows installation (review candidate)
+
+See [portable installation](docs/portable-installation.md), [upgrade and rollback](docs/portable-upgrade.md), [manager operation](docs/portable-manager.md) and [acceptance gates](docs/portable-acceptance.md). This staged workflow replaces neither an existing production installation nor its private state automatically. Actual clean-PC/SCM acceptance is pending. Historical recovery stays disabled.

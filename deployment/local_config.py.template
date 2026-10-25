@@ -1,0 +1,30 @@
+# Administrator-controlled literal configuration; never commit the filled copy.
+# Replace every placeholder using this PC's reviewed device/destination inventory.
+ERPNEXT_URL = 'https://replace-me.invalid'
+ERPNEXT_VERSION = 15
+ERPNEXT_API_KEY = 'REPLACE_ME'
+ERPNEXT_API_SECRET = 'REPLACE_ME'
+LOGS_DIRECTORY = '<ABSOLUTE_DATA_ROOT>\\logs'
+DURABLE_DB_PATH = '<ABSOLUTE_DATA_ROOT>\\data\\sync.sqlite3'
+IMPORT_START_DATE = 'YYYYMMDD'
+PULL_FREQUENCY = 5
+ERPNEXT_REQUEST_TIMEOUT = 30
+DURABLE_SYNC_ENABLED = True
+DURABLE_BATCH_SIZE = 100
+DURABLE_REQUESTS_PER_SECOND = 2
+DURABLE_RETRY_BASE_SECONDS = 30
+DURABLE_RETRY_MAX_SECONDS = 3600
+DURABLE_AUTH_COOLDOWN_SECONDS = 900
+DURABLE_LEASE_SECONDS = 120
+# None selects strict SYSTEM/Administrators storage. Do not set an admin user's SID.
+# An ordinary monitoring SID additionally needs separately approved exact read ACLs.
+DURABLE_MONITOR_READONLY_SID = None
+HISTORICAL_RECOVERY_ENABLED = False
+HISTORICAL_RECOVERY_COORDINATION = False
+device_punch_values_IN = [0, 4]
+device_punch_values_OUT = [1, 5]
+# Example shape only; an empty list deliberately fails preparation.
+# {'device_id':'SITE_DEVICE_01', 'ip':'<reviewed-address>', 'port':4370,
+#  'password':0, 'punch_direction':None, 'clear_from_device_on_fetch':False}
+devices = []
+shift_type_device_mapping = []
