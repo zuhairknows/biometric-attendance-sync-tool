@@ -83,6 +83,9 @@ The `erpnext_sync.py` file is the "backbone" of this project. Apart from Windows
 
 There's a [Wiki](https://github.com/frappe/biometric-attendance-sync-tool/wiki/Running-this-script-in-production) for this.
 
+For the existing IT-SUPPORT installation, see the narrow
+[Attendance timestamp fix and install command](docs/attendance-watermark-fix.md).
+
 ### Windows
 
 Installing as a Windows service

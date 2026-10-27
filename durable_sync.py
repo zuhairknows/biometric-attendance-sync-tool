@@ -92,11 +92,11 @@ def capture(ledger, engine, device, records=None):
     return ledger.ingest(rows, device['device_id'], fetched_at=started)
 
 
-def update_shifts(ledger, engine, stop_requested=lambda: False):
+def update_shifts(ledger, engine, stop_requested=lambda: False, not_before=None):
     if not getattr(engine.status, 'usable', True) or ledger.destination_cooldown() > time.time():
         return
     for mapping in getattr(engine.config, 'shift_type_device_mapping', []):
-        watermark = ledger.safe_watermark(mapping['related_device_id'])
+        watermark = ledger.safe_watermark(mapping['related_device_id'], not_before=not_before)
         if watermark is None:
             continue
         shifts = mapping['shift_type_name']
@@ -169,5 +169,6 @@ def _run_locked(engine, stop_requested):
         deliver_batch(ledger, client, **options, stop_requested=stop_requested, logger=engine.info_logger,
                       not_before=live_boundary, recovery_guard=recovery_guard)
         if not stop_requested():
-            update_shifts(ledger, engine, stop_requested)
+            # Delivery and shift progress must agree on which dates are live.
+            update_shifts(ledger, engine, stop_requested, not_before=live_boundary)
         engine.info_logger.info(json.dumps(dict(event='durable_health', **ledger.diagnostics()), sort_keys=True))

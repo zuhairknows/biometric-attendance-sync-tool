@@ -13,6 +13,8 @@ import sys
 from urllib.parse import quote
 
 LEDGER_SHA256 = '5e6713142f432b808c7bba50a5f55798733c5c981657e381f09576fde7bc7a2d'
+# Keep the original diagnostic valid and also recognize the reviewed attendance fix.
+ATTENDANCE_LEDGER_SHA256 = '15bf03152ce450b9b5d37cbb9e43d62ae863cdf6ab8b0d9ccd1846daeeacd9b2'
 TARGET = Path('C:/ProgramData/ERPNextBiometricPushService/sync.sqlite3')
 SOURCE_LABEL = '<verified-sync-ledger>'
 
@@ -61,7 +63,7 @@ def probe(manager, profile, *, expected_ledger=TARGET, emit=print):
         if path != Path(expected_ledger).resolve():
             raise ValueError()
         source = (manager / 'sync_ledger.py').read_bytes()
-        if hashlib.sha256(source.replace(b'\r\n', b'\n')).hexdigest() != LEDGER_SHA256:
+        if hashlib.sha256(source.replace(b'\r\n', b'\n')).hexdigest() not in (LEDGER_SHA256, ATTENDANCE_LEDGER_SHA256):
             raise ValueError()
         namespace = {'__name__': 'verified_ledger_probe'}
         # Execute only the exact reviewed stdlib-only module, from the hashed bytes.

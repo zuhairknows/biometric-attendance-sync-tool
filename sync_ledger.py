@@ -234,7 +234,12 @@ class Ledger:
                 self.db.execute('INSERT INTO device_state(device_id,last_successful_delivery) VALUES(?,?) '
                                 'ON CONFLICT(device_id) DO UPDATE SET last_successful_delivery=excluded.last_successful_delivery', (row['device_id'], now))
 
-    def safe_watermark(self, device_ids):
+    def safe_watermark(self, device_ids, not_before=None):
+        # Use the same approved live boundary as delivery. Historical rows remain
+        # evidence, but cannot prevent attendance for the active delivery period.
+        if not_before is not None and (not isinstance(not_before, dt.datetime)
+                                       or not_before.tzinfo is not None):
+            raise ValueError('Watermark boundary must be a naive local datetime')
         if not device_ids:
             return None
         candidates = []
@@ -244,7 +249,10 @@ class Ledger:
                 return None
             # Permanent errors also block. An unknown timestamp cannot be ordered safely.
             unresolved = self.db.execute("SELECT MIN(punch_timestamp),SUM(punch_timestamp IS NULL) FROM punches "
-                                         "WHERE device_id=? AND state NOT IN ('synced','duplicate')", (device_id,)).fetchone()
+                                         "WHERE device_id=? AND state NOT IN ('synced','duplicate') "
+                                         "AND (? IS NULL OR punch_timestamp IS NULL OR punch_timestamp>=?)",
+                                         (device_id, str(not_before) if not_before is not None else None,
+                                          str(not_before) if not_before is not None else None)).fetchone()
             if unresolved[1]:
                 return None
             candidate = dt.datetime.fromisoformat(device['last_successful_fetch'])
