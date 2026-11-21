@@ -1,24 +1,31 @@
 <#
 .SYNOPSIS
-  In-place update of an existing durable sync installation to the Shift Type
-  watermark policy (wait only for punches that can still arrive).
+  In-place update of an existing durable sync installation: Shift Type
+  watermark policy (wait only for punches that can still arrive) and the
+  verified-absence resend of uncertain sends.
 
 .DESCRIPTION
-  Replaces exactly two service files (durable_sync.py, sync_ledger.py) after
-  verifying that the installed copies are the reviewed versions this update was
-  written against. Without -Apply it only reports what it would do.
+  Replaces service files (durable_sync.py, sync_ledger.py, durable_delivery.py)
+  only when each installed copy is a reviewed version this update knows; files
+  already at the new version are left alone. Without -Apply it only reports.
 
-  With -Apply it: backs up both files and local_config.py, optionally appends
-  SHIFT_SYNC_IGNORED_DEVICES to local_config.py, stops the service, copies the
-  files, starts the service and rolls everything back if the service does not
-  return to Running. The SQLite ledger, logs and devices are never touched.
+  With -Apply it: backs up the files and local_config.py, sets the requested
+  settings in local_config.py (an existing line is replaced in place, otherwise
+  the setting is appended), stops the service, copies the files, starts the
+  service and rolls everything back if the service does not return to Running.
+  The SQLite ledger, logs and devices are never touched.
+
+  -ResendMissing sets DURABLE_CONFIRM_READS_VERIFIED, DURABLE_SERVER_REVIEW_REFERENCE
+  and DURABLE_RESEND_VERIFIED_MISSING so uncertain sends are looked up in ERPNext
+  and resent only when proven absent.
 
   Run from an elevated Windows PowerShell 5.1 in the folder that holds this
-  script together with the new durable_sync.py and sync_ledger.py.
+  script together with the new service files.
 
 .EXAMPLE
   .\Update-ShiftSyncPolicy.ps1
   .\Update-ShiftSyncPolicy.ps1 -IgnoreDevices FP1_DEVICE_06 -Apply
+  .\Update-ShiftSyncPolicy.ps1 -ResendMissing -Apply -WaitMinutes 15
 #>
 [CmdletBinding()]
 param(
@@ -26,18 +33,22 @@ param(
     [string]$ServiceName = 'ERPNextBiometricPushService',
     [string[]]$IgnoreDevices = @(),
     [ValidateRange(0, 168)][double]$RetryGraceHours = -1,
+    [switch]$ResendMissing,
+    [ValidatePattern('^[A-Za-z0-9 :.,_-]{3,120}$')][string]$ReviewReference = 'Approved 2026-11-21: verified-absence resend of uncertain sends',
     [switch]$Apply,
     [int]$WaitMinutes = 0
 )
 $ErrorActionPreference = 'Stop'
 
-# SHA-256 of LF-normalized bytes. OLD = reviewed installed versions (unchanged since
-# commit 4f20179, 2026-10-21); NEW = Shift Type watermark policy.
+# SHA-256 of LF-normalized bytes. OLD = reviewed versions this update may replace
+# (unchanged since commit 4f20179, 2026-10-21); NEW = this update.
 $Files = [ordered]@{
-    'durable_sync.py' = @{ Old = '50becdebeb006b2f150ddff72dafac940201bc4d33ed52a5669f07f7aa18923f'
-                           New = 'e1685346fed20e29d3b9de241078b92648d952c98c6f5401b5909f9f3e75d479' }
-    'sync_ledger.py'  = @{ Old = '5e6713142f432b808c7bba50a5f55798733c5c981657e381f09576fde7bc7a2d'
-                           New = '422687e5c781d24474ad505d030c4ccef260ae78876348dafa5e5b97f20b7721' }
+    'durable_sync.py'     = @{ Old = @('50becdebeb006b2f150ddff72dafac940201bc4d33ed52a5669f07f7aa18923f')
+                               New = 'e1685346fed20e29d3b9de241078b92648d952c98c6f5401b5909f9f3e75d479' }
+    'sync_ledger.py'      = @{ Old = @('5e6713142f432b808c7bba50a5f55798733c5c981657e381f09576fde7bc7a2d')
+                               New = '422687e5c781d24474ad505d030c4ccef260ae78876348dafa5e5b97f20b7721' }
+    'durable_delivery.py' = @{ Old = @('ceeb65c3161de7d2ac4fd19f1544c3351f8d658e6fddf7fd640e90f49e31a82b')
+                               New = '7587b2dd85d08e506339059d4b489edd9d12d8b5892a16e0f00c4d3304c407d8' }
 }
 
 function Get-NormalizedHash([string]$Path) {
@@ -74,11 +85,13 @@ foreach ($name in $Files.Keys) {
     if ($newHash -ne $Files[$name].New) { throw "New $name does not match the reviewed update ($newHash)" }
     $current = Get-NormalizedHash $installed
     if ($current -eq $Files[$name].New) { Say "  $name : already updated" 'Green' }
-    elseif ($current -eq $Files[$name].Old) { Say "  $name : reviewed old version, will be replaced"; $toCopy += $name }
+    elseif ($Files[$name].Old -contains $current) { Say "  $name : reviewed old version, will be replaced"; $toCopy += $name }
     else { throw "Installed $name is an unexpected version ($current). Stopping without changes." }
 }
 
-# 2. Config: optional settings, each appended only when absent from local_config.py.
+# 2. Config: requested settings; an existing single-line assignment is replaced in place.
+$configBytes = [IO.File]::ReadAllBytes($config)
+$hasBom = $configBytes.Length -ge 3 -and $configBytes[0] -eq 0xEF -and $configBytes[1] -eq 0xBB -and $configBytes[2] -eq 0xBF
 $configText = [IO.File]::ReadAllText($config)
 $settings = [ordered]@{}
 if ($IgnoreDevices.Count) {
@@ -88,12 +101,34 @@ if ($IgnoreDevices.Count) {
 if ($RetryGraceHours -ge 0) {
     $settings['SHIFT_SYNC_RETRY_GRACE_HOURS'] = $RetryGraceHours.ToString([Globalization.CultureInfo]::InvariantCulture)
 }
-$configLines = @()
-foreach ($name in $settings.Keys) {
-    if ($configText -match "(?m)^\s*$name\s*=") { Say "  local_config.py already defines $name; edit it by hand if needed." 'Yellow' }
-    else { $configLines += "$name = $($settings[$name])"; Say "  local_config.py : will append  $name = $($settings[$name])" }
+if ($ResendMissing) {
+    $settings['DURABLE_CONFIRM_READS_VERIFIED'] = 'True'
+    $settings['DURABLE_SERVER_REVIEW_REFERENCE'] = "'$ReviewReference'"
+    $settings['DURABLE_RESEND_VERIFIED_MISSING'] = 'True'
 }
-$configLine = if ($configLines.Count) { $configLines -join "`r`n" } else { $null }
+$newConfig = $configText
+$appendLines = @()
+foreach ($name in $settings.Keys) {
+    $line = "$name = $($settings[$name])"
+    $pattern = "(?m)^[ \t]*$name[ \t]*=[^\r\n]*"
+    $existing = [regex]::Matches($newConfig, $pattern)
+    if ($existing.Count -gt 1) { throw "local_config.py assigns $name more than once; fix it by hand first." }
+    if ($existing.Count -eq 1) {
+        $old = $existing[0].Value.Trim()
+        if ($old -eq $line) { Say "  local_config.py : $name already set" 'Green'; continue }
+        if ($old -match '[\(\[\{]\s*$' -or $old -match '\\\s*$') { throw "local_config.py: $name spans several lines; edit it by hand." }
+        $newConfig = [regex]::Replace($newConfig, $pattern, $line.Replace('$', '$$'))
+        Say "  local_config.py : will change  $old  ->  $line"
+    } else {
+        $appendLines += $line
+        Say "  local_config.py : will append  $line"
+    }
+}
+if ($appendLines.Count) {
+    $sep = if ($newConfig.EndsWith("`n")) { '' } else { "`r`n" }
+    $newConfig += "$sep`r`n# Sync policy (Update-ShiftSyncPolicy.ps1, $(Get-Date -Format 'yyyy-MM-dd')).`r`n" + ($appendLines -join "`r`n") + "`r`n"
+}
+$configLine = if ($newConfig -ne $configText) { $newConfig } else { $null }
 
 if (-not $Apply) {
     Say "`nDry run only. Nothing was changed. Re-run with -Apply to update." 'Cyan'
@@ -128,8 +163,7 @@ try {
         Say "  replaced $name" 'Green'
     }
     if ($configLine) {
-        $sep = if ($configText.EndsWith("`n")) { '' } else { "`r`n" }
-        [IO.File]::AppendAllText($config, "$sep`r`n# Shift Type sync policy (Update-ShiftSyncPolicy.ps1, $(Get-Date -Format 'yyyy-MM-dd')).`r`n$configLine`r`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($config, $configLine, [Text.UTF8Encoding]::new($hasBom))
         Say '  updated local_config.py' 'Green'
     }
     Say 'Starting service...'

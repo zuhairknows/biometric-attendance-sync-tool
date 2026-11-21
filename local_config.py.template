@@ -47,6 +47,18 @@ DURABLE_AUTH_COOLDOWN_SECONDS = 900
 # Must exceed 2 * request timeout + 30 seconds, to recover interrupted sends safely.
 DURABLE_LEASE_SECONDS = 120
 
+# Uncertain sends (timeout, 5xx) are never POSTed blindly again. With confirmation
+# reads enabled, the service looks the punch up in ERPNext (Employee by device ID,
+# then Employee Checkin within +/-2 seconds). Present -> recorded as delivered.
+# With DURABLE_RESEND_VERIFIED_MISSING it is sent once more only when both reads
+# succeed and prove it absent, and the last attempt is older than
+# DURABLE_RESEND_SETTLE_SECONDS (a timed-out POST may still be committing).
+# The API user needs read access to Employee and Employee Checkin.
+DURABLE_CONFIRM_READS_VERIFIED = False
+DURABLE_SERVER_REVIEW_REFERENCE = ''
+DURABLE_RESEND_VERIFIED_MISSING = False
+DURABLE_RESEND_SETTLE_SECONDS = 600
+
 
 # ============================================================
 # ZKTeco Biometric Devices

@@ -99,6 +99,57 @@ class FrappeClient:
             and isinstance(getattr(config, 'DURABLE_SERVER_REVIEW_REFERENCE', None), str)
             and bool(config.DURABLE_SERVER_REVIEW_REFERENCE.strip()))
         self.resource_url = config.ERPNEXT_URL.rstrip('/') + '/api/resource/'
+        # Opt-in: a punch whose earlier send was uncertain is sent again only after both
+        # destination reads succeed and prove it absent, and the last attempt has settled.
+        self.resend_verified_missing = (self.confirmation_verified
+            and getattr(config, 'DURABLE_RESEND_VERIFIED_MISSING', False) is True)
+        settle = getattr(config, 'DURABLE_RESEND_SETTLE_SECONDS', 600)
+        if isinstance(settle, bool) or not isinstance(settle, (int, float)) or not settle >= 60:
+            raise ValueError('DURABLE_RESEND_SETTLE_SECONDS must be a number of at least 60')
+        self.resend_settle_seconds = settle
+
+    def lookup(self, payload, before_request=None, tolerance_seconds=2):
+        """('present', name), ('absent', None) or ('unknown', None). Absence needs two successful reads."""
+        if not self.confirmation_verified:
+            return 'unknown', None
+        try:
+            stamp = dt.datetime.fromisoformat(payload['timestamp'])
+            if stamp.tzinfo is not None:
+                return 'unknown', None
+            expected = stamp.replace(microsecond=0)
+            def read(doctype, fields, filters):
+                if before_request is not None and not before_request():
+                    return None
+                response = self.request('GET', self.resource_url + quote(doctype, safe=''), headers=self.headers,
+                    params=dict(fields=json.dumps(fields), filters=json.dumps(filters), limit_page_length=2),
+                    timeout=self.timeout, allow_redirects=False)
+                if response.status_code != 200:
+                    return None
+                data = response_data(response).get('data')
+                return data if isinstance(data, list) else None
+            employees = read('Employee', ['name', 'status', 'attendance_device_id'],
+                             [['attendance_device_id', '=', payload['employee_field_value']]])
+            if (not employees or len(employees) != 1 or employees[0].get('status') != 'Active'
+                    or employees[0].get('attendance_device_id') != payload['employee_field_value']
+                    or not isinstance(employees[0].get('name'), str) or not employees[0]['name']):
+                return 'unknown', None
+            employee = employees[0]['name']
+            window = [str(expected - dt.timedelta(seconds=tolerance_seconds)),
+                      str(expected + dt.timedelta(seconds=tolerance_seconds))]
+            rows = read('Employee Checkin', ['name', 'employee', 'time'],
+                        [['employee', '=', employee], ['time', 'between', window]])
+            if rows is None:
+                return 'unknown', None
+            if not rows:
+                return 'absent', None
+            for row in rows:
+                if (row.get('employee') == employee and isinstance(row.get('name'), str)
+                        and 0 < len(row['name']) <= 140
+                        and abs((dt.datetime.fromisoformat(row['time']) - expected).total_seconds()) <= tolerance_seconds):
+                    return 'present', row['name']
+        except Exception:
+            pass  # Remote messages, names, URLs and credentials never enter failure diagnostics.
+        return 'unknown', None
 
     def confirm(self, payload, before_request=None):
         """Positive identity proof only. Empty/filtered/failed reads never permit another POST."""
@@ -147,6 +198,30 @@ class FrappeClient:
             # Exception strings may contain URLs, authorization headers, or secrets.
             return ('retry', 0, 'transport', 'Destination transport failure or timeout', None), 0
         return classify(response.status_code, response_data(response)), retry_after(response, now)
+
+
+def _resolve_uncertain(ledger, client, row, payload, pace, clock, logger):
+    """Uncertain earlier send: confirm if present; resend once proven absent and settled."""
+    pending = ('retry', 0, 'confirmation_pending', 'Uncertain submission requires destination evidence; no POST retried', None)
+    state, name = client.lookup(payload, before_request=pace)
+    if state == 'present':
+        return ('duplicate', 200, 'destination_confirmed', 'Existing destination identity verified', name), 0
+    if state != 'absent':
+        return pending, 0
+    # A timed-out POST can still commit later: trust absence only after the last attempt settled.
+    previous = ledger.db.execute('SELECT MAX(attempted_at) FROM delivery_attempts WHERE punch_id=?', (row['id'],)).fetchone()[0]
+    if previous is not None and clock() - previous < client.resend_settle_seconds:
+        return ('retry', 0, 'confirmation_pending', 'Verified absent; waiting for the last attempt to settle before resend', None), 0
+    if not pace():
+        return pending, 0
+    if logger:
+        logger.info(json.dumps(dict(event='durable_resend_verified_absent', punch=row['id'])))
+    outcome, guidance = client.send(payload, clock())
+    if outcome[0] == 'duplicate':
+        state, name = client.lookup(payload, before_request=pace)
+        outcome = (('duplicate', outcome[1], 'destination_confirmed', 'Existing destination identity verified', name)
+                   if state == 'present' else ('retry', outcome[1], 'confirmation_pending', 'Duplicate response requires destination evidence', None))
+    return outcome, guidance
 
 
 def deliver_batch(ledger, client, batch_size=100, rate=2, base=30, maximum=3600,
@@ -200,6 +275,8 @@ def deliver_batch(ledger, client, batch_size=100, rate=2, base=30, maximum=3600,
         elif not needs_confirmation and ledger.has_uncertain_peer(row):
             outcome = ('retry', 0, 'peer_uncertain', 'Related source identity is uncertain; no POST attempted', None)
             guidance = 0
+        elif needs_confirmation and getattr(client, 'resend_verified_missing', False) is True:
+            outcome, guidance = _resolve_uncertain(ledger, client, row, payload, pace_confirmation_read, clock, logger)
         elif needs_confirmation:
             name = client.confirm(payload, before_request=pace_confirmation_read)
             outcome = (('duplicate', 200, 'destination_confirmed', 'Existing destination identity verified', name)
