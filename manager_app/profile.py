@@ -48,6 +48,49 @@ def load_profile(filename, acl_check=check_directory_acl):
         raise ManagerError('private_startup_profile_invalid') from None
 
 
+SHIFT_SYNC_SETTINGS = dict(SHIFT_SYNC_RETRY_GRACE_HOURS=('retry_grace_seconds', 3600),
+                           SHIFT_SYNC_DEVICE_STALE_HOURS=('stale_device_seconds', 3600),
+                           SHIFT_SYNC_FUTURE_TOLERANCE_MINUTES=('future_tolerance_seconds', 60))
+
+
+def shift_sync_profile(filename):
+    """Shift-to-device mapping and watermark policy from literal source only; no code runs."""
+    try:
+        path = Path(filename)
+        if path.stat().st_size > 1024 * 1024:
+            raise ValueError
+        tree = ast.parse(path.read_text(encoding='utf-8-sig'))
+        literals = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                name = node.targets[0].id
+                if name == 'shift_type_device_mapping' or name in SHIFT_SYNC_SETTINGS or name == 'SHIFT_SYNC_IGNORED_DEVICES':
+                    if name in literals:
+                        raise ValueError
+                    literals[name] = ast.literal_eval(node.value)
+        mappings = []
+        for entry in literals.get('shift_type_device_mapping', []):
+            shifts, devices = entry['shift_type_name'], entry['related_device_id']
+            shifts = [shifts] if isinstance(shifts, str) else list(shifts)
+            if not shifts or not all(isinstance(s, str) for s in shifts) or not all(isinstance(d, str) for d in devices):
+                raise ValueError
+            mappings.append(dict(shifts=shifts, devices=list(devices)))
+        policy = {}
+        for name, (key, unit) in SHIFT_SYNC_SETTINGS.items():
+            if name in literals:
+                value = literals[name]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0 or value != value:
+                    raise ValueError
+                policy[key] = value * unit
+        ignored = literals.get('SHIFT_SYNC_IGNORED_DEVICES', [])
+        if isinstance(ignored, str) or not all(isinstance(d, str) for d in ignored):
+            raise ValueError
+        policy['ignored_devices'] = tuple(ignored)
+        return dict(mappings=mappings, policy=policy)
+    except Exception:
+        raise ManagerError('shift_configuration_not_a_verified_literal') from None
+
+
 def device_catalog(filename):
     """Whitelist device ID/address/port from literal source; discard passwords and code."""
     if not filename:

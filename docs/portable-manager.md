@@ -31,3 +31,31 @@ with the same normal token/profile if an exact-environment standalone probe pass
 
 Keep --monitor-only: investigation/recovery routes remain denied. Optional user-logon
 shortcuts need separate approval; no elevated task/service or startup entry is added.
+
+## Monitoring dashboard bundle (existing installations)
+
+For an installation that was not set up with the portable installer (for example
+`C:\Program Files\FPFBiometricSyncPhase2`), `deployment\Install-MonitorDashboard.ps1`
+installs the monitoring-only manager beside it, from a bundle with `code\` and
+offline `wheels\` (Flask, Waitress, Requests and their dependencies), into
+`%LOCALAPPDATA%\FPFBiometricManager` (`code` + `runtime`, the layout
+`Start-Monitor.ps1` expects). It creates a private profile with
+`New-MonitorProfile.ps1 -DeviceConfig` and a `Start-Dashboard.cmd`. It never touches
+the service, its folder, the ledger or ACLs. Run it as the normal dashboard user.
+
+The dashboard adds, from stored data only:
+
+* **Shift sync**: next `last_sync_of_checkin` estimate per mapping, each device's
+  status (`ok`, `scan_failed`, `stale`, `ignored`, `never_scanned`), punches waited
+  for and not waited for, and the last date confirmed by ERPNext per shift.
+* **Device health**: time since the last successful pull, punches captured in the
+  last 24 hours, punches dated more than 10 minutes in the future (device clock).
+* **Unknown cards**: the 25 device user IDs with most `unmatched_employee` punches.
+* **Not delivered, by reason**: counts per state and error category.
+
+To review a production ledger on another PC, run `Export-MonitorSnapshot.ps1`
+(elevated) on the sync PC. It copies the ledger with SQLite's online backup API from
+a read-only connection and writes `local_config.monitor.py` without the API key,
+secret or device passwords. Install the dashboard on the review PC with `-Ledger`,
+`-DeviceConfig` and a separate `-ProfileDirectory` pointing at that snapshot.
+Never point the manager at a ledger over a network share.

@@ -10,8 +10,35 @@
 <div class="metrics">{% for key,label in [('total','Stored punches'),('synced','Synced'),('pending','Pending'),('retry','Retry'),('rejected','Rejected'),('unmatched_employee','Unmatched'),('holds','Historical holds')] %}
 <section class="card metric"><span>{{ label }}</span><strong>{% if dashboard and dashboard.integrity == 'OK' %}{{ dashboard[key] if key in ('total','holds') else dashboard.states.get(key, '—') }}{% else %}—{% endif %}</strong></section>{% endfor %}</div>
 <section class="card panel"><div class="panel-heading"><div><h2>Device observations</h2><p>Stored fetch results only. A running service does not establish device connectivity.</p></div><a href="{{ url_for('devices_page') }}">View devices →</a></div>
-{% if dashboard and dashboard.devices %}<div class="table-scroll"><table><thead><tr><th>Device</th><th>Recorded fetch</th><th>Last successful pull</th><th>Backlog</th><th>Quarantined</th><th>Last delivery · UTC</th></tr></thead><tbody>
-{% for d in dashboard.devices %}<tr><td class="mono">{{ d.device }}</td><td>{{ d.fetch }}</td><td>{{ d.last_fetch }}</td><td>{{ d.backlog }}</td><td>{{ d.failed }}</td><td>{{ d.last_delivery }}</td></tr>{% endfor %}</tbody></table></div>
+{% if dashboard and dashboard.devices %}<div class="table-scroll"><table><thead><tr><th>Device</th><th>Recorded fetch</th><th>Last successful pull</th><th>Pulled</th><th>Captured 24 h</th><th>Clock errors</th><th>Backlog</th><th>Quarantined</th><th>Last delivery · UTC</th></tr></thead><tbody>
+{% for d in dashboard.devices %}<tr><td class="mono">{{ d.device }}</td><td>{% if d.stale %}<strong>⚠ {{ d.fetch }}</strong>{% else %}{{ d.fetch }}{% endif %}</td><td>{{ d.last_fetch }}</td>
+<td>{% if d.pull_age_minutes is none or d.pull_age_minutes is not defined %}—{% elif d.pull_age_minutes < 120 %}{{ d.pull_age_minutes }} min ago{% elif d.pull_age_minutes < 2880 %}{{ d.pull_age_minutes // 60 }} h ago{% else %}{{ d.pull_age_minutes // 1440 }} days ago{% endif %}</td>
+<td>{{ d.captured_24h if d.captured_24h is defined else '—' }}</td><td>{% if d.future_dated %}<strong>⚠ {{ d.future_dated }}</strong>{% else %}0{% endif %}</td>
+<td>{{ d.backlog }}</td><td>{{ d.failed }}</td><td>{{ d.last_delivery }}</td></tr>{% endfor %}</tbody></table></div>
+<p class="caption">⚠ marks a device not pulled successfully in the last hour, or punches dated more than 10 minutes in the future (device clock).</p>
 {% else %}{{ empty('Diagnostics have not been loaded') }}{% endif %}</section>
+<section class="card panel"><div class="panel-heading"><div><h2>Shift sync</h2><p>Last Sync of Checkin sent to ERPNext, and what holds the next date back. Unmatched, held and invalid punches are not waited for.</p></div></div>
+{% set sync = dashboard.shift_sync if dashboard else None %}
+{% if sync %}{% if sync.error %}<div class="notice warning">{{ sync.error }}</div>{% endif %}
+{% if not sync.mappings and not sync.error %}<div class="notice">No shift_type_device_mapping in the device configuration; the next sync date cannot be estimated.</div>{% endif %}
+{% for m in sync.mappings %}<p><strong>Next sync date:</strong> <span class="mono">{{ m.next_watermark or 'Blocked' }}</span> · {{ m.shifts|length }} shift(s)</p>
+<div class="table-scroll"><table><thead><tr><th>Device</th><th>Status</th><th>Last successful pull</th><th>Waiting for</th><th>Earliest waited punch</th><th>Not waited for</th></tr></thead><tbody>
+{% for d in m.devices %}<tr><td class="mono">{{ d.device }}</td><td>{{ d.status }}</td><td>{{ d.last_successful_fetch or '—' }}</td><td>{{ d.blocking if d.blocking is defined else '—' }}</td><td>{{ d.earliest_blocking or '—' }}</td><td>{{ d.not_waited if d.not_waited is defined else '—' }}</td></tr>{% endfor %}</tbody></table></div>{% endfor %}
+{% if sync.saved %}<div class="table-scroll"><table><thead><tr><th>Shift</th><th>Last date sent</th></tr></thead><tbody>
+{% for s in sync.saved %}<tr><td>{{ s.shift }}</td><td class="mono">{{ s.watermark }}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}{{ empty('No Shift Type update has been confirmed yet', None) }}{% endif %}
+{% else %}{{ empty('Diagnostics have not been loaded') }}{% endif %}</section>
+{% set insights = dashboard.insights if dashboard else None %}
+<section class="card panel"><div class="panel-heading"><div><h2>Unknown cards</h2><p>Device user IDs that ERPNext could not match to an employee. Set the employee's Attendance Device ID, or ignore door-only cards.</p></div></div>
+{% if insights %}{% if insights.error %}<div class="notice warning">{{ insights.error }}</div>{% endif %}
+{% if insights.unmatched %}<div class="table-scroll"><table><thead><tr><th>Device user ID</th><th>Punches</th><th>Last seen</th><th>Devices</th></tr></thead><tbody>
+{% for u in insights.unmatched %}<tr><td class="mono">{{ u.user_id }}</td><td>{{ u.punches }}</td><td class="mono">{{ u.last_seen }}</td><td class="mono">{{ u.devices|join(', ') }}</td></tr>{% endfor %}</tbody></table></div>
+<p class="caption">Top 25 by punches.</p>{% else %}{{ empty('No unmatched cards', None) }}{% endif %}
+{% else %}{{ empty('Diagnostics have not been loaded') }}{% endif %}</section>
+<section class="card panel"><div class="panel-heading"><div><h2>Not delivered, by reason</h2><p>Every stored punch that is not synced or a confirmed duplicate.</p></div></div>
+{% if insights and insights.reasons %}<div class="table-scroll"><table><thead><tr><th>State</th><th>Reason</th><th>Punches</th></tr></thead><tbody>
+{% for r in insights.reasons %}<tr><td>{{ r.state }}</td><td class="mono">{{ r.category }}</td><td>{{ r.punches }}</td></tr>{% endfor %}</tbody></table></div>
+{% elif insights %}{{ empty('Every stored punch is delivered', None) }}{% else %}{{ empty('Diagnostics have not been loaded') }}{% endif %}</section>
+
 <p class="caption">Last refresh · UTC: {{ dashboard.refreshed if dashboard else 'Not refreshed' }}. Held records remain unchanged.</p>
 {% endblock %}

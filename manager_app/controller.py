@@ -206,6 +206,10 @@ class Controller:
                         backlog=diagnostics['pending_per_device'].get(device, 0),
                         failed=failures.get(device, 0),
                         last_delivery=utc_time(state.get('last_successful_delivery'))))
+                snapshot['shift_sync'] = self._shift_sync(ledger, (values or {}).get('device_config'))
+                snapshot['insights'] = self._insights(ledger, states)
+                for row in snapshot['devices']:
+                    row.update(snapshot['insights']['devices'].get(row['device'], {}))
             data = snapshot
             trace.emit('complete', 'ok')
         except Exception as error:
@@ -213,6 +217,57 @@ class Controller:
         if trace.warning:
             data['errors'].append(trace.warning)
         return data
+
+    @staticmethod
+    def _insights(ledger, states, now=None):
+        """Operator triage from stored data only: device freshness, clock errors, unknown cards, reasons."""
+        now = now or dt.datetime.now()
+        result = dict(devices={}, unmatched=[], reasons=[], error=None)
+        try:
+            day_ago = now.timestamp() - 86400
+            clock_limit = str((now + dt.timedelta(minutes=10)).replace(microsecond=0))
+            captured = {r[0]: r[1] for r in ledger.db.execute(
+                'SELECT device_id,COUNT(*) FROM punches WHERE first_captured>=? GROUP BY device_id', (day_ago,))}
+            future = {r[0]: r[1] for r in ledger.db.execute(
+                'SELECT device_id,COUNT(*) FROM punches WHERE punch_timestamp>? GROUP BY device_id', (clock_limit,))}
+            for device in set(states) | set(captured) | set(future):
+                state = states.get(device, {})
+                pulled = state.get('last_successful_fetch')
+                age = int((now - dt.datetime.fromisoformat(pulled)).total_seconds() // 60) if pulled else None
+                result['devices'][device] = dict(pull_age_minutes=age, captured_24h=captured.get(device, 0),
+                    future_dated=future.get(device, 0), stale=age is None or age > 60 or not state.get('fetch_ok'))
+            result['unmatched'] = [dict(user_id=r[0], punches=r[1], last_seen=r[2], devices=r[3].split(',')) for r in ledger.db.execute(
+                "SELECT user_id,COUNT(*),MAX(punch_timestamp),GROUP_CONCAT(DISTINCT device_id) FROM punches "
+                "WHERE state='unmatched_employee' AND punch_timestamp<=? GROUP BY user_id ORDER BY COUNT(*) DESC, user_id LIMIT 25",
+                (clock_limit,))]
+            result['reasons'] = [dict(state=r[0], category=r[1] or '—', punches=r[2]) for r in ledger.db.execute(
+                "SELECT state,error_category,COUNT(*) FROM punches WHERE state NOT IN ('synced','duplicate') "
+                "GROUP BY state,error_category ORDER BY COUNT(*) DESC")]
+        except Exception:
+            result['error'] = 'Device and delivery insights unavailable; core diagnostics above are unaffected.'
+        return result
+
+    @staticmethod
+    def _shift_sync(ledger, device_config):
+        """Saved Shift Type dates and what holds the next one back. Never fails the dashboard."""
+        result = dict(saved=[], mappings=[], error=None)
+        try:
+            result['saved'] = [dict(shift=r[0], watermark=r[1]) for r in
+                               ledger.db.execute('SELECT shift_name,watermark FROM shift_state ORDER BY shift_name')]
+            if not device_config:
+                result['error'] = 'Device configuration not set; the next sync date cannot be estimated.'
+                return result
+            from .profile import shift_sync_profile
+            profile = shift_sync_profile(device_config)
+            for mapping in profile['mappings']:
+                report = ledger.watermark_report(mapping['devices'], policy=profile['policy'])
+                devices = [dict(device=d, **{k: v for k, v in report['devices'].get(d, dict(status='not_checked')).items()})
+                           for d in mapping['devices']]
+                result['mappings'].append(dict(shifts=mapping['shifts'], devices=devices,
+                    next_watermark=str(report['watermark']) if report['watermark'] else None))
+        except Exception:
+            result['error'] = 'Shift sync status unavailable; check the device configuration literal.'
+        return result
 
     def investigate(self, values, devices, key, secret, production_ack, backup_ack):
         self.last_investigation = None  # A failed run must not leave stale results exportable.
