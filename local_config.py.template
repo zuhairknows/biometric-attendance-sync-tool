@@ -244,6 +244,28 @@ shift_type_device_mapping = [
 
 
 # ============================================================
+# Shift Type Sync Policy (durable mode, all optional)
+# ============================================================
+#
+# last_sync_of_checkin waits only for punches that can still arrive:
+# pending/delivering punches, authentication or rate-limit retries,
+# and other retries younger than SHIFT_SYNC_RETRY_GRACE_HOURS.
+# Unmatched employees (door-access cards), rejected/held history,
+# invalid records, punches before IMPORT_START_DATE/cutover and
+# punches dated in the future (device clock errors) never block it.
+#
+# A device whose scans keep failing blocks for
+# SHIFT_SYNC_DEVICE_STALE_HOURS, then is excluded with a warning.
+# SHIFT_SYNC_IGNORED_DEVICES excludes devices immediately, e.g. a
+# reader that is temporarily replaced.
+
+SHIFT_SYNC_RETRY_GRACE_HOURS = 24
+SHIFT_SYNC_DEVICE_STALE_HOURS = 12
+SHIFT_SYNC_FUTURE_TOLERANCE_MINUTES = 10
+SHIFT_SYNC_IGNORED_DEVICES = []
+
+
+# ============================================================
 # Allowed ERPNext Exceptions
 # ============================================================
 #

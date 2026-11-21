@@ -92,11 +92,36 @@ def capture(ledger, engine, device, records=None):
     return ledger.ingest(rows, device['device_id'], fetched_at=started)
 
 
-def update_shifts(ledger, engine, stop_requested=lambda: False):
+def shift_sync_options(config):
+    """Shift Type watermark policy from optional config; defaults suit door-access readers."""
+    hours = dict(retry_grace_seconds=('SHIFT_SYNC_RETRY_GRACE_HOURS', 24, 3600),
+                 stale_device_seconds=('SHIFT_SYNC_DEVICE_STALE_HOURS', 12, 3600),
+                 future_tolerance_seconds=('SHIFT_SYNC_FUTURE_TOLERANCE_MINUTES', 10, 60))
+    options = {}
+    for key, (name, default, unit) in hours.items():
+        value = getattr(config, name, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+            raise ValueError('Invalid Shift Type sync setting: ' + name)
+        options[key] = value * unit
+    ignored = getattr(config, 'SHIFT_SYNC_IGNORED_DEVICES', ())
+    if isinstance(ignored, str) or not isinstance(ignored, (list, tuple, set)) or not all(isinstance(d, str) for d in ignored):
+        raise ValueError('SHIFT_SYNC_IGNORED_DEVICES must be a list of device_id strings')
+    options['ignored_devices'] = tuple(ignored)
+    return options
+
+
+def update_shifts(ledger, engine, stop_requested=lambda: False, boundary=None, now=None):
     if not getattr(engine.status, 'usable', True) or ledger.destination_cooldown() > time.time():
         return
+    policy = shift_sync_options(engine.config)
     for mapping in getattr(engine.config, 'shift_type_device_mapping', []):
-        watermark = ledger.safe_watermark(mapping['related_device_id'])
+        report = ledger.watermark_report(mapping['related_device_id'], boundary, now, policy)
+        watermark = report['watermark']
+        excluded = sorted(d for d, e in report['devices'].items() if e['status'] in ('stale', 'ignored'))
+        engine.info_logger.info(json.dumps(dict(event='shift_watermark', watermark=str(watermark) if watermark else None,
+                                                devices=report['devices']), sort_keys=True, default=str))
+        if excluded:
+            engine.error_logger.warning(json.dumps(dict(event='shift_watermark_devices_excluded', devices=excluded)))
         if watermark is None:
             continue
         shifts = mapping['shift_type_name']
@@ -133,6 +158,7 @@ def _run_locked(engine, stop_requested):
     engine.validate_unique_device_ids(config.devices)
     import_boundary(config.IMPORT_START_DATE)
     options = delivery_options(config)
+    shift_sync_options(config)  # Fail visibly on a bad setting before any device is touched.
     with Ledger(database_path(config)) as ledger:
         # This flag gates only polling. Delivery runs every service tick, including restarts.
         polling_due = ledger.polling_due([device.get('device_id') for device in config.devices], config.PULL_FREQUENCY, dt.datetime.now())
@@ -169,5 +195,5 @@ def _run_locked(engine, stop_requested):
         deliver_batch(ledger, client, **options, stop_requested=stop_requested, logger=engine.info_logger,
                       not_before=live_boundary, recovery_guard=recovery_guard)
         if not stop_requested():
-            update_shifts(ledger, engine, stop_requested)
+            update_shifts(ledger, engine, stop_requested, boundary=live_boundary)
         engine.info_logger.info(json.dumps(dict(event='durable_health', **ledger.diagnostics()), sort_keys=True))

@@ -264,7 +264,8 @@ class HardeningTests(unittest.TestCase):
         self.assertIsNotNone(rows[0]['payload'])
         self.assertEqual(json.loads(rows[1]['payload']), dict(employee_field_value='100',
             timestamp=str(self.boundary), device_id=DEVICE['device_id'], log_type=None, latitude=None, longitude=None))
-        self.assertLess(ledger.safe_watermark([DEVICE['device_id']]), dt.datetime(2026, 10, 12, 8))
+        # Held history is reported, not waited for; the earliest live pending punch still caps it.
+        self.assertEqual(ledger.safe_watermark([DEVICE['device_id']]), self.boundary - dt.timedelta(seconds=1))
         capture(ledger, engine, DEVICE, records=values)
         self.assertEqual(ledger.diagnostics()['total'], 3)
         self.assertEqual(ledger.diagnostics()['held_historical'], 1)

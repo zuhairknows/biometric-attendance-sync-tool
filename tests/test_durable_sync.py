@@ -291,19 +291,24 @@ class DurableSyncTests(unittest.TestCase):
         self.assertEqual(import_dump(self.ledger, path, DEVICE, apply=True)['failed'], 1)
         self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM legacy_imports').fetchone()[0], 0)
 
-    def test_watermark_never_passes_any_unresolved_or_unknown_timestamp(self):
+    def test_watermark_waits_only_for_punches_that_can_still_arrive(self):
+        # Terminal states are reported, not waited for (see test_shift_watermark_policy).
+        now = dt.datetime(2026, 10, 13, 9, 30)
         self.ingest()
-        self.assertLess(self.ledger.safe_watermark([DEVICE['device_id']]), PUNCH_TIME)
-        for state in ('pending', 'retry', 'delivering', 'unmatched_employee', 'rejected', 'invalid_record'):
+        self.assertLess(self.ledger.safe_watermark([DEVICE['device_id']], now=now), PUNCH_TIME)
+        for state, blocks in (('pending', True), ('retry', True), ('delivering', True), ('unmatched_employee', False),
+                              ('rejected', False), ('invalid_record', False), ('synced', False)):
             with self.subTest(state=state):
-                self.ledger.db.execute('UPDATE punches SET state=?', (state,))
+                self.ledger.db.execute('UPDATE punches SET state=?, first_captured=?', (state, now.timestamp()))
                 self.ledger.db.commit()
-                self.assertLess(self.ledger.safe_watermark([DEVICE['device_id']]), PUNCH_TIME)
-        self.ledger.db.execute("UPDATE punches SET state='synced'")
-        self.ledger.db.commit()
-        self.assertEqual(self.ledger.safe_watermark([DEVICE['device_id']]), dt.datetime(2026, 10, 13, 9))
+                watermark = self.ledger.safe_watermark([DEVICE['device_id']], now=now)
+                self.assertEqual(watermark, PUNCH_TIME - dt.timedelta(seconds=1) if blocks else dt.datetime(2026, 10, 13, 9))
         self.ingest([record(uid=2, timestamp='bad')])
-        self.assertIsNone(self.ledger.safe_watermark([DEVICE['device_id']]))
+        self.assertEqual(self.punch(1)['state'], 'invalid_record')
+        self.assertEqual(self.ledger.safe_watermark([DEVICE['device_id']], now=now), dt.datetime(2026, 10, 13, 9))
+        self.ledger.db.execute("UPDATE punches SET state='pending' WHERE id=?", (self.punch(1)['id'],))
+        self.ledger.db.commit()
+        self.assertIsNone(self.ledger.safe_watermark([DEVICE['device_id']], now=now))
 
     def test_watermark_requires_all_mapped_devices_and_successful_latest_scan(self):
         self.ingest()

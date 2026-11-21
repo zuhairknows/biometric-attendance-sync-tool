@@ -12,7 +12,7 @@ import sqlite3
 import sys
 from urllib.parse import quote
 
-LEDGER_SHA256 = '5e6713142f432b808c7bba50a5f55798733c5c981657e381f09576fde7bc7a2d'
+LEDGER_SHA256 = '422687e5c781d24474ad505d030c4ccef260ae78876348dafa5e5b97f20b7721'
 TARGET = Path('C:/ProgramData/ERPNextBiometricPushService/sync.sqlite3')
 SOURCE_LABEL = '<verified-sync-ledger>'
 

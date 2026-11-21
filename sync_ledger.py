@@ -9,6 +9,9 @@ SCHEMA_VERSION = 1
 STATES = ('pending', 'delivering', 'retry', 'synced', 'duplicate',
           'unmatched_employee', 'rejected', 'invalid_record')
 COMPLETED = ('synced', 'duplicate')
+# Shift Type watermark defaults; see durable_sync.shift_sync_options for the config names.
+WATERMARK_POLICY = dict(retry_grace_seconds=24 * 3600, stale_device_seconds=12 * 3600,
+                        future_tolerance_seconds=10 * 60, ignored_devices=())
 CAPTURE_FIELDS = ('identity_key', 'device_id', 'user_id', 'device_uid', 'punch_timestamp',
                   'punch_code', 'status_code', 'source_evidence', 'payload', 'state',
                   'error_category', 'error_message')
@@ -234,28 +237,70 @@ class Ledger:
                 self.db.execute('INSERT INTO device_state(device_id,last_successful_delivery) VALUES(?,?) '
                                 'ON CONFLICT(device_id) DO UPDATE SET last_successful_delivery=excluded.last_successful_delivery', (row['device_id'], now))
 
-    def safe_watermark(self, device_ids):
+    def safe_watermark(self, device_ids, boundary=None, now=None, policy=None):
+        return self.watermark_report(device_ids, boundary, now, policy)['watermark']
+
+    def watermark_report(self, device_ids, boundary=None, now=None, policy=None):
+        """Latest time up to which every punch that can still arrive has arrived.
+
+        Only punches that may still be delivered hold the watermark back: pending,
+        delivering, destination-wide retries (authentication/rate limit) and other
+        retries younger than the grace period. Terminal states (unmatched employee,
+        rejected, cutover hold, invalid record), punches before the live boundary and
+        punches dated after the scan (device clock errors) are reported, not waited for.
+        A device whose scans keep failing blocks until it is stale, then is excluded.
+        """
+        policy = dict(WATERMARK_POLICY, **(policy or {}))
+        now = dt.datetime.now() if now is None else now
+        ignored_devices = set(policy['ignored_devices'])
+        boundary_text = str(boundary.replace(microsecond=0)) if boundary else ''
+        retry_cutoff = now.timestamp() - policy['retry_grace_seconds']
+        report = dict(watermark=None, devices={})
         if not device_ids:
-            return None
+            return report
         candidates = []
         for device_id in device_ids:
+            if device_id in ignored_devices:
+                report['devices'][device_id] = dict(status='ignored')
+                continue
             device = self.db.execute('SELECT * FROM device_state WHERE device_id=?', (device_id,)).fetchone()
-            if not device or not device['fetch_ok'] or not device['last_successful_fetch']:
-                return None
-            # Permanent errors also block. An unknown timestamp cannot be ordered safely.
-            unresolved = self.db.execute("SELECT MIN(punch_timestamp),SUM(punch_timestamp IS NULL) FROM punches "
-                                         "WHERE device_id=? AND state NOT IN ('synced','duplicate')", (device_id,)).fetchone()
-            if unresolved[1]:
-                return None
-            candidate = dt.datetime.fromisoformat(device['last_successful_fetch'])
-            if unresolved[0]:
-                earliest = dt.datetime.fromisoformat(unresolved[0])
+            if not device or not device['last_successful_fetch']:
+                report['devices'][device_id] = dict(status='never_scanned')
+                return report
+            scanned = dt.datetime.fromisoformat(device['last_successful_fetch'])
+            if not device['fetch_ok']:
+                if (now - scanned).total_seconds() > policy['stale_device_seconds']:
+                    report['devices'][device_id] = dict(status='stale', last_successful_fetch=str(scanned))
+                    continue
+                report['devices'][device_id] = dict(status='scan_failed', last_successful_fetch=str(scanned))
+                return report
+            latest_valid = str(scanned.replace(microsecond=0) + dt.timedelta(seconds=policy['future_tolerance_seconds']))
+            blocking = self.db.execute(
+                "SELECT MIN(punch_timestamp),SUM(punch_timestamp IS NULL),COUNT(*) FROM punches WHERE device_id=? AND ("
+                "state IN ('pending','delivering') OR (state='retry' AND (COALESCE(error_category,'') IN ('authentication','rate_limited') "
+                "OR first_captured>=?))) AND (punch_timestamp IS NULL OR (punch_timestamp>=? AND punch_timestamp<=?))",
+                (device_id, retry_cutoff, boundary_text, latest_valid)).fetchone()
+            not_waited = self.db.execute("SELECT COUNT(*) FROM punches WHERE device_id=? AND state NOT IN ('synced','duplicate')",
+                                         (device_id,)).fetchone()[0] - blocking[2]
+            entry = dict(status='ok', last_successful_fetch=str(scanned), blocking=blocking[2], not_waited=not_waited)
+            report['devices'][device_id] = entry
+            if blocking[1]:
+                # An unknown timestamp that may still be delivered cannot be ordered safely.
+                entry['status'] = 'unknown_timestamp'
+                return report
+            candidate = scanned
+            if blocking[0]:
+                earliest = dt.datetime.fromisoformat(blocking[0])
                 if earliest < dt.datetime.min + dt.timedelta(seconds=1):
-                    return None
+                    entry['status'] = 'unknown_timestamp'
+                    return report
+                entry['earliest_blocking'] = blocking[0]
                 candidate = min(candidate, earliest - dt.timedelta(seconds=1))
             candidates.append(candidate)
-        # Frappe stores second-resolution watermarks; always round down.
-        return min(candidates).replace(microsecond=0)
+        if candidates:
+            # Frappe stores second-resolution watermarks; always round down.
+            report['watermark'] = min(candidates).replace(microsecond=0)
+        return report
 
     def shift_watermark(self, shift):
         row = self.db.execute('SELECT watermark FROM shift_state WHERE shift_name=?', (shift,)).fetchone()
