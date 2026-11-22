@@ -53,6 +53,19 @@ The dashboard adds, from stored data only:
 * **Unknown cards**: the 25 device user IDs with most `unmatched_employee` punches.
 * **Not delivered, by reason**: counts per state and error category.
 
+On the sync PC itself the live ledger folder stays private (the service refuses to
+start if another account can read it). `Install-MonitorSnapshotTask.ps1` (elevated,
+dry run unless `-Apply`) registers the scheduled task *FPF Biometric Monitor
+Snapshot*, which runs `monitor_snapshot_refresh.py` as SYSTEM with the service's
+Python every 10 minutes. It copies the ledger with the online backup API from a
+read-only connection into a staging file, checks it, and swaps it into
+`%ProgramData%\FPFBiometricMonitor\snapshot\sync.sqlite3` in one backup step, with
+a secret-free `local_config.monitor.py` and `refresh-status.json`. That folder is
+protected: SYSTEM and Administrators full control, the dashboard user read only; the
+helper sits in `bin\`, writable by administrators only. Install the dashboard with
+`-Ledger` and `-DeviceConfig` pointing at the snapshot. `-Remove -Apply` deletes the
+task and the folder. The service, its folder and the live ledger ACLs are unchanged.
+
 To review a production ledger on another PC, run `Export-MonitorSnapshot.ps1`
 (elevated) on the sync PC. It copies the ledger with SQLite's online backup API from
 a read-only connection and writes `local_config.monitor.py` without the API key,

@@ -38,6 +38,14 @@ function Invoke-Native([string]$Exe, [string[]]$Arguments, [string]$Failure) {
         Where-Object { $_ -and $_ -notmatch 'platform independent libraries' } | ForEach-Object { Write-Host "  $_" }
     if ($LASTEXITCODE -ne 0) { throw $Failure }
 }
+if (-not $PSBoundParameters.ContainsKey('Python') -and -not (Test-Path -LiteralPath $Python)) {
+    # Fall back to the Python 3.11 the sync service's venv was built from.
+    $venvCfg = "$env:ProgramFiles\FPFBiometricSyncPhase2\.venv\pyvenv.cfg"
+    if (Test-Path -LiteralPath $venvCfg) {
+        $homeLine = Get-Content -LiteralPath $venvCfg | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
+        if ($homeLine) { $Python = Join-Path ($homeLine -replace '^\s*home\s*=\s*', '').Trim() 'python.exe' }
+    }
+}
 $bundle = Split-Path -Parent $MyInvocation.MyCommand.Path
 $code = Join-Path $bundle 'code'; $wheels = Join-Path $bundle 'wheels'
 foreach ($p in $code, $wheels, $Python, $Ledger, $DeviceConfig) {
