@@ -77,5 +77,9 @@ powershell -ExecutionPolicy Bypass -File .\Update-ShiftSyncPolicy.ps1 -IgnoreDev
 powershell -ExecutionPolicy Bypass -File .\Update-ShiftSyncPolicy.ps1 -ResendMissing -Apply -WaitMinutes 15
 ~~~
 
+The same script installs the unmatched-card re-check (`-RecheckDays`), adds Shift Types
+to the mapping (`-AddShifts`) and moves the log folder (`-MoveLogsTo`); see
+`docs/sync-pc-cleanup.md`.
+
 Once the date moves, ERPNext's hourly Auto Attendance creates attendance from
 each shift's *Process Attendance After* onwards.
