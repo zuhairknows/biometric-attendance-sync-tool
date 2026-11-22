@@ -35,7 +35,7 @@ See [release review](phase1-release-review.md) and the [controlled cutover runbo
 | Delivery | Loop through records following log checkpoint; abort device on unfamiliar error | Claim committed pending/due retry rows in bounded batches; permanent errors do not stop later records |
 | Checkin | POST `hrms.hr.doctype.employee_checkin.employee_checkin.add_log_based_on_employee_field` for version >13, otherwise `erpnext` | Same endpoint selection, six payload fields, request timeout and local timestamp semantics |
 | Duplicate | HTTP 417 plus exact known Checkin duplicate message; write successful checkpoint | Same specific recognition; completed `duplicate` state, never every 417 |
-| Unmatched/inactive | Default allowlist `[1,2,3]` continues after these errors without successful delivery | Durable `unmatched_employee` / `rejected`; not successful and not automatically retried |
+| Unmatched/inactive | Default allowlist `[1,2,3]` continues after these errors without successful delivery | Durable `unmatched_employee` / `rejected`; not successful. Inactive is not retried; unmatched cards are re-checked (below) |
 | Status | PickleDB `status.json`: pull/push, lift-off, mission-accomplished, Shift Type timestamps | Durable polling/capture/delivery use SQLite; legacy JSON is a read-only shift-floor snapshot, not a recovery dependency |
 | Shift Type | Earliest mapped-device pull timestamp if each push timestamp is nonempty | Latest successful scan must exist for every mapped device, capped before every unresolved punch |
 | Windows | `ERPNextBiometricPushService`, direct Python interpreter hosting, wrapper calls `main()` then sleeps 15 seconds | Same name/hosting/install; optional stop callback and interruptible existing stop-event wait |
@@ -188,7 +188,13 @@ response/crash is retried after backoff/lease; a known duplicate finishes it saf
 * Connection/DNS/timeout: `retry`, fixed safe transport message.
 * HTTP 408, 429 and 5xx: `retry`; stop destination requests for the calculated cooldown.
 * HTTP 401/403: `retry`, at least 900-second destination cooldown by default.
-* HTTP 400/417 with known missing mapping: `unmatched_employee`.
+* HTTP 400/417 with known missing mapping: `unmatched_employee`. With confirmation
+  reads verified, each such card is looked up again (one Employee read per card, at
+  most every `UNMATCHED_RECHECK_HOURS`, 6). Once exactly one Active Employee has that
+  device ID, its unmatched punches dated in the last `UNMATCHED_RECHECK_DAYS` (30;
+  0 turns this off) become `retry` / `employee_recheck` and are POSTed again as
+  ordinary sends: the 417 proved nothing was created. Covers a card enrolled on a
+  device before its Employee was created.
 * HTTP 400/417 with known inactive employee: `rejected`.
 * Other HTTP 400/417/422: `rejected`, never successful duplicate by status alone.
 * Unfamiliar routing/response statuses or HTTP 200 without a document name:

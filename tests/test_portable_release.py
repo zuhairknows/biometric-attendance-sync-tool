@@ -207,7 +207,10 @@ class ConfigStateTests(unittest.TestCase):
                (dict(DURABLE_CONFIRM_READS_VERIFIED=False), "resend_requires_verified_reads"),
                (dict(DURABLE_SERVER_REVIEW_REFERENCE=" "), "resend_requires_verified_reads"),
                (dict(DURABLE_RESEND_VERIFIED_MISSING="yes"), "resend_requires_verified_reads"),
-               (dict(DURABLE_RESEND_SETTLE_SECONDS=59), "resend_settle_invalid")]
+               (dict(DURABLE_RESEND_SETTLE_SECONDS=59), "resend_settle_invalid"),
+               (dict(UNMATCHED_RECHECK_DAYS=-1), "unmatched_recheck_invalid"),
+               (dict(UNMATCHED_RECHECK_HOURS=0), "unmatched_recheck_invalid"),
+               (dict(UNMATCHED_RECHECK_DAYS=True), "unmatched_recheck_invalid")]
         for change, error in bad:
             with self.subTest(change=change):
                 self.values.update(good, **change)

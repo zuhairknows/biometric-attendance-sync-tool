@@ -247,6 +247,9 @@ def configuration(path):
                 and isinstance(reference, str) and reference.strip(), "resend_requires_verified_reads")
     settle = values.get("DURABLE_RESEND_SETTLE_SECONDS", 600)
     require(type(settle) in (int, float) and settle >= 60, "resend_settle_invalid")
+    days, hours = values.get("UNMATCHED_RECHECK_DAYS", 30), values.get("UNMATCHED_RECHECK_HOURS", 6)
+    require(type(days) in (int, float) and days >= 0 and type(hours) in (int, float) and hours >= 0.25,
+            "unmatched_recheck_invalid")
     return values
 
 

@@ -151,6 +151,29 @@ class FrappeClient:
             pass  # Remote messages, names, URLs and credentials never enter failure diagnostics.
         return 'unknown', None
 
+    def employee_status(self, device_user_id, before_request=None):
+        """'active', 'missing' (exactly no Employee, or not Active) or 'unknown' on any doubt."""
+        if not self.confirmation_verified:
+            return 'unknown'
+        try:
+            if before_request is not None and not before_request():
+                return 'unknown'
+            response = self.request('GET', self.resource_url + 'Employee', headers=self.headers,
+                params=dict(fields=json.dumps(['name', 'status', 'attendance_device_id']),
+                            filters=json.dumps([['attendance_device_id', '=', device_user_id]]), limit_page_length=2),
+                timeout=self.timeout, allow_redirects=False)
+            if response.status_code != 200:
+                return 'unknown'
+            rows = response_data(response).get('data')
+            if not isinstance(rows, list) or len(rows) > 1:
+                return 'unknown'
+            if (len(rows) == 1 and rows[0].get('status') == 'Active'
+                    and rows[0].get('attendance_device_id') == device_user_id):
+                return 'active'
+            return 'missing'
+        except Exception:
+            return 'unknown'  # Remote messages and credentials never enter diagnostics.
+
     def confirm(self, payload, before_request=None):
         """Positive identity proof only. Empty/filtered/failed reads never permit another POST."""
         if not self.confirmation_verified:
@@ -224,6 +247,40 @@ def _resolve_uncertain(ledger, client, row, payload, pace, clock, logger):
     return outcome, guidance
 
 
+def recheck_unmatched(ledger, client, since, interval_seconds, checked, rate=2, max_cards=10,
+                      clock=time.time, sleep=time.sleep, stop_requested=lambda: False, logger=None):
+    """Look up cards whose punches had no Employee; requeue them when one now exists.
+
+    One Employee read per card, at most once per interval (`checked` maps card -> last
+    read), so unknown cards cost a few reads a day, never a resend of every punch.
+    """
+    if not getattr(client, 'confirmation_verified', False):
+        return 0
+    requeued, reads, last_request = 0, 0, None
+    def pace():
+        nonlocal last_request
+        if not wait_for_slot(last_request, rate, clock, sleep, stop_requested):
+            return False
+        last_request = clock()
+        return True
+    for card in ledger.unmatched_cards(since):
+        if reads >= max_cards or stop_requested():
+            break
+        if clock() - checked.get(card, float('-inf')) < interval_seconds:
+            continue
+        reads += 1
+        status = client.employee_status(card, before_request=pace)
+        if status == 'unknown':
+            break  # Destination trouble: try again next tick, never guess.
+        checked[card] = clock()
+        if status == 'active':
+            count = ledger.requeue_unmatched(card, since, clock())
+            requeued += count
+            if logger:
+                logger.info(json.dumps(dict(event='durable_unmatched_requeued', punches=count)))
+    return requeued
+
+
 def deliver_batch(ledger, client, batch_size=100, rate=2, base=30, maximum=3600,
                   auth_cooldown=900, lease_seconds=120, clock=time.time,
                   sleep=time.sleep, stop_requested=lambda: False, logger=None, not_before=None,
@@ -263,7 +320,8 @@ def deliver_batch(ledger, client, batch_size=100, rate=2, base=30, maximum=3600,
             processed += 1
             continue
         # A crash, timeout or 5xx can hide a remote commit. Never blindly POST it again.
-        needs_confirmation = row['attempt_count'] > 1 and row['error_category'] not in ('authentication', 'rate_limited', 'peer_uncertain')
+        needs_confirmation = row['attempt_count'] > 1 and row['error_category'] not in (
+            'authentication', 'rate_limited', 'peer_uncertain', 'employee_recheck')
         guarded = None
         if recovery_guard and ledger.recovery_overlap(row):
             guarded = recovery_guard(row, pace_confirmation_read)
