@@ -1,0 +1,138 @@
+{
+  "api_requests_made": 0,
+  "blockers": [],
+  "completed_at": "2026-10-18T11:24:06.624198+00:00",
+  "contract_sha256": "041cd61d8935ae0cf7a34b452de7cdf2900e90a747346eaab12e369fc02f5b60",
+  "destination_observation_sha256": "dce442fa5bf6f14cfa7fa3dd55d61100a92338d91c0545e17e29146c47f04f12",
+  "destination_observed_counts": {
+    "checkins": 1,
+    "employee_lookups": 1,
+    "employee_matches": 1
+  },
+  "device_ids": [
+    "FP1_DEVICE_01",
+    "FP2_DEVICE_08",
+    "FP2_DEVICE_11"
+  ],
+  "evidence_file_sha256": "943d83fdadfb5ce978bf0e08bebd81a06fc5676a9d183b1e52d19179c4876b8e",
+  "execution_supported": false,
+  "export_provenance": {
+    "checkins": {
+      "count_reference": "SYNTHETIC independent database count",
+      "count_verified": true,
+      "coverage_end": "2026-10-11 23:59:59",
+      "coverage_start": "2026-10-11 00:00:00",
+      "created_at": "2026-10-12T00:00:00+03:00",
+      "filters": [
+        [
+          "time",
+          ">=",
+          "2026-10-11 00:00:00"
+        ],
+        [
+          "time",
+          "<=",
+          "2026-10-11 23:59:59"
+        ]
+      ],
+      "includes_inactive": null,
+      "independent_count": 1,
+      "origin": "https://manager.example.test"
+    },
+    "employees": {
+      "count_reference": "SYNTHETIC independent database count",
+      "count_verified": true,
+      "coverage_end": null,
+      "coverage_start": null,
+      "created_at": "2026-10-12T00:00:00+03:00",
+      "filters": [],
+      "includes_inactive": true,
+      "independent_count": 1,
+      "origin": "https://manager.example.test"
+    }
+  },
+  "historical_holds": 0,
+  "input_hashes": {
+    "checkins": "ef93e930e87cba23fb7d0f88c26362bbe66d55b882e85ec13f6c1145ee2555ae",
+    "employees": "8959fe5f122f318512bd03386132cbe79e8db99d18db9838040147b8e6b6104a",
+    "evidence": "943d83fdadfb5ce978bf0e08bebd81a06fc5676a9d183b1e52d19179c4876b8e",
+    "snapshot": "912a31dec34c543c7306938751afbfaeaa0e8b69f47cc98fff8e25111e0e5a65"
+  },
+  "label": "Offline comparison \u2014 Not authorized for recovery",
+  "limitations": [
+    "Only punches present in this ledger are investigated; device history is not fetched.",
+    "Unknown source timestamps are included for review regardless of the requested range.",
+    "Visibility, deployed rules, historical payload policy and quiescence are reviewed assertions.",
+    "Current employee status/mapping does not prove historical employment or assignment.",
+    "Results are point-in-time evidence, never recovery authorization; historical holds remain unchanged.",
+    "All selected evidence is held in memory; split very large investigations into smaller ranges.",
+    "File hashes bind the export set; no live destination reads or repeat API scans were performed.",
+    "Completeness, database equality and deployed comparison rules depend on independent administrator evidence.",
+    "CSV blank cells cannot distinguish SQL NULL without the reviewed encoding evidence.",
+    "Offline comparison \u2014 Not authorized for recovery"
+  ],
+  "matching_policy": {
+    "duplicate_key": "employee_time_log_type",
+    "site_timezone": "Asia/Riyadh",
+    "timestamp_precision": "seconds"
+  },
+  "per_device": {
+    "FP1_DEVICE_01": {
+      "already_existing": 1,
+      "ambiguous": 0,
+      "duplicate_source": 0,
+      "invalid": 0,
+      "potentially_missing": 0,
+      "records": 1,
+      "unable_to_verify": 0,
+      "unmatched_employee": 0
+    },
+    "FP2_DEVICE_08": {
+      "already_existing": 0,
+      "ambiguous": 0,
+      "duplicate_source": 0,
+      "invalid": 0,
+      "potentially_missing": 1,
+      "records": 1,
+      "unable_to_verify": 0,
+      "unmatched_employee": 0
+    },
+    "FP2_DEVICE_11": {
+      "already_existing": 0,
+      "ambiguous": 0,
+      "duplicate_source": 0,
+      "invalid": 0,
+      "potentially_missing": 1,
+      "records": 1,
+      "unable_to_verify": 0,
+      "unmatched_employee": 0
+    }
+  },
+  "purpose": "offline_comparison",
+  "range_end": "2026-10-11 23:59:59",
+  "range_inclusive": true,
+  "range_start": "2026-10-11 00:00:00",
+  "recovery_authorized": false,
+  "reports": [
+    {
+      "file": "details.csv",
+      "sha256": "0b20a84f5d2ab73e9488ec5ab1f042ec1d9e6519de143b50cefdafc76999e6c2"
+    }
+  ],
+  "sample_only": true,
+  "schema": "attendance-offline-comparison-v1",
+  "source_snapshot_sha256": "f29644b490f9771393bfd6429c6c4bdf92013e91b60bc8f7a0e0f37dcacda8e6",
+  "started_at": "2026-10-18T11:24:06.624198+00:00",
+  "status": "complete",
+  "totals": {
+    "already_existing": 1,
+    "ambiguous": 0,
+    "duplicate_source": 0,
+    "invalid": 0,
+    "potentially_missing": 2,
+    "records": 3,
+    "unable_to_verify": 0,
+    "unmatched_employee": 0
+  },
+  "unverified_claims": []
+}

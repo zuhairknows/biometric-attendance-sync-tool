@@ -1,0 +1,100 @@
+Phase 2 monitoring ACL compatibility - DEVELOPMENT ONLY
+Date: 2026-10-21
+Baseline: 69ba77f87e73b13ba89ac44bbbfa9c57332a3e84; branch: recovery
+New local commit is the Git commit containing this report; baseline is preserved.
+
+FINAL RESULTS: focused 25/25; full suite 780/780; release checks 12/12.
+No failures, errors or skips. Full suite: 305.905 seconds.
+Python 3.11.9 x64; all frozen accepted dependencies match; pip check clean.
+
+Scope: synthetic device/ERPNext/ledger fixtures and loopback HTTP/TLS only.
+Native descriptor/Authz and local LSA adapter checks use the development token.
+LocalSystem/S4U monitor context and group policy execution are mocked in adapter tests.
+Actual LocalSystem + approved monitor token, SCM lifecycle and reboot: NOT TESTED.
+No machine permissions, services, production systems, credentials, private config,
+production ledger, recovery activation, remote Git refs or main were changed.
+No new-candidate fresh-clone validation was performed. The isolated venv is new;
+the historical baseline fresh-clone results do not certify this new candidate.
+
+GO: development compatibility candidate for review and isolated Windows acceptance.
+NO-GO: production replacement or live historical recovery.
+Remaining blockers: actual SID/group/privilege/S4U/LSA acceptance; complete child,
+configuration and ancestor ACL inventory; real monitor SQLite reads under an
+isolated writer; SCM start/stop/interruption/restart/mutex/state/rollback; reboot.
+
+Runtime source SHA-256 at final test run:
+c677c6ebd664e814548b81f0389beb2684cc606ba92b4a7c165aef3fce8aaa67  durable_startup.py
+50becdebeb006b2f150ddff72dafac940201bc4d33ed52a5669f07f7aa18923f  durable_sync.py
+97f379be67e3605b671f0faa4f74adc84fd158866f60ddd5f87ec177d9af3578  historical_attendance/service_recovery.py
+99af4cfc22a80bb6da03130e848640d261cc3a3d477c6a5dd462e72c4e9b1e24  monitor_storage.py
+be77efdb9883d3a623939dafa9fe166702b4eec26264f539bd7f931baf74a40f  monitor_storage_windows.py
+
+--- environment.txt ---
+3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]
+Windows-10-10.0.26200-SP0
+pointer_bits= 64
+All frozen accepted dependency versions match.
+No broken requirements found.
+
+--- focused.txt ---
+test_bad_policy_stops_before_writable_ledger_or_device_access (test_monitor_storage_policy.IntegrationTests.test_bad_policy_stops_before_writable_ledger_or_device_access) ... ok
+test_exception_cannot_reuse_unrestricted_service_sid (test_monitor_storage_policy.IntegrationTests.test_exception_cannot_reuse_unrestricted_service_sid) ... ok
+test_native_failure_timeout_unknown_sid_or_incomplete_receipt_fails_closed (test_monitor_storage_policy.IntegrationTests.test_native_failure_timeout_unknown_sid_or_incomplete_receipt_fails_closed) ... ok
+test_only_service_configuration_binds_canonical_ledger (test_monitor_storage_policy.IntegrationTests.test_only_service_configuration_binds_canonical_ledger) ... ok
+test_recovery_disabled_never_opens_monitor_or_inbox_paths (test_monitor_storage_policy.IntegrationTests.test_recovery_disabled_never_opens_monitor_or_inbox_paths) ... ok
+test_role_collision_invalid_and_noncanonical_settings_fail (test_monitor_storage_policy.IntegrationTests.test_role_collision_invalid_and_noncanonical_settings_fail) ... ok
+test_unset_policy_retains_strict_callback (test_monitor_storage_policy.IntegrationTests.test_unset_policy_retains_strict_callback) ... ok
+test_non_system_inspection_fails_before_account_resolution (test_monitor_storage_policy.NativeDescriptorTests.test_non_system_inspection_fails_before_account_resolution) ... ok
+test_windows_mapping_and_real_current_token_authz_without_acl_mutation (test_monitor_storage_policy.NativeDescriptorTests.test_windows_mapping_and_real_current_token_authz_without_acl_mutation) ... ok
+test_all_immediate_children_and_configuration_are_inspected_and_handles_closed (test_monitor_storage_policy.NativeInspectionAdapterTests.test_all_immediate_children_and_configuration_are_inspected_and_handles_closed) ... ok
+test_cloud_colocation_and_child_limit_fail_closed (test_monitor_storage_policy.NativeInspectionAdapterTests.test_cloud_colocation_and_child_limit_fail_closed) ... ok
+test_local_ntfs_and_reparse_restrictions_precede_authz (test_monitor_storage_policy.NativeInspectionAdapterTests.test_local_ntfs_and_reparse_restrictions_precede_authz) ... ok
+test_native_s4u_or_lsa_failure_is_not_silently_downgraded (test_monitor_storage_policy.NativeInspectionAdapterTests.test_native_s4u_or_lsa_failure_is_not_silently_downgraded) ... ok
+test_recovery_author_group_or_sid_history_membership_is_refused (test_monitor_storage_policy.NativeInspectionAdapterTests.test_recovery_author_group_or_sid_history_membership_is_refused) ... ok
+test_unknown_group_privileged_and_service_accounts_fail_closed (test_monitor_storage_policy.NativeInspectionAdapterTests.test_unknown_group_privileged_and_service_accounts_fail_closed) ... ok
+test_configuration_and_ancestor_replacement_cannot_hide_in_logon_groups (test_monitor_storage_policy.PolicyTests.test_configuration_and_ancestor_replacement_cannot_hide_in_logon_groups) ... ok
+test_directory_creation_and_delete_child_are_not_traversal (test_monitor_storage_policy.PolicyTests.test_directory_creation_and_delete_child_are_not_traversal) ... ok
+test_group_effective_access_and_localsystem_rights (test_monitor_storage_policy.PolicyTests.test_group_effective_access_and_localsystem_rights) ... ok
+test_no_excessive_direct_inherited_split_or_generic_allow (test_monitor_storage_policy.PolicyTests.test_no_excessive_direct_inherited_split_or_generic_allow) ... ok
+test_other_children_activation_and_sidecars_get_no_read_exception (test_monitor_storage_policy.PolicyTests.test_other_children_activation_and_sidecars_get_no_read_exception) ... ok
+test_production_directory_and_ledger_shapes (test_monitor_storage_policy.PolicyTests.test_production_directory_and_ledger_shapes) ... ok
+test_propagation_inherit_only_and_unsupported_aces_refused (test_monitor_storage_policy.PolicyTests.test_propagation_inherit_only_and_unsupported_aces_refused) ... ok
+test_sid_shape_rejects_services_privileged_rids_and_noncanonical_aliases (test_monitor_storage_policy.PolicyTests.test_sid_shape_rejects_services_privileged_rids_and_noncanonical_aliases) ... ok
+test_unknown_principals_and_monitor_owner_fail (test_monitor_storage_policy.PolicyTests.test_unknown_principals_and_monitor_owner_fail) ... ok
+test_user_resolution_groups_and_privileges (test_monitor_storage_policy.PolicyTests.test_user_resolution_groups_and_privileges) ... ok
+
+----------------------------------------------------------------------
+Ran 25 tests in 0.248s
+
+OK
+
+--- full-suite.txt ---
+Biometric Manager: http://127.0.0.1:8765 (Ctrl+C stops only this manager)
+{"270334": "CONFIRMED", "270480": "CONFIRMED"}
+----------------------------------------------------------------------
+Ran 780 tests in 305.905s
+
+OK
+
+--- release-checks.txt ---
+test_approved_production_investigation_compares_without_post (test_historical_release.ReleaseTests.test_approved_production_investigation_compares_without_post) ... ok
+test_every_prerequisite_is_independently_required (test_historical_release.ReleaseTests.test_every_prerequisite_is_independently_required) ... ok
+test_expired_future_nonfinite_and_overlong_release_refused (test_historical_release.ReleaseTests.test_expired_future_nonfinite_and_overlong_release_refused) ... ok
+test_hash_and_storage_checks_are_mandatory (test_historical_release.ReleaseTests.test_hash_and_storage_checks_are_mandatory) ... ok
+test_release_never_overrides_unknown_visibility (test_historical_release.ReleaseTests.test_release_never_overrides_unknown_visibility) ... ok
+test_verified_release_is_site_contract_ledger_and_code_bound (test_historical_release.ReleaseTests.test_verified_release_is_site_contract_ledger_and_code_bound) ... ok
+test_budget_passes_absolute_remaining_to_service_transport (test_historical_release.TransportTests.test_budget_passes_absolute_remaining_to_service_transport) ... ok
+test_inflight_cancellation_closes_socket_without_retry (test_historical_release.TransportTests.test_inflight_cancellation_closes_socket_without_retry) ... ok
+test_real_manager_http_to_existing_service_cycle_and_verified_tls_result (test_historical_release.TransportTests.test_real_manager_http_to_existing_service_cycle_and_verified_tls_result)
+Real browser HTTP, existing polling cycle, durable intent and real TLS. ... ok
+test_real_tls_json_and_no_dns_proxy_or_redirect (test_historical_release.TransportTests.test_real_tls_json_and_no_dns_proxy_or_redirect) ... ok
+test_trickling_body_is_interrupted_at_absolute_deadline (test_historical_release.TransportTests.test_trickling_body_is_interrupted_at_absolute_deadline) ... ok
+test_untrusted_certificate_and_disabled_verification_are_refused (test_historical_release.TransportTests.test_untrusted_certificate_and_disabled_verification_are_refused) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 7.171s
+
+OK
+
+--- lsa-adapter.txt ---
+Synthetic absent SID local LSA result: 2

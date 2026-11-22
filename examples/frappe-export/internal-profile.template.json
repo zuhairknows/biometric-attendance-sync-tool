@@ -1,0 +1,6 @@
+{
+  "unix_socket": "/run/mysqld/mysqld.sock",
+  "database": "REPLACE_with_approved_site_database",
+  "user": "REPLACE_with_existing_select_only_account",
+  "mysql_uid": 0
+}

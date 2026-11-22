@@ -1,0 +1,359 @@
+# Manager ledger-read diagnosis and ordinary-user startup
+
+## Finding and scope
+
+The production root cause is **not established** by the reported symptoms. The old
+message hid every exception from this path:
+
+`POST /refresh -> State.start -> Controller.dashboard -> Ledger(readonly=True)`
+`-> schema validation -> BEGIN -> full integrity/foreign-key checks -> counts -> display`
+
+The caught exception was returned as a generic dashboard error; it never escaped
+to the manager console. SQLite quick_check does not validate the expected ledger
+schema, foreign-key relationships or diagnostic timestamp rendering. Administrator
+membership also does not establish the actual process token's file/sidecar access.
+
+The manager uses mode=ro, query_only and the existing ten-second busy timeout. It
+does not switch journal mode, checkpoint WAL, use immutable mode, repair the source
+or take the service writer mutex. No new retry/polling loop is added. Ordinary
+rollback-journal and WAL writers are covered by synthetic Windows tests. An
+exclusive writer can still exceed SQLite's wait and correctly report Unavailable.
+
+Confirmed development defect: health/counts could be published before formatting
+all device diagnostics succeeded. A later rendering error left partial results
+marked OK. Publication now occurs only after the complete read/format operation.
+A synthetic invalid device-delivery epoch reproduces the defect, but is **not**
+claimed as production evidence or a reason to modify production values.
+
+## Read the diagnostic, do not bypass the check
+
+The refresh route supplies its approved startup profile to the existing private
+diagnostic writer. Default location is the profile directory; an existing approved
+diagnostics_directory can select another private location. The directory must be
+outside service/input directories and pass existing output/ACL checks. No directory
+or ACL is created or repaired by refresh. Direct Controller.dashboard callers can
+pass values=profile to enable the same logging.
+
+Each manual refresh writes monitor-<random-reference>.jsonl with reference,
+stage, code and event. SQLite failures in monitor_open_schema additionally contain
+an allowlisted operation and integer sqlite_code/sqlite_primary (see below).
+No paths, credentials, employee/device identifiers, attendance
+timestamps, records, exception text or traces are logged. Browser failures show the
+fixed stage/code and reference. If logging fails, a separate safe warning appears;
+the actual ledger failure is still shown. There is no public/console/temp fallback.
+
+| Stage/code | What it establishes / next read-only check |
+| --- | --- |
+| monitor_path | Configured path was rejected; check the private profile's absolute path. |
+| monitor_open_schema / sqlite_cantopen | SQLite reported CANTOPEN during source open/schema validation, which also opens an in-memory reference database. It does not identify the failing operation or distinguish missing file from access/other failures. Use the targeted probe below. |
+| any stage / sqlite_busy or sqlite_locked | SQLite reported lock contention; retry manually after startup/active work. Do not stop the service or change journal mode. |
+| monitor_open_schema / source_schema_* | The source failed exact schema/version checks; independently compare deployed versions/schema. Do not migrate or weaken validation. |
+| monitor_integrity / source_integrity_failed or source_foreign_keys_failed | Full integrity/foreign-key checks failed, even if quick_check passed. Preserve the source and approved backup; escalate for separate review. |
+| any stage / sqlite_ioerr, sqlite_readonly, sqlite_corrupt or sqlite_notadb | SQLite returned that error category. Obtain read-only account/storage/journal evidence; the code alone does not establish its underlying cause. |
+| monitor_counts | Failure while reading ledger/device diagnostic queries. |
+| monitor_display / diagnostic_value_invalid | Stored diagnostic values could not be rendered. Health stays Unavailable; do not edit source values as a workaround. |
+
+Collect only the reference/stage/code and running manager commit/version for review.
+Record Python/SQLite versions using that manager's interpreter, without opening
+the ledger or importing production configuration. First set $manager to the
+approved checkout path of the running manager:
+
+```powershell
+& "$manager\.venv\Scripts\python.exe" -I -S -B -c "import sys,sqlite3; print(sys.version.split()[0], sqlite3.sqlite_version)"
+```
+
+Do not send raw exception traces, configuration files or attendance records. The
+new diagnosis must be observed on IT-SUPPORT after separate deployment approval
+before identifying the production root cause.
+
+### Follow-up: `monitor_open_schema / sqlite_cantopen` at 38dac219
+
+The reported successful mode=ro/quick_check test, DELETE journal mode and absence
+of WAL/SHM do not establish the failing operation. The constructor opens the
+source using `Path.as_uri() + '?mode=ro'` with uri=True and timeout=10; then sets
+connection-local busy_timeout/foreign_keys, reads sqlite_master/schema_version,
+builds an in-memory reference schema and validates source definitions and the
+destination singleton. It creates no source directories, backups or temporary
+files and does not request immutable mode or change journal mode. SQLite itself
+can still report access/recovery errors while reading an existing database.
+`PRAGMA user_version=0` is normal: the ledger uses its own schema_version table.
+Schema mismatches normally produce source_schema_* rather than sqlite_cantopen.
+The monitor snapshot transaction and full integrity checks happen **after** this
+stage. The current error category retains only the primary SQLite code (14), so
+it cannot identify a specific open/schema operation or extended CANTOPEN cause.
+There is no evidence yet justifying a connection, permission or journal change.
+
+After reviewing the standalone `scripts/probe_manager_ledger.py`, transfer only
+that file to the operator's Downloads directory; do not update either installed
+application. Run this one diagnostic command in the same account/session as the
+manager, supplying the actual running checkout and its actual private profile:
+
+```powershell
+$manager = Read-Host 'Actual running manager checkout'
+$profile = Read-Host 'Exact private profile used to start that manager'
+& "$manager\.venv\Scripts\python.exe" -I -S -B "$env:USERPROFILE\Downloads\probe_manager_ledger.py" $manager $profile
+```
+
+The probe rejects a different configured ledger or changed sync_ledger source
+(pinned reviewed SHA-256; CRLF/LF normalized). It compares the manager URI and a
+percent-escaped short file URI, reads schema metadata and runs the **same** Ledger
+constructor read-only. The only non-source SQLite connection is `:memory:` for
+the existing reference schema. It imports no production configuration, performs
+no integrity scan or network/service/device operation and writes no reports.
+Source connections use timeout=10 (a lock wait, not an overall deadline). Run it
+once, without a retry loop. Do not change ACLs or journal mode if it fails.
+This procedure applies to the reported DELETE-journal ledger without WAL/SHM.
+Do not use it if that prerequisite has changed: mode=ro protects database content,
+but is not a general guarantee against SQLite-managed shared-memory sidecar
+activity in WAL mode. The probe does not change or enforce journal mode.
+
+Share only its fixed JSON output: step, PASS/FAIL, Python/SQLite versions, numeric
+SQLite primary/extended code, SQLite error name and trusted ledger method/line.
+There are no paths, SQL, records, credentials or raw exceptions. Source binding
+failure means stop and review profile/source version independently. A source URI
+failure versus a constructor failure identifies where to investigate next; an
+extended error code is evidence, not a complete diagnosis. All PASS means only
+that this fresh isolated process passed the metadata/constructor checks at that
+moment, not that the running manager passed full integrity checks. If everything
+passes, the original manager process/environment or transient failure remains
+unverified. Do not weaken validation or assume a WAL/ACL cause.
+
+Follow-up synthetic validation: eight new probe tests cover source binding,
+URI escaping, user_version=0, unchanged source/files, incomplete schema despite
+quick_check=ok, extended CANTOPEN location, missing source and a reserved service
+writer. The full relevant suite passed **572 tests in 125.059 seconds**. No manager,
+Phase 1, service, ledger-state or recovery execution code changed for this probe.
+
+### Passing probe, failing web refresh: targeted operation diagnostic
+
+The subsequent IT-SUPPORT evidence establishes that the separate probe passes,
+but not which statement fails inside the running manager. The production cause
+remains unproven. The web path is `/refresh` -> `State.start` -> one new background
+thread -> `Controller.dashboard` -> `Ledger(readonly=True)`. The per-manager lock
+rejects overlapping jobs. Each refresh creates one source connection and one
+`:memory:` reference connection, and closes them; it does not reuse a connection
+created on another thread. The probe instead opens the source three times
+sequentially (two URI tests and the exact constructor). The web transaction,
+query_only and integrity checks start only after monitor_open_schema succeeds.
+No manager SQLite overrides, temporary-directory settings or environment changes
+were found in this monitoring path. The probe's fresh `-I -S` process and the
+manager's long-running application/job-thread context differ; neither proves
+an environmental cause. PID parent/child evidence alone does not establish one.
+
+The diagnostic update inspects only trusted Ledger failure frames and matches
+their exact statement against fixed labels. It adds no DB connections, callbacks,
+retries, locks, changes to Phase 1 or duplicated schema validation. Unknown/missing
+source metadata produces `operation: unknown`; the original error is retained.
+Only a monitor_open_schema SQLite failure can add these three fields to its
+private JSONL record (offline/recovery records retain their four-field schema):
+
+```json
+{"reference":"<existing random reference>","stage":"monitor_open_schema","code":"sqlite_cantopen","event":"failed","operation":"reference_connect","sqlite_code":782,"sqlite_primary":14}
+```
+
+This is a synthetic example, **not production evidence**. The browser shows the
+same safe operation and integer codes. Labels distinguish source_connect,
+source_busy_timeout, source_foreign_keys, source_tables, source_schema_version,
+reference_connect, reference_schema_build, reference_schema_read,
+source_schema_compare, source_destination_state, reference_close and
+source_close_on_error. Execute/fetch/iteration failures belong to their containing
+statement. No source statement, path, traceback, environment value or record is
+serialized. Existing private ACL/path checks and logging-failure warnings remain.
+
+Synthetic tests distinguish these twelve locations, including extended code 782,
+and exercise a real background refresh failure followed by repeated successful
+jobs. Existing reserved/committing/exclusive-writer tests remain: exclusive lock
+timeout returns SQLITE_BUSY (5), so contention alone is not evidence explaining
+the observed SQLITE_CANTOPEN (14). No lock/journal/retry correction is justified.
+After a separately approved deployment, refresh once and collect only the failed
+record and matching reference. This identifies the SQLite statement and extended
+code needed for the next narrow diagnosis; do not change the ledger or service.
+Validation: **577 relevant tests passed in 125.526 seconds**, including Phase 1,
+monitor-only/CSRF/Host restrictions, investigation, offline, recovery and concurrent
+SQLite writer regressions. This is synthetic evidence, not a production diagnosis.
+
+### Source-connect failure with an equivalent standalone connection passing
+
+The reviewed web path has no ledger substitution, temporary database, credential
+or environment override. The SCM query opens/query/closes service handles; it does
+not impersonate another account or change the working directory. The approved
+startup profile resolves the path once, State copies it, and /refresh passes that
+value unchanged. Its worker creates the connection on the thread that uses it.
+The same reviewed Ledger statement uses Path.as_uri() + '?mode=ro', uri=True and
+timeout=10. There is no confirmed correction to make to that connection policy.
+
+On **source_connect failure only**, the same private record now includes one
+`source_binding` object. Its keys are fixed; values are true/false/null only:
+
+| Flag | Comparison performed locally in the failing refresh worker |
+| --- | --- |
+| argument_equals_profile | Actual failing Ledger path, dashboard argument and supplied profile produce exactly the same URI. |
+| resolved_equals_profile | Actual failing path and profile resolve to exactly the same URI. |
+| resolved_equals_probe_target | Actual path resolves to the production ledger target already enforced by the successful standalone probe. |
+| uri_equals_probe | Actual constructor URI exactly matches the resolved target URI used by that probe, including mode=ro. |
+| readonly_argument | The trusted failing Ledger constructor received readonly=True. |
+| builtin_sqlite_connect | sqlite3.connect is the underlying _sqlite3.connect, without a Python-level connector replacement. |
+| background_thread | The failure occurred outside the process main thread. |
+
+The path/readonly values come from the trusted failing constructor frame, not just
+the intended configuration. URI arguments are reconstructed from that frame and
+the reviewed statement; there is no global interception of SQLite. Comparisons
+read path metadata but never open another SQLite connection. No path, URI, hash,
+process environment value, record or trace is emitted. A null flag means the
+comparison was unavailable. These comparisons do not authorize another target.
+
+If argument/profile flags differ, investigate the web binding. If only the probe
+target flags differ, the failed job is not using the exact URI/target tested by
+that probe (even a spelling difference is reported). If all path flags and
+readonly/builtin flags are true, path/argument substitution is not supported as
+the cause of that failure; a process/OS/transient access cause remains unverified.
+A background-thread flag alone does not establish a threading defect. After
+separate review/deployment approval, collect this record from one manual refresh;
+do not repeat standalone connection tests, retry inside the app or change SQLite,
+permissions, service state, journal mode or the existing recovery gates.
+Validation: **582 relevant tests passed in 118.899 seconds**. New synthetic cases
+cover actual-frame source substitution, matching probe/profile bindings, private
+metadata validation and the real background refresh/form-override boundary.
+
+### Main-thread/worker comparison retained only as a local test fixture
+
+The manager imports sqlite3 on the main thread and opens each ledger inside the
+State refresh worker. No manager-specific per-thread SQLite configuration or
+shared connection handle was found. A normal HTTP request runs on a Waitress
+thread, so the local fixture uses a Python signal to perform the comparison on
+its actual main loop thread, followed by a State worker. The two connections are
+sequential and read-only; neither repeats schema/health checks or sends data.
+
+The uncommitted production CLI/console hook was removed after the local approach
+was adopted. The comparison now lives under tests/ and rejects a controller
+without the synthetic sandbox. The application launcher and runtime are unchanged
+from 08a0afd. No diagnostic-only production release is proposed.
+
+### Local reproduction on ZUHAIR-PC (2026-10-20)
+
+Run from the development checkout, with local port 8765 free. The test refuses to
+attach to an existing manager and does not stop any unrelated process:
+
+```powershell
+$env:PYTHONPATH = 'tests'
+& .\.venv\Scripts\python.exe -B -m unittest test_manager_http_sqlite -v
+```
+
+The parent creates a synthetic ledger, then launches a fresh venv Python process.
+That process runs the real runtime.serve/Waitress main loop, Flask routes, cookies,
+CSRF checks, job polling and State refresh worker on 127.0.0.1:8765. Its first
+SQLite connection is observed through a test-only audit hook: it is the HTTP
+refresh worker's source connection, not a preparatory main-thread open. The audit
+hook permits only the synthetic source URI and :memory: and denies off-loopback
+connections. No production config, database, devices or ERPNext APIs are used.
+Test paths use the existing demo sandbox ACL guard; production ACL compatibility
+is not established. A second case queries only the local Windows EventLog service
+read-only and uses a filename containing spaces, percent/hash and Unicode.
+
+Local observations:
+
+- Cold-start and repeated real HTTP Dashboard/Devices refreshes pass.
+- Main-thread and background-job opens both pass in that running process. The
+  test's control pipe raises SIGBREAK only within its owned child process.
+- A reserved DELETE-journal writer allows refresh. An exclusive SQLite lock
+  produces SQLITE_BUSY, and refresh recovers after rollback.
+- A deliberately held **read-only native Windows handle with share mode zero**
+  reproduces source_connect / SQLITE_CANTOPEN (14), with all seven context flags
+  true. A separate native open confirms ERROR_SHARING_VIOLATION (32). Releasing
+  only this test handle restores refresh; ledger bytes remain unchanged.
+- Monitoring-only route restrictions remain enforced. Owned child processes and
+  synthetic fixtures are cleaned up; no local listener is left behind.
+
+The last case proves a mechanism capable of producing the same diagnostic. It
+does **not** establish that such a handle exists on IT-SUPPORT, or explain the
+reported persistent web-only pattern. No unconditional thread/URI/SQLite fix is
+justified, and moving connections to the main thread would be speculative.
+
+Development environment actually inspected: Python 3.11.9 (64-bit), SQLite 3.45.1
+(threadsafety=3), Flask 3.1.3, Waitress 3.0.2, Windows build 10.0.26200, NTFS,
+non-elevated token, Defender real-time protection enabled and Controlled Folder
+Access disabled (0). Only SQLite 3.45.1 is independently supplied for production;
+production OS/build, package versions, effective token, security/filter policy and
+native file-open result are not verified here. requirements-manager.txt permits
+version ranges, so the branch alone does not prove identical installed packages.
+The local Temp fixture does not recreate production ProgramData storage policy.
+
+The ordinary production failure was not reproduced locally. Do not ship another
+diagnostic-only release or change SQLite, journal mode, permissions, retries or
+the service on the strength of these tests. The remaining decisive evidence is
+the native Windows result for the actual failed manager file open (and an owning
+handle/process if sharing is denied). Obtaining that from IT-SUPPORT requires
+separate approval. No IT-SUPPORT filesystem or service was accessed in this work.
+
+Final validation after keeping the comparison test-only: **590 relevant tests
+passed in 141.229 seconds**, no skips. The eight new local tests passed separately
+in 19.085 seconds. git diff --check passed. Application, Phase 1 and recovery
+modules are unchanged; only these synthetic tests/fixtures and documentation are
+proposed for review. Nothing was committed, pushed or deployed.
+
+## Safe rollout and rollback (instructions only)
+
+1. Review the local fix and tests, then transfer its exact approved source to a
+   fresh isolated manager checkout/environment. Do not update the service checkout
+   C:\GitHub\biometric-attendance-sync-tool or either existing manager installation.
+2. Under the intended ordinary user, verify existing approved access: ledger and
+   required existing SQLite sidecars readable, SCM service status queryable,
+   private profile readable, private diagnostics directory writable. No ledger-write
+   grant is required by the app. SQLite may require directory/sidecar access for
+   WAL/recovery; if the existing permissions do not suffice, stop for a separate
+   review. Do not grant broad permissions, run a repair or elevate to hide failure.
+   Avoid giving a new account access to credential-bearing local_config.py just
+   for Devices: use an approved credential-free literal devices metadata file if
+   necessary. Preparing that profile/ACL is a separate operator action.
+3. Record the running service State/ProcessId with Get-CimInstance Win32_Service
+   -Filter "Name='ERPNextBiometricPushService'". Do not restart/control it.
+4. If port 8765 is occupied, identify the existing manager and close only its own
+   console with Ctrl+C. Do not kill an unidentified process or delete old folders.
+5. Start the isolated corrected manager with its existing approved private profile:
+
+   ```powershell
+   $manager = 'C:\GitHub\biometric-sync-manager-monitoring-fix'
+   $profile = Read-Host 'Existing approved private monitoring profile path'
+   & "$manager\.venv\Scripts\python.exe" -B "$manager\scripts\biometric_manager.py" --monitor-only --profile $profile --no-browser
+   ```
+
+6. Refresh Dashboard and Devices once. Check the fixed diagnostic on failure and
+   the private monitor log. Confirm monitoring-only restrictions and unchanged
+   running service PID/state; healthy counts may change because synchronization
+   continues. Never execute investigation/recovery as part of this acceptance.
+7. Rollback: Ctrl+C stops only the corrected manager; relaunch the previous manager.
+   No ledger restore, service restart, configuration change or hold reset is needed.
+
+## Start after restart without elevation
+
+After manual ordinary-user acceptance, create a shortcut in that user's
+shell:startup folder. Target the isolated manager's Start Biometric Manager.bat,
+set its working directory to that checkout, and use arguments:
+
+`--monitor-only --profile "<existing approved private profile>" --no-browser`
+
+Leave Run as administrator **unchecked**. This starts the manager at **user logon**,
+not before logon; the Windows synchronization service remains independently active.
+The manager starts idle: no background refresh, API/device connection or recovery
+dispatch is added. Refresh manually once the PC/service is ready. Duplicate
+instances fail on the existing occupied port. If ordinary-user access is denied,
+report that operational prerequisite; do not create an elevated task/service or
+change production permissions as part of this fix. No startup entry was installed
+during development.
+
+## Synthetic validation scope
+
+tests/test_manager_monitoring.py exercises real Windows SQLite connections with
+reserved/exclusive rollback-journal locks, a committing writer and an active WAL
+writer. It covers missing-at-startup/manual recovery, quick_check passing with an
+invalid schema or foreign-key orphan, diagnostic privacy/log-write failure and
+atomic rejection of malformed display values. tests/test_monitor_only.py covers
+safe messages on Dashboard and Devices, existing CSRF/Host/route restrictions and
+monitor-only demo logging. These are synthetic tests, not production account,
+SCM startup or actual IT-SUPPORT failure evidence.
+
+Final relevant regression run: **564 tests passed in 95.327 seconds**, no skips,
+on Windows with Python 3.11.9 / SQLite 3.45.1. It includes Phase 1 source pins and
+all existing manager, investigation, offline, recovery and service safety tests.
+The partial-health regression failed before the fix. git diff --check passed;
+Phase 1 modules are unchanged from b729821. No production operation was performed.

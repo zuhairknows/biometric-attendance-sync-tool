@@ -1,0 +1,22 @@
+{
+  "schema": "attendance-investigation-contract-v1",
+  "destination_environment": "production",
+  "site_url": "https://erp.myfpf.com",
+  "site_timezone": "Asia/Riyadh",
+  "timestamp_precision": "seconds",
+  "duplicate_key": "employee_time_log_type",
+  "coverage_start": "REPLACE_WITH_REVIEWED_LOCAL_START",
+  "coverage_end": "REPLACE_WITH_REVIEWED_LOCAL_END",
+  "device_ids": ["FP1_DEVICE_01"],
+  "evidence_reference": "",
+  "verification": {
+    "read_only_api_verified": false,
+    "employee_lookup_database_equality": false,
+    "unfiltered_employee_and_checkin_visibility": false,
+    "server_duplicate_semantics": false,
+    "source_and_site_timezone_match": false,
+    "historical_payload_policy": false,
+    "destination_quiescent_during_scan": false,
+    "no_identity_mutating_hooks": false
+  }
+}

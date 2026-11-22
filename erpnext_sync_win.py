@@ -1,11 +1,12 @@
 import sys
-import time
 from pathlib import Path
 
 import servicemanager
+import win32event
 
 from SMWinservice import SMWinservice
-from erpnext_sync import main
+from erpnext_sync import config, main
+from durable_startup import worker_session
 
 
 class PythonCornerExample(SMWinservice):
@@ -33,9 +34,13 @@ class PythonCornerExample(SMWinservice):
         self.isrunning = False
 
     def main(self):
-        while self.isrunning:
-            main()
-            time.sleep(15)
+        # Keep ownership between ticks too; two services must not alternate workers.
+        with worker_session(config):
+            while self.isrunning:
+                # Finish an in-flight capture/send, then stop before claiming more work.
+                main(stop_requested=lambda: not self.isrunning)
+                if self.isrunning:
+                    win32event.WaitForSingleObject(self.hWaitStop, 15000)
 
 
 if __name__ == "__main__":

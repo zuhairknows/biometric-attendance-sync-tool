@@ -1,0 +1,72 @@
+PHASE 2 SCM ACCEPTANCE PACKAGE REPAIR — PREPARATION EVIDENCE
+Application candidate: 4f20179f5fb10f84a6f86a6ff720f9c2876efc20
+Branch: recovery
+Main retained: 4858432bf424a08bd437cf7d55027ea249712bc1
+Scope: acceptance/windows_scm ONLY; separate local harness commit.
+No push, merge, service registration, dependency installation, machine ACL change,
+elevated operation, reboot or production access performed by the preparer.
+
+ENVIRONMENT
+Existing .acceptance/acl-compat/.venv: Python 3.11.9 x64.
+All 19 accepted frozen application dependency pins match; pip check passes.
+Actual administrator token: False. See ENVIRONMENT.txt for captured output/time.
+
+RESULTS
+28 harness regression tests PASS (HARNESS-TESTS.txt).
+25 existing monitoring-policy tests PASS (MONITOR-POLICY-TESTS.txt).
+780 complete application tests PASS, 232.626 seconds (APPLICATION-TESTS.txt).
+PowerShell 5.1 parser, Native quoting and stubbed safety functions tested.
+Real native mutex owner query tested only against a unique Local unit-test mutex.
+No actual SCM/LocalSystem/monitoring-user/global-object/reboot acceptance claimed.
+No shared application/testing infrastructure changed; full suite nevertheless run.
+
+REVIEWED FIXES
+Process detection: executable AND command-line paths, normalized single/double
+separators, extended paths, dot segments, exact boundaries and prefix lookalikes.
+Missing/inaccessible metadata and active workers fail closed. Only own controller
+and known kernel pseudo-processes exempt. No unrelated process termination.
+Evidence: unique protected UUID staging; verified required files, identity and
+exact hashes; atomic publication, no overwrite; archived partial attempts; cleanup
+requires byte-for-byte preservation. Failure injection before/after publication,
+initial marker interruption, missing backups, corruption and identity escape tested.
+Mutex: atomic create-only lease/ownership, same-thread recursive application lock;
+SCM/process-generation and expected PID/TID ownership checks; observer cannot become
+writer; quiet leases protect evidence and cleanup. No production mutex behavior change.
+Reboot: try/finally restoration and verification of Manual; failure tests cover
+verification exceptions and a startup configuration that fails to restore.
+Optional reboot/manual recovery commands documented; no automatic reboot command.
+
+STATIC REVIEW
+See STATIC-REVIEW.md for every privileged/mutating action and cleanup boundary.
+No production path/service/endpoint/credential override.
+Package-local .gitattributes preserves checksum bytes despite core.autocrlf=true.
+SHA256SUMS.txt covers every other package file, including this report, captured
+test output, environment evidence and scoped attributes. Regenerate only after
+all tests/documentation are final; verify working files AND staged blobs.
+
+CURRENT NO-GO / PREREQUISITES
+Default protected C:/Program Files/Python311/python.exe absent at verification.
+Default .acceptance/scm-wheels absent at verification.
+Approved actual monitoring SID/logon and exclusive host-use window not established.
+Actual elevated process readability/global-owner access/SCM remains untested.
+README.md gives exact Python/media approval, wheel download/hash approval, SID
+verification, stage commands, interrupted evidence retry, cleanup and reboot recovery.
+Conditional GO for separately authorized isolated execution ONLY after all
+prerequisites, independent package review and read-only preflight PASS.
+Production deployment remains unauthorized.
+
+EXACT PACKAGE FILE INVENTORY (all newly tracked in the separate harness commit)
+acceptance/windows_scm/.gitattributes
+acceptance/windows_scm/APPLICATION-TESTS.txt
+acceptance/windows_scm/ENVIRONMENT.txt
+acceptance/windows_scm/HARNESS-TESTS.txt
+acceptance/windows_scm/Invoke-Acceptance.ps1
+acceptance/windows_scm/MONITOR-POLICY-TESTS.txt
+acceptance/windows_scm/PREPARATION-VALIDATION.txt
+acceptance/windows_scm/README.md
+acceptance/windows_scm/SHA256SUMS.txt
+acceptance/windows_scm/STATIC-REVIEW.md
+acceptance/windows_scm/harness_safety.py
+acceptance/windows_scm/scm_host.py
+acceptance/windows_scm/test_repairs.py
+acceptance/windows_scm/test_safety.py

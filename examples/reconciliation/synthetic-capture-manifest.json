@@ -1,0 +1,63 @@
+{
+  "mode": "capture",
+  "status": "complete",
+  "devices": [
+    {
+      "device_id": "FP2_DEVICE_08",
+      "host": "192.0.2.1",
+      "port": 4370,
+      "status": "captured",
+      "capture_started_at": "2026-10-15T13:22:38.704007+03:00",
+      "cleanup": {
+        "reenable": "not_requested",
+        "disconnect": "confirmed"
+      },
+      "fetched_count_from_sdk": 6,
+      "total_fetched": 6,
+      "valid": 5,
+      "invalid": 1,
+      "raw_incomplete": 0,
+      "validation_counts": {
+        "empty_user_id": 1,
+        "future_timestamp": 1
+      },
+      "valid_in_requested_range": 5,
+      "oldest_valid_punch": "2026-10-14 08:00:00.000000",
+      "newest_valid_punch": "2026-10-15 07:00:00.000000",
+      "oldest_valid_in_range": "2026-10-14 08:00:00.000000",
+      "newest_valid_in_range": "2026-10-15 07:00:00.000000",
+      "evidence_file": "synthetic-device-08.json",
+      "sha256": "d7211802449fa8d032e1b63acb3f6a136d85c39dfffc8784b995204521f04809",
+      "capture_finished_at": "2026-10-15T13:22:38.718462+03:00"
+    },
+    {
+      "device_id": "FP2_DEVICE_11",
+      "host": "192.0.2.2",
+      "port": 4370,
+      "status": "captured",
+      "capture_started_at": "2026-10-15T13:22:38.719298+03:00",
+      "cleanup": {
+        "reenable": "not_requested",
+        "disconnect": "confirmed"
+      },
+      "fetched_count_from_sdk": 3,
+      "total_fetched": 3,
+      "valid": 2,
+      "invalid": 1,
+      "raw_incomplete": 0,
+      "validation_counts": {
+        "invalid_timestamp": 1
+      },
+      "valid_in_requested_range": 2,
+      "oldest_valid_punch": "2026-10-10 12:00:00.000000",
+      "newest_valid_punch": "2026-10-14 11:00:00.000000",
+      "oldest_valid_in_range": "2026-10-10 12:00:00.000000",
+      "newest_valid_in_range": "2026-10-14 11:00:00.000000",
+      "evidence_file": "synthetic-device-11.json",
+      "sha256": "625c87d2350885cc5c55094d4c0d6e94aa83bb7e5846b58be7708e531359a7d8",
+      "capture_finished_at": "2026-10-15T13:22:38.735739+03:00"
+    }
+  ],
+  "all_selected_devices_captured": true,
+  "date_filter_affects_summary_only": true
+}

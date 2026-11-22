@@ -2,6 +2,38 @@
 
 Python Scripts to poll your biometric attendance system _(BAS)_ for logs and sync with your ERPNext instance
 
+The canonical Phase 1 branch is `release/phase1`. Its deployed runtime baseline is
+`4256cd6201b17dcda3f9d078552acf1d3c58b3f0`; later branch commits organize supporting
+tools and documentation and do not authorize deployment. See the
+[Phase 1 status and documentation index](docs/phase1-status.md).
+Durable synchronization requires explicit provisioning and a cutover boundary.
+Read the [assessment, migration, backup and rollback guide](docs/phase1-durable-sync.md)
+and [offline verification report](docs/phase1-verification.md) before enabling it.
+Release preparation adds a [review report](docs/phase1-release-review.md),
+[nonproduction integration procedure](docs/phase1-integration-tests.md), and
+[controlled production cutover runbook](docs/phase1-cutover-runbook.md).
+For incident evidence collection without synchronization, use the
+[safe historical capture procedure](docs/phase1-live-capture-procedure.md).
+Live capture requires separate maintenance-window approval; dry-run is the default.
+
+For offline comparison with separately prepared Frappe exports, see the
+[Phase 1 attendance reconciliation runbook](docs/phase1-attendance-reconciliation.md).
+The reconciliation tool creates reports only; it never creates Employee Checkins.
+
+The separate [Phase 2C local web manager](docs/phase2c-manager.md) provides manual
+read-only monitoring, historical investigation, batch review and synthetic recovery
+simulation. Use `Start Biometric Manager.bat --demo` after installing the isolated
+manager dependencies. It opens `http://127.0.0.1:8765`; recovery is disabled by
+default and the existing Windows service stays independent. The completed service
+lane requires separately approved release evidence and selected-record approval.
+See the [development status](docs/historical-recovery-development.md) and
+[deployment, activation and rollback guide](docs/historical-recovery-deployment.md).
+
+Prepare its inputs with the [read-only Frappe export procedure](docs/phase1-frappe-export-procedure.md).
+Export defaults to an offline plan; a live export requires separate approval and verified site/source evidence.
+For approved hosting-administrator execution without external database access, use
+the [server-side export procedure](docs/phase1-server-frappe-export.md).
+
 
 ## Table of Contents
  - [Pre-requisites](#pre-requisites)
@@ -145,3 +177,8 @@ For ERPNext/HRMS v15, ZKTeco User ID/PIN should match the Employee Attendance De
 ### License
 
 This project is licensed under [GNU General Public License v3.0](LICENSE)
+
+
+## Portable Windows installation (review candidate)
+
+See [portable installation](docs/portable-installation.md), [upgrade and rollback](docs/portable-upgrade.md), [manager operation](docs/portable-manager.md) and [acceptance gates](docs/portable-acceptance.md). This staged workflow replaces neither an existing production installation nor its private state automatically. Actual clean-PC/SCM acceptance is pending. Historical recovery stays disabled.

@@ -1,0 +1,2 @@
+# Separate review-workstation environment only. Never install into the production service.
+PyMySQL==1.2.3

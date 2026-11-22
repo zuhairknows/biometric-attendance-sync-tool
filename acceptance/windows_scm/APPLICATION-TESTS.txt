@@ -1,0 +1,6 @@
+Biometric Manager: http://127.0.0.1:8765 (Ctrl+C stops only this manager)
+{"270334": "CONFIRMED", "270480": "CONFIRMED"}
+----------------------------------------------------------------------
+Ran 780 tests in 232.626s
+
+OK

@@ -1,0 +1,6 @@
+# Windows synchronization service. Python 3.11 x64 is the acceptance baseline.
+# The manager and legacy Qt configuration UI are separate installations.
+requests>=2.34.2,<3
+pickledb==1.6
+pyzk==0.9
+pywin32==312; sys_platform == 'win32'

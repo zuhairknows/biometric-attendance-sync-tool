@@ -1,0 +1,32 @@
+{% extends 'base.html' %}{% from 'macros.html' import token,pager,empty %}
+{% block title %}Offline Comparison{% endblock %}
+{% block subtitle %}Offline comparison — Not authorized for recovery{% endblock %}
+{% block body %}
+<p class="notice warning">Offline comparison — Not authorized for recovery. No ERPNext API or device connection is used.</p>
+{% if job and job.status == 'blocked' and job.destination == url_for('offline_page') %}<p class="notice warning" role="alert">{{ job.error }}</p>{% endif %}
+<section class="card panel"><h2>Approved offline inputs</h2>
+{% if warning %}<p class="notice warning">{{ warning }}</p>{% endif %}
+<form method="post" action="{{ url_for('offline_run') }}" data-investigation>{{ token(csrf) }}
+<div class="form-grid">
+<label>Date From · site local time<input type="datetime-local" name="start" step="1" value="{{ profile.get('start','')|replace(' ','T') }}" required></label>
+<label>Date To · inclusive<input type="datetime-local" name="end" step="1" value="{{ profile.get('end','')|replace(' ','T') }}" required></label>
+<label>Factory floor<select name="floor" data-floor><option value="">All floors</option><option>FP1</option><option>FP2</option></select></label>
+<div class="device-picker">{% for d in devices %}<label class="check" data-device-floor="{{ d.floor }}"><input type="checkbox" name="devices" value="{{ d.device }}" {{ 'checked' if d.device == 'FP1_DEVICE_01' }}>{{ d.device }}</label>{% endfor %}</div>
+<label>Protected SQLite snapshot<select name="snapshot" required><option value="">Select approved snapshot</option>{% for n in catalog.snapshots %}<option>{{ n }}</option>{% endfor %}</select></label>
+<label>Employee mapping CSV<select name="employees" required><option value="">Select Employee export</option>{% for n in catalog.csvs %}<option>{{ n }}</option>{% endfor %}</select></label>
+<label>Employee Checkin CSV<select name="checkins" required><option value="">Select Checkin export</option>{% for n in catalog.csvs %}<option>{{ n }}</option>{% endfor %}</select></label>
+</div><p class="caption">Only immediate files in the private import directory are selectable. The approved evidence file must bind these exact inputs.</p>
+<label class="check"><input type="checkbox" name="backup_ack" value="1" required>I confirm an approved offline snapshot and independently reviewed export evidence.</label>
+<button {{ 'disabled' if warning or not devices }}>Compare &amp; export</button></form></section>
+{% if result %}<section class="card panel"><h2>{{ 'Verified offline evidence' if result.summary.status == 'complete' else 'Unverified' }}</h2>
+<p>Offline comparison — Not authorized for recovery. Eligibility and execution remain disabled.</p>
+{% for reason in result.summary.blockers %}<p class="notice warning">{{ reason|replace('_',' ') }}</p>{% endfor %}
+{% if result.summary.unverified_claims %}<details open><summary>Unverified comparison claims</summary><ul>{% for claim in result.summary.unverified_claims %}<li>{{ claim|replace('_',' ') }}</li>{% endfor %}</ul></details>{% endif %}
+<div class="count-strip">{% for key,count in result.summary.totals.items() %}<span><strong>{{ count }}</strong> {{ key|replace('_',' ') }}</span>{% endfor %}</div>
+<form method="post" action="{{ url_for('offline_export') }}">{{ token(csrf) }}<button class="secondary">Verify protected CSV / JSON</button></form>
+<form class="filters" method="get"><label>Classification<select name="classification"><option value="">All</option>{% for c in categories %}<option value="{{ c }}" {{ 'selected' if request.args.get('classification') == c }}>{{ c|replace('_',' ') }}</option>{% endfor %}</select></label><label>Search<input name="q" maxlength="100" value="{{ request.args.get('q','') }}"></label><button>Filter</button></form>
+<div class="table-scroll"><table><thead><tr><th>Record</th><th>Device</th><th>Source time</th><th>Classification</th><th>Reason</th></tr></thead><tbody>{% for r in table.rows %}<tr><td>{{ r.id }}</td><td>{{ r.device_id }}</td><td>{{ r.punch_timestamp }}</td><td>{{ r.classification|replace('_',' ') }}</td><td>{{ r.reason|replace('_',' ') }}</td></tr>{% endfor %}</tbody></table></div>{{ pager(table) }}
+<details><summary>Limitations</summary><ul>{% for note in result.summary.limitations %}<li>{{ note }}</li>{% endfor %}</ul></details>
+<p class="caption">Detailed reports remain in the protected output directory. Employee identifiers are hidden on this page.</p></section>
+{% else %}<section class="card">{{ empty('No completed offline comparison') }}</section>{% endif %}
+{% endblock %}

@@ -1,0 +1,24 @@
+{
+  "schema": "attendance-service-release-v1",
+  "enabled": false,
+  "site_url": "https://REVIEWED-SITE.example.invalid",
+  "address": "REVIEWED-NUMERIC-IP",
+  "ledger": "C:\\ProgramData\\ERPNextBiometricPushService\\sync.sqlite3",
+  "contract_sha256": "INDEPENDENTLY-APPROVED-CONTRACT-SHA256",
+  "activation_sha256": "EXISTING-ACTIVATION-FILE-SHA256",
+  "approved_at": 0,
+  "expires_at": 0,
+  "approval_reference": "",
+  "evidence": {
+    "deployed_handlers_reviewed": "",
+    "complete_destination_visibility": "",
+    "employee_equality_reviewed": "",
+    "timezone_precision_reviewed": "",
+    "duplicate_atomicity_or_scoped_quiescence": "",
+    "historical_payload_accepted": "",
+    "service_token_and_inbox_acl_verified": "",
+    "single_writer_restart_verified": "",
+    "backup_and_rollback_verified": ""
+  },
+  "code_sha256": {}
+}

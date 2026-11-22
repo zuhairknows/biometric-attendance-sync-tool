@@ -1,7 +1,12 @@
 local_config.py
+# Keep local credential-bearing config copies out of normal Git staging.
+local_config*.py
+local_config*.py.*
+!local_config.py.template
 .vscode
 logs/
 .test-logs/
+.acceptance/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -109,3 +114,52 @@ venv.bak/
 .mypy_cache/
 .venv-old/
 local_config_test.py
+
+# Durable state and operator backups must never be committed.
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-journal
+*.sqlite3-journal
+*.db-journal
+*-wal
+*-shm
+*.backup
+*_last_fetch_dump.json
+
+# Offline attendance capture evidence must stay in protected storage, not Git.
+FP2_DEVICE_08_[0-9]*.json
+FP2_DEVICE_11_[0-9]*.json
+capture_summary_*.json
+.capture-*.part
+.capture-probe-*.part
+
+# Offline reconciliation reports/exports contain protected employee information.
+reconciliation_details_*.csv
+reconciliation_summary_*.json
+.reconciliation-*.part
+employee-mappings.json
+employee-checkins.csv
+export-manifest.json
+frappe-export-verification.json
+db-profile.json
+effective-hooks.json
+.export-validation-*.part
+internal-profile.json
+
+# Private durable activation metadata and portable worker locks belong outside Git.
+*.activation.json
+*.worker.lock
+
+# Local SCM evidence and one-off incident probes are archived privately, not shipped.
+/.scm-*
+/scripts/.scm-*
+phase1-get-controls.json
+
+# Historical investigation evidence is private; only synthetic examples belong in Git.
+investigation_details_*.csv
+investigation_summary_*.json
+.investigation-worker-*.part
+*.recovery-audit*
+recovery_*.csv
+recovery_*.json
