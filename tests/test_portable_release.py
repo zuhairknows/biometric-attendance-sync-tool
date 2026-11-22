@@ -191,6 +191,30 @@ class ConfigStateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "device_deletion_forbidden"):
             release.configuration(self.config)
 
+    def test_sync_policy_settings_are_checked_before_installation(self):
+        good = dict(SHIFT_SYNC_RETRY_GRACE_HOURS=2, SHIFT_SYNC_DEVICE_STALE_HOURS=12,
+                    SHIFT_SYNC_FUTURE_TOLERANCE_MINUTES=10, SHIFT_SYNC_IGNORED_DEVICES=["SYNTHETIC"],
+                    DURABLE_CONFIRM_READS_VERIFIED=True, DURABLE_SERVER_REVIEW_REFERENCE="SYNTHETIC REVIEW",
+                    DURABLE_RESEND_VERIFIED_MISSING=True, DURABLE_RESEND_SETTLE_SECONDS=600)
+        self.values.update(good)
+        self.write_config()
+        self.assertEqual(release.configuration(self.config)["SHIFT_SYNC_IGNORED_DEVICES"], ["SYNTHETIC"])
+        bad = [(dict(SHIFT_SYNC_RETRY_GRACE_HOURS=-1), "shift_sync_setting_invalid"),
+               (dict(SHIFT_SYNC_DEVICE_STALE_HOURS=True), "shift_sync_setting_invalid"),
+               (dict(SHIFT_SYNC_FUTURE_TOLERANCE_MINUTES="10"), "shift_sync_setting_invalid"),
+               (dict(SHIFT_SYNC_IGNORED_DEVICES=["TYPO_DEVICE"]), "shift_sync_ignored_device_unknown"),
+               (dict(SHIFT_SYNC_IGNORED_DEVICES="SYNTHETIC"), "shift_sync_ignored_device_unknown"),
+               (dict(DURABLE_CONFIRM_READS_VERIFIED=False), "resend_requires_verified_reads"),
+               (dict(DURABLE_SERVER_REVIEW_REFERENCE=" "), "resend_requires_verified_reads"),
+               (dict(DURABLE_RESEND_VERIFIED_MISSING="yes"), "resend_requires_verified_reads"),
+               (dict(DURABLE_RESEND_SETTLE_SECONDS=59), "resend_settle_invalid")]
+        for change, error in bad:
+            with self.subTest(change=change):
+                self.values.update(good, **change)
+                self.write_config()
+                with self.assertRaisesRegex(ValueError, error):
+                    release.configuration(self.config)
+
     def test_placeholder_template_fails_before_installation(self):
         with self.assertRaises(ValueError):
             release.configuration(ROOT / "deployment/local_config.py.template")

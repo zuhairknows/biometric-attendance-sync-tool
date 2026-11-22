@@ -11,10 +11,11 @@
   ledger and its ACLs are never changed. The dashboard binds to 127.0.0.1 only.
 
   Run as the normal user who will use the dashboard (not elevated). That user
-  needs read access to the ledger.
+  needs read access to the ledger. On the sync PC the defaults point at the copy
+  kept by Install-MonitorSnapshotTask.ps1 (the live ledger folder stays private).
 
 .EXAMPLE
-  # Sync PC (live ledger, real config; secrets are never displayed):
+  # Sync PC, after Install-MonitorSnapshotTask.ps1 -Apply:
   .\Install-MonitorDashboard.ps1
 
   # Review PC with a snapshot from Export-MonitorSnapshot.ps1:
@@ -25,8 +26,8 @@
 param(
     [string]$Python = "$env:ProgramFiles\Python311\python.exe",
     [string]$Target = "$env:LOCALAPPDATA\FPFBiometricManager",
-    [string]$Ledger = "$env:ProgramData\ERPNextBiometricPushService\sync.sqlite3",
-    [string]$DeviceConfig = "$env:ProgramFiles\FPFBiometricSyncPhase2\local_config.py",
+    [string]$Ledger = "$env:ProgramData\FPFBiometricMonitor\snapshot\sync.sqlite3",
+    [string]$DeviceConfig = "$env:ProgramData\FPFBiometricMonitor\snapshot\local_config.monitor.py",
     [string]$ProfileDirectory = "$env:LOCALAPPDATA\FPFBiometricSyncManager"
 )
 $ErrorActionPreference = 'Stop'
@@ -39,8 +40,11 @@ function Invoke-Native([string]$Exe, [string[]]$Arguments, [string]$Failure) {
     if ($LASTEXITCODE -ne 0) { throw $Failure }
 }
 if (-not $PSBoundParameters.ContainsKey('Python') -and -not (Test-Path -LiteralPath $Python)) {
-    # Fall back to the Python 3.11 the sync service's venv was built from.
+    # Fall back to the Python 3.11 the sync service's venv was built from (either layout).
     $venvCfg = "$env:ProgramFiles\FPFBiometricSyncPhase2\.venv\pyvenv.cfg"
+    $service = Get-CimInstance Win32_Service -Filter "Name='ERPNextBiometricPushService'" -ErrorAction SilentlyContinue
+    $m = [regex]::Match([string]$service.PathName, '^"(?<py>[^"]+)\\Scripts\\python\.exe"')
+    if ($m.Success) { $venvCfg = Join-Path $m.Groups['py'].Value 'pyvenv.cfg' }
     if (Test-Path -LiteralPath $venvCfg) {
         $homeLine = Get-Content -LiteralPath $venvCfg | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
         if ($homeLine) { $Python = Join-Path ($homeLine -replace '^\s*home\s*=\s*', '').Trim() 'python.exe' }

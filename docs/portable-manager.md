@@ -32,10 +32,10 @@ with the same normal token/profile if an exact-environment standalone probe pass
 Keep --monitor-only: investigation/recovery routes remain denied. Optional user-logon
 shortcuts need separate approval; no elevated task/service or startup entry is added.
 
-## Monitoring dashboard bundle (existing installations)
+## Monitoring dashboard bundle
 
-For an installation that was not set up with the portable installer (for example
-`C:\Program Files\FPFBiometricSyncPhase2`), `deployment\Install-MonitorDashboard.ps1`
+For the manually installed Phase 2 folder (`C:\Program Files\FPFBiometricSyncPhase2`)
+and for portable installations alike, `deployment\Install-MonitorDashboard.ps1`
 installs the monitoring-only manager beside it, from a bundle with `code\` and
 offline `wheels\` (Flask, Waitress, Requests and their dependencies), into
 `%LOCALAPPDATA%\FPFBiometricManager` (`code` + `runtime`, the layout
@@ -62,9 +62,11 @@ read-only connection into a staging file, checks it, and swaps it into
 `%ProgramData%\FPFBiometricMonitor\snapshot\sync.sqlite3` in one backup step, with
 a secret-free `local_config.monitor.py` and `refresh-status.json`. That folder is
 protected: SYSTEM and Administrators full control, the dashboard user read only; the
-helper sits in `bin\`, writable by administrators only. Install the dashboard with
-`-Ledger` and `-DeviceConfig` pointing at the snapshot. `-Remove -Apply` deletes the
-task and the folder. The service, its folder and the live ledger ACLs are unchanged.
+helper sits in `bin\`, writable by administrators only. The service's Python and
+`local_config.py` are found from the registered service command, which covers both
+layouts (`-AppRoot` forces the Phase 2 folder). `Install-MonitorDashboard.ps1` then
+defaults to that snapshot, so on the sync PC it needs no arguments. `-Remove -Apply`
+deletes the task and the folder. The service, its folder and the live ledger ACLs are unchanged.
 
 To review a production ledger on another PC, run `Export-MonitorSnapshot.ps1`
 (elevated) on the sync PC. It copies the ledger with SQLite's online backup API from

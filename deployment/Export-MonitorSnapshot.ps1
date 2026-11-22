@@ -18,13 +18,24 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$AppRoot = "$env:ProgramFiles\FPFBiometricSyncPhase2",
+    [string]$AppRoot,
+    [string]$ServiceName = 'ERPNextBiometricPushService',
     [string]$OutputRoot = [Environment]::GetFolderPath('Desktop')
 )
 $ErrorActionPreference = 'Stop'
 
-$config = Join-Path $AppRoot 'local_config.py'
-$python = Join-Path $AppRoot '.venv\Scripts\python.exe'
+# The service's Python and config come from its registered command, so both the manual
+# Phase 2 folder and the portable installer's version folders work; -AppRoot forces Phase 2.
+if (-not $AppRoot) {
+    $service = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'"
+    $m = [regex]::Match([string]$service.PathName, '^"(?<py>[^"]+\\python\.exe)" (?:-\w+ )*"(?<code>[^"]+)\\erpnext_sync_win\.py"$')
+    if ($m.Success) { $python = $m.Groups['py'].Value; $config = Join-Path $m.Groups['code'].Value 'local_config.py' }
+    else { $AppRoot = "$env:ProgramFiles\FPFBiometricSyncPhase2" }
+}
+if ($AppRoot) {
+    $config = Join-Path $AppRoot 'local_config.py'
+    $python = Join-Path $AppRoot '.venv\Scripts\python.exe'
+}
 foreach ($p in $config, $python) { if (-not (Test-Path -LiteralPath $p)) { throw "Not found: $p" } }
 $out = Join-Path $OutputRoot ('monitor-snapshot-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $out | Out-Null

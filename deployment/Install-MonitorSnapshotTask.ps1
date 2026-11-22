@@ -14,6 +14,12 @@
   only. The refresh helper is copied to <Root>\bin, writable by administrators only,
   because SYSTEM runs it. The task uses the service's own Python (-I).
 
+  The service's Python and local_config.py are read from the registered service
+  command ("<python.exe>" -B "<code>\erpnext_sync_win.py"), so both the manual
+  Phase 2 layout (<AppRoot>\.venv, <AppRoot>\local_config.py) and the portable
+  installer's layout (<AppRoot>\<slot>\runtime, <AppRoot>\<slot>\code) work.
+  -AppRoot forces the manual Phase 2 layout instead.
+
   Without -Apply it only reports what it would do. -Remove deletes the task and
   <Root>. Run from an elevated Windows PowerShell 5.1.
 
@@ -24,7 +30,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$AppRoot = "$env:ProgramFiles\FPFBiometricSyncPhase2",
+    [string]$ServiceName = 'ERPNextBiometricPushService',
+    [string]$AppRoot,
     [string]$Reader,
     [ValidateRange(5, 60)][int]$IntervalMinutes = 10,
     [string]$Root = "$env:ProgramData\FPFBiometricMonitor",
@@ -51,8 +58,22 @@ if ($Remove) {
     return
 }
 
-$config = Join-Path $AppRoot 'local_config.py'
-$python = Join-Path $AppRoot '.venv\Scripts\python.exe'
+if ($AppRoot) {
+    $config = Join-Path $AppRoot 'local_config.py'
+    $python = Join-Path $AppRoot '.venv\Scripts\python.exe'
+} else {
+    $service = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'"
+    if (-not $service) { throw "Service $ServiceName is not installed; pass -AppRoot for a manual Phase 2 folder." }
+    $m = [regex]::Match([string]$service.PathName, '^"(?<py>[^"]+\\python\.exe)" (?:-\w+ )*"(?<code>[^"]+)\\erpnext_sync_win\.py"$')
+    $phase2 = "$env:ProgramFiles\FPFBiometricSyncPhase2"
+    if ($m.Success) {
+        $python = $m.Groups['py'].Value
+        $config = Join-Path $m.Groups['code'].Value 'local_config.py'
+    } elseif (Test-Path -LiteralPath (Join-Path $phase2 'local_config.py')) {
+        $config = Join-Path $phase2 'local_config.py'
+        $python = Join-Path $phase2 '.venv\Scripts\python.exe'
+    } else { throw "Unrecognized service command: $($service.PathName). Pass -AppRoot." }
+}
 $helperSource = Join-Path $PSScriptRoot 'monitor_snapshot_refresh.py'
 foreach ($p in $config, $python, $helperSource) { if (-not (Test-Path -LiteralPath $p)) { throw "Not found: $p" } }
 
@@ -64,6 +85,7 @@ if ($readerSid.Value -notmatch '^S-1-5-21-') { throw "$Reader ($readerSid) is no
 $bin = Join-Path $Root 'bin'; $snapshot = Join-Path $Root 'snapshot'
 $helper = Join-Path $bin 'monitor_snapshot_refresh.py'
 Say "Reader (read-only access to $Root): $Reader  $readerSid"
+Say "Service configuration: $config"
 Say "Refresh every $IntervalMinutes minutes as SYSTEM: $python -I $helper"
 Say "Snapshot: $snapshot\sync.sqlite3 and local_config.monitor.py"
 Say "Scheduled task '$TaskName': $(if ($task) { 'will be replaced' } else { 'will be created' })"

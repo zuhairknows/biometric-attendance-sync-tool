@@ -233,6 +233,20 @@ def configuration(path):
                 "device_address_invalid")
     for mapping in values.get("shift_type_device_mapping", []):
         require(set(mapping["related_device_id"]) <= ids, "unknown_shift_device")
+    # Policy settings fail here, before installation, instead of at service startup.
+    for key in ("SHIFT_SYNC_RETRY_GRACE_HOURS", "SHIFT_SYNC_DEVICE_STALE_HOURS", "SHIFT_SYNC_FUTURE_TOLERANCE_MINUTES"):
+        value = values.get(key, 0)
+        require(type(value) in (int, float) and value >= 0, "shift_sync_setting_invalid")
+    ignored = values.get("SHIFT_SYNC_IGNORED_DEVICES", [])
+    require(isinstance(ignored, (list, tuple)) and all(isinstance(d, str) for d in ignored)
+            and set(ignored) <= ids, "shift_sync_ignored_device_unknown")
+    if values.get("DURABLE_RESEND_VERIFIED_MISSING", False) is not False:
+        reference = values.get("DURABLE_SERVER_REVIEW_REFERENCE")
+        require(values.get("DURABLE_RESEND_VERIFIED_MISSING") is True
+                and values.get("DURABLE_CONFIRM_READS_VERIFIED") is True
+                and isinstance(reference, str) and reference.strip(), "resend_requires_verified_reads")
+    settle = values.get("DURABLE_RESEND_SETTLE_SECONDS", 600)
+    require(type(settle) in (int, float) and settle >= 60, "resend_settle_invalid")
     return values
 
 

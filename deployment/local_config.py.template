@@ -16,6 +16,23 @@ DURABLE_RETRY_BASE_SECONDS = 30
 DURABLE_RETRY_MAX_SECONDS = 3600
 DURABLE_AUTH_COOLDOWN_SECONDS = 900
 DURABLE_LEASE_SECONDS = 120
+# Uncertain sends (timeout, 5xx) are looked up in ERPNext: Employee by device ID, then
+# Employee Checkin within +/-2 s. Found -> recorded as delivered; proven absent and the
+# last attempt older than DURABLE_RESEND_SETTLE_SECONDS -> sent once more; any failed
+# or ambiguous read -> waits. The API user needs read access to Employee and Employee
+# Checkin. Set all three False/'' to keep uncertain sends waiting for manual review.
+DURABLE_CONFIRM_READS_VERIFIED = True
+DURABLE_SERVER_REVIEW_REFERENCE = 'Approved 2026-11-21: verified-absence resend of uncertain sends'
+DURABLE_RESEND_VERIFIED_MISSING = True
+DURABLE_RESEND_SETTLE_SECONDS = 600
+# Shift Type last_sync_of_checkin waits only for punches that can still arrive
+# (docs/shift-sync-policy.md). A device whose scans keep failing holds it for
+# SHIFT_SYNC_DEVICE_STALE_HOURS; list a device that is knowingly offline (for example
+# a reader away for repair) in SHIFT_SYNC_IGNORED_DEVICES so it holds nothing.
+SHIFT_SYNC_RETRY_GRACE_HOURS = 2
+SHIFT_SYNC_DEVICE_STALE_HOURS = 12
+SHIFT_SYNC_FUTURE_TOLERANCE_MINUTES = 10
+SHIFT_SYNC_IGNORED_DEVICES = []
 # None selects strict SYSTEM/Administrators storage. Do not set an admin user's SID.
 # An ordinary monitoring SID additionally needs separately approved exact read ACLs.
 DURABLE_MONITOR_READONLY_SID = None

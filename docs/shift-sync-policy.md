@@ -61,7 +61,10 @@ punch until the backlog is resolved.
 
 ## Updating an existing installation
 
-`deployment/Update-ShiftSyncPolicy.ps1` replaces `durable_sync.py`,
+`deployment/Update-ShiftSyncPolicy.ps1` is for the manually installed Phase 2 folder
+(`C:\Program Files\FPFBiometricSyncPhase2`). A PC installed with the portable
+installer (2.0.0-rc3 or later) already has this policy; set the settings in its
+private config instead (`deployment/local_config.py.template`). The script replaces `durable_sync.py`,
 `sync_ledger.py` and `durable_delivery.py` in place, each only when the installed
 copy is a reviewed version (files already updated are left alone). It runs as a
 dry run unless `-Apply` is given, backs up the files and `local_config.py`, sets
