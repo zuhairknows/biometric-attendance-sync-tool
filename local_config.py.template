@@ -58,6 +58,13 @@ DURABLE_CONFIRM_READS_VERIFIED = False
 DURABLE_SERVER_REVIEW_REFERENCE = ''
 DURABLE_RESEND_VERIFIED_MISSING = False
 DURABLE_RESEND_SETTLE_SECONDS = 600
+# A card enrolled on a device before its Employee existed gets "No Employee found".
+# Each such card is looked up again (one Employee read, at most every
+# UNMATCHED_RECHECK_HOURS); once the Employee exists and is Active, its punches dated in
+# the last UNMATCHED_RECHECK_DAYS are sent again. 0 days turns this off. Needs the
+# confirmation reads above.
+UNMATCHED_RECHECK_DAYS = 30
+UNMATCHED_RECHECK_HOURS = 6
 
 
 # ============================================================

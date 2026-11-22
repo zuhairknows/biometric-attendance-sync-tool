@@ -1,6 +1,6 @@
 {
-  "durable_sync.py": "e1685346fed20e29d3b9de241078b92648d952c98c6f5401b5909f9f3e75d479",
-  "durable_delivery.py": "7587b2dd85d08e506339059d4b489edd9d12d8b5892a16e0f00c4d3304c407d8",
-  "sync_ledger.py": "422687e5c781d24474ad505d030c4ccef260ae78876348dafa5e5b97f20b7721",
+  "durable_sync.py": "c3884dddbd7709bda6d48eb42bec490f3c50fcc4ee75c7ee33f3ece64bf53719",
+  "durable_delivery.py": "d72bce59ccb249c46e2797b064d95c3ceba704b70f74e854f03a8d7f93d6dfd6",
+  "sync_ledger.py": "a165553f6b44b23fb3cba0a4dfd6c1c0aac34c217bf5843a07c1967ec81cd274",
   "durable_startup.py": "c677c6ebd664e814548b81f0389beb2684cc606ba92b4a7c165aef3fce8aaa67"
 }

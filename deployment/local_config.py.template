@@ -25,6 +25,13 @@ DURABLE_CONFIRM_READS_VERIFIED = True
 DURABLE_SERVER_REVIEW_REFERENCE = 'Approved 2026-11-21: verified-absence resend of uncertain sends'
 DURABLE_RESEND_VERIFIED_MISSING = True
 DURABLE_RESEND_SETTLE_SECONDS = 600
+# A card enrolled on a device before its Employee existed gets "No Employee found".
+# Each such card is looked up again (one Employee read, at most every
+# UNMATCHED_RECHECK_HOURS); once the Employee exists and is Active, its punches dated in
+# the last UNMATCHED_RECHECK_DAYS are sent again. 0 days turns this off. Needs the
+# confirmation reads above.
+UNMATCHED_RECHECK_DAYS = 30
+UNMATCHED_RECHECK_HOURS = 6
 # Shift Type last_sync_of_checkin waits only for punches that can still arrive
 # (docs/shift-sync-policy.md). A device whose scans keep failing holds it for
 # SHIFT_SYNC_DEVICE_STALE_HOURS; list a device that is knowingly offline (for example

@@ -318,8 +318,28 @@ class Ledger:
         # hold the same biometric ID/second across all directions while a peer is uncertain.
         return self.db.execute("SELECT 1 FROM punches WHERE id!=? AND user_id=? "
             "AND substr(punch_timestamp,1,19)=? AND (state='delivering' OR "
-            "(state='retry' AND COALESCE(error_category,'') NOT IN ('authentication','rate_limited','peer_uncertain'))) LIMIT 1",
+            "(state='retry' AND COALESCE(error_category,'') NOT IN ('authentication','rate_limited','peer_uncertain','employee_recheck'))) LIMIT 1",
             (row['id'], row['user_id'], row['punch_timestamp'][:19])).fetchone() is not None
+
+    def unmatched_cards(self, since):
+        """Device user IDs with unmatched-employee punches dated from `since`, newest first."""
+        return [r[0] for r in self.db.execute(
+            "SELECT user_id FROM punches WHERE state='unmatched_employee' AND punch_timestamp>=? "
+            "GROUP BY user_id ORDER BY MAX(punch_timestamp) DESC, user_id", (since,))]
+
+    def requeue_unmatched(self, user_id, since, now=None):
+        """Send a card's unmatched punches again once its Employee exists.
+
+        The earlier response proved no Employee Checkin was created, so this is a fresh
+        send, not an uncertain one. As a retry (not pending) it does not hold Shift Types.
+        """
+        now = time.time() if now is None else now
+        with self.db:
+            return self.db.execute(
+                "UPDATE punches SET state='retry',next_retry=?,lease_until=NULL,error_category='employee_recheck',"
+                "error_message='Employee now exists; sending again',updated_at=? "
+                "WHERE state='unmatched_employee' AND user_id=? AND punch_timestamp>=?",
+                (now, now, user_id, since)).rowcount
 
     def pause_destination(self, until):
         with self.db:
@@ -334,7 +354,7 @@ class Ledger:
         quarantine = self.db.execute("SELECT COUNT(*) FROM punches WHERE state IN ('unmatched_employee','rejected','invalid_record')").fetchone()[0]
         held = self.db.execute("SELECT COUNT(*) FROM punches WHERE error_category='cutover_hold'").fetchone()[0]
         uncertain = self.db.execute("SELECT COUNT(*) FROM punches WHERE state='retry' AND "
-                                    "COALESCE(error_category,'') NOT IN ('authentication','rate_limited','peer_uncertain')").fetchone()[0]
+                                    "COALESCE(error_category,'') NOT IN ('authentication','rate_limited','peer_uncertain','employee_recheck')").fetchone()[0]
         related = self.db.execute("SELECT COUNT(*) FROM punches WHERE state='retry' AND error_category='peer_uncertain'").fetchone()[0]
         failed = self.db.execute('SELECT COUNT(*) FROM device_state WHERE fetch_ok=0').fetchone()[0]
         return dict(schema_version=SCHEMA_VERSION, total=sum(counts.values()), states=counts,

@@ -11,7 +11,7 @@ so Auto Attendance may process it. Durable mode computes it per mapping in
 | `pending`, `delivering` | waits |
 | `retry` caused by `authentication` or `rate_limited` | always waits (nothing is getting through) |
 | other `retry` | waits for `SHIFT_SYNC_RETRY_GRACE_HOURS` (24) after capture |
-| `unmatched_employee`, `rejected` (incl. `cutover_hold`), `invalid_record` | reported, not waited for |
+| `unmatched_employee`, `rejected` (incl. `cutover_hold`), `invalid_record` | reported, not waited for (an unmatched card re-sent after its Employee appears is a `retry`, above) |
 | punch before `IMPORT_START_DATE` / cutover | ignored |
 | punch dated more than `SHIFT_SYNC_FUTURE_TOLERANCE_MINUTES` (10) after the scan | ignored (device clock error) |
 | device whose latest scan failed | waits for `SHIFT_SYNC_DEVICE_STALE_HOURS` (12), then excluded with a warning |

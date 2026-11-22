@@ -7,7 +7,7 @@ from pathlib import Path
 import sqlite3
 import time
 
-from durable_delivery import FrappeClient, deliver_batch
+from durable_delivery import FrappeClient, deliver_batch, recheck_unmatched
 from punch_normalization import import_boundary, normalize
 from sync_ledger import Ledger
 from durable_startup import private_storage, worker_lock, validate_activation, cutover_time, canonical_storage
@@ -110,6 +110,23 @@ def shift_sync_options(config):
     return options
 
 
+# Card -> time of the last Employee lookup, per ledger. Kept in memory: a restart only
+# means one early lookup per card.
+_UNMATCHED_CHECKED = {}
+
+
+def unmatched_recheck_options(config):
+    """(days, interval seconds): punches of cards with no Employee are re-checked for
+    UNMATCHED_RECHECK_DAYS after the punch (0 turns it off), each card at most once every
+    UNMATCHED_RECHECK_HOURS. Needs DURABLE_CONFIRM_READS_VERIFIED."""
+    days = getattr(config, 'UNMATCHED_RECHECK_DAYS', 30)
+    hours = getattr(config, 'UNMATCHED_RECHECK_HOURS', 6)
+    for name, value, minimum in (('UNMATCHED_RECHECK_DAYS', days, 0), ('UNMATCHED_RECHECK_HOURS', hours, 0.25)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < minimum:
+            raise ValueError('Invalid unmatched re-check setting: ' + name)
+    return days, hours * 3600
+
+
 def update_shifts(ledger, engine, stop_requested=lambda: False, boundary=None, now=None):
     if not getattr(engine.status, 'usable', True) or ledger.destination_cooldown() > time.time():
         return
@@ -159,6 +176,7 @@ def _run_locked(engine, stop_requested):
     import_boundary(config.IMPORT_START_DATE)
     options = delivery_options(config)
     shift_sync_options(config)  # Fail visibly on a bad setting before any device is touched.
+    recheck_days, recheck_interval = unmatched_recheck_options(config)
     with Ledger(database_path(config)) as ledger:
         # This flag gates only polling. Delivery runs every service tick, including restarts.
         polling_due = ledger.polling_due([device.get('device_id') for device in config.devices], config.PULL_FREQUENCY, dt.datetime.now())
@@ -192,6 +210,11 @@ def _run_locked(engine, stop_requested):
                 recovery_guard = service_tick(ledger, config, activation, live_boundary, options, stop_requested=stop_requested)
             except Exception:
                 engine.error_logger.error('Historical recovery blocked; review private release prerequisites')
+        if recheck_days and not stop_requested():
+            since = str((dt.datetime.now() - dt.timedelta(days=recheck_days)).replace(microsecond=0))
+            recheck_unmatched(ledger, client, max(since, str(live_boundary.replace(microsecond=0))), recheck_interval,
+                              _UNMATCHED_CHECKED.setdefault(str(ledger.path), {}), rate=options['rate'],
+                              stop_requested=stop_requested, logger=engine.info_logger)
         deliver_batch(ledger, client, **options, stop_requested=stop_requested, logger=engine.info_logger,
                       not_before=live_boundary, recovery_guard=recovery_guard)
         if not stop_requested():
