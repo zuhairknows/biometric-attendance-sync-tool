@@ -29,6 +29,13 @@ lane requires separately approved release evidence and selected-record approval.
 See the [development status](docs/historical-recovery-development.md) and
 [deployment, activation and rollback guide](docs/historical-recovery-deployment.md).
 
+A terminal with a screen beside it that has to react to a punch within a second,
+rather than at the next poll, can additionally push each punch over ADMS. It is
+off by default: no port is opened and nothing is posted until a device is flagged
+`realtime` and `STATION_PUNCH_METHOD` is set. The ordinary poll is untouched and
+remains the only thing that creates Employee Checkins. See
+[station terminals: realtime punch push](docs/station-terminal-realtime-punch.md).
+
 Prepare its inputs with the [read-only Frappe export procedure](docs/phase1-frappe-export-procedure.md).
 Export defaults to an offline plan; a live export requires separate approval and verified site/source evidence.
 For approved hosting-administrator execution without external database access, use
