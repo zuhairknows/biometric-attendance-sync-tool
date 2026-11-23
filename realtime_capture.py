@@ -34,6 +34,10 @@ from urllib.parse import parse_qs, urlparse
 
 DEFAULT_LISTEN_PORT = 8090
 
+# A station punch further than this from the sync PC's clock is not acted on;
+# see AdmsRouter.is_current.
+DEFAULT_MAX_AGE_SECONDS = 300
+
 # Told to the device on handshake. Realtime=1 is the whole point: it makes the
 # terminal POST each punch as it happens instead of batching on a timer.
 HANDSHAKE_OPTIONS = (
@@ -75,6 +79,7 @@ class RouterStats:
     punches: int = 0
     rejected_serials: list = field(default_factory=list)
     malformed_lines: int = 0
+    stale_punches: int = 0
 
 
 def parse_attlog_timestamp(value):
@@ -165,11 +170,25 @@ class AdmsRouter:
     terminal would then replay punches we already handled.
     """
 
-    def __init__(self, devices, on_punch, logger=None):
+    def __init__(self, devices, on_punch, logger=None, max_age_seconds=None, clock=None):
         self.by_serial, self.by_ip = build_device_index(devices)
         self.on_punch = on_punch
         self.logger = logger
         self.stats = RouterStats()
+        # A terminal switched to ADMS may upload the punches it already holds,
+        # and the poll has recorded those as attendance long ago. Firing the
+        # station action for them would print a label per old punch, so a
+        # punch further than this from the sync PC's clock (either way: a
+        # terminal whose clock is wrong is not trusted either) is acknowledged
+        # and skipped. None turns the check off.
+        self.max_age_seconds = max_age_seconds
+        self.clock = clock or datetime.datetime.now
+
+    def is_current(self, event):
+        if self.max_age_seconds is None:
+            return True
+        drift = abs((self.clock() - event.timestamp).total_seconds())
+        return drift <= self.max_age_seconds
 
     def resolve_device_id(self, serial_number, client_ip):
         if serial_number:
@@ -206,7 +225,14 @@ class AdmsRouter:
             self.stats.malformed_lines += malformed
             if malformed:
                 self._log("warning", "Skipped malformed ATTLOG rows", device_id, str(malformed))
-            for event in events:
+            current = [event for event in events if self.is_current(event)]
+            stale = len(events) - len(current)
+            if stale:
+                # Acknowledged below like the rest, so the terminal marks them
+                # sent and does not offer them again.
+                self.stats.stale_punches += stale
+                self._log("warning", "Skipped ATTLOG rows outside the station age limit", device_id, str(stale))
+            for event in current:
                 self.stats.punches += 1
                 try:
                     self.on_punch(event)
@@ -279,8 +305,9 @@ class AdmsListener:
     attendance poll carries on untouched.
     """
 
-    def __init__(self, devices, on_punch, host="0.0.0.0", port=DEFAULT_LISTEN_PORT, logger=None):
-        self.router = AdmsRouter(devices, on_punch, logger=logger)
+    def __init__(self, devices, on_punch, host="0.0.0.0", port=DEFAULT_LISTEN_PORT, logger=None,
+                 max_age_seconds=None):
+        self.router = AdmsRouter(devices, on_punch, logger=logger, max_age_seconds=max_age_seconds)
         self.host = host
         self.port = port
         self.logger = logger
@@ -326,12 +353,14 @@ class AdmsListener:
             self.router._log("info", "ADMS listener stopped")
 
 
-def start_if_configured(devices, on_punch, host="0.0.0.0", port=DEFAULT_LISTEN_PORT, logger=None):
+def start_if_configured(devices, on_punch, host="0.0.0.0", port=DEFAULT_LISTEN_PORT, logger=None,
+                        max_age_seconds=DEFAULT_MAX_AGE_SECONDS):
     """Start a listener only when some device is flagged realtime.
 
     Returns None otherwise, so an unconfigured install opens no port at all.
     """
-    listener = AdmsListener(devices, on_punch, host=host, port=port, logger=logger)
+    listener = AdmsListener(devices, on_punch, host=host, port=port, logger=logger,
+                            max_age_seconds=max_age_seconds)
     if not listener.has_realtime_devices():
         return None
     return listener.start()

@@ -190,6 +190,59 @@ class AdmsRouterTests(unittest.TestCase):
         self.assertEqual(self.router.stats.punches, 1)
 
 
+class StationAgeLimitTests(unittest.TestCase):
+    """Stored punches a terminal uploads on switching to ADMS must not fire."""
+
+    NOW = datetime.datetime(2026, 11, 23, 14, 0, 0)
+
+    def setUp(self):
+        self.punches = []
+        self.logger = RecordingLogger()
+        self.router = AdmsRouter(
+            [STATION], self.punches.append, logger=self.logger, max_age_seconds=300, clock=lambda: self.NOW
+        )
+
+    def post(self, body):
+        return self.router.handle("POST", "/iclock/cdata", {"SN": ["ABC123"], "table": ["ATTLOG"]}, body)
+
+    def test_a_fresh_punch_is_delivered(self):
+        self.assertEqual(self.post("247\t2026-11-23 13:59:58\t0\t1"), (200, "OK: 1"))
+        self.assertEqual([p.user_id for p in self.punches], ["247"])
+
+    def test_stored_history_is_acknowledged_but_not_delivered(self):
+        body = "\n".join([
+            "100\t2026-10-01 07:00:00\t0\t1",
+            "101\t2026-11-23 13:50:00\t0\t1",
+            "247\t2026-11-23 13:59:30\t0\t1",
+        ])
+        status, text = self.post(body)
+        # OK for the whole batch, so the terminal does not offer them again.
+        self.assertEqual(status, 200)
+        self.assertEqual([p.user_id for p in self.punches], ["247"])
+        self.assertEqual(self.router.stats.stale_punches, 2)
+        self.assertEqual(self.router.stats.punches, 1)
+        self.assertTrue(any("age limit" in message for _, message in self.logger.messages))
+
+    def test_a_terminal_clock_far_ahead_is_not_trusted(self):
+        self.post("247\t2026-11-23 14:10:00\t0\t1")
+        self.assertEqual(self.punches, [])
+        self.assertEqual(self.router.stats.stale_punches, 1)
+
+    def test_the_limit_is_inclusive(self):
+        self.post("247\t2026-11-23 13:55:00\t0\t1")
+        self.assertEqual(len(self.punches), 1)
+
+    def test_no_limit_when_none(self):
+        router = AdmsRouter([STATION], self.punches.append, max_age_seconds=None, clock=lambda: self.NOW)
+        router.handle("POST", "/iclock/cdata", {"SN": ["ABC123"]}, "100\t2026-10-01 07:00:00")
+        self.assertEqual(len(self.punches), 1)
+
+    def test_start_if_configured_applies_the_default_limit(self):
+        listener = start_if_configured([STATION], self.punches.append, host="127.0.0.1", port=0)
+        self.addCleanup(listener.stop)
+        self.assertEqual(listener.router.max_age_seconds, 300)
+
+
 class AdmsListenerTests(unittest.TestCase):
     def test_serves_a_real_punch_over_http(self):
         punches = []
@@ -297,6 +350,33 @@ class ListenerLifecycleTests(unittest.TestCase):
         self.sync.status.set("lift_off_timestamp", str(datetime.datetime.now()))
         self.sync.main()
         self.assertIsNotNone(self.sync._realtime_listener)
+
+    def test_station_devices_marks_a_configured_device(self):
+        self.sync.config.devices = [PLAIN]
+        self.sync.config.STATION_DEVICES = {"GATE_01": "SN-GATE"}
+        listener = self.sync.ensure_realtime_listener()
+        self.assertIsNotNone(listener)
+        self.assertEqual(listener.router.by_serial, {"SN-GATE": "GATE_01"})
+        # The poll's own device list is untouched.
+        self.assertNotIn("realtime", self.sync.config.devices[0])
+
+    def test_station_devices_ignores_unknown_devices_and_bad_values(self):
+        self.sync.config.devices = [PLAIN]
+        self.sync.config.STATION_DEVICES = {"NOT_CONFIGURED": "SN"}
+        self.assertIsNone(self.sync.ensure_realtime_listener())
+        self.sync.config.STATION_DEVICES = ["GATE_01"]
+        self.assertIsNone(self.sync.ensure_realtime_listener())
+
+    def test_a_device_flagged_in_devices_keeps_its_own_serial(self):
+        self.sync.config.devices = [STATION]
+        self.sync.config.STATION_DEVICES = {"STATION_01": "OTHER"}
+        listener = self.sync.ensure_realtime_listener()
+        self.assertEqual(listener.router.by_serial, {"ABC123": "STATION_01"})
+
+    def test_the_configured_age_limit_reaches_the_listener(self):
+        self.sync.config.devices = [STATION]
+        self.sync.STATION_PUNCH_MAX_AGE_SECONDS = 120
+        self.assertEqual(self.sync.ensure_realtime_listener().router.max_age_seconds, 120)
 
     def test_main_releases_the_listener_when_a_stop_is_requested(self):
         self.sync.config.devices = [STATION]

@@ -90,6 +90,18 @@ STATION_PUNCH_METHOD = ''
 # that arrives late is of no use to them. A station punch is never retried.
 STATION_PUNCH_TIMEOUT = 5
 
+# A station punch timed further than this many seconds from the sync PC's
+# clock is acknowledged but not posted. A terminal newly switched to ADMS may
+# upload its stored punches, and those must not each trigger a label. Keep the
+# terminal clocks right; a terminal more than this far out is ignored.
+STATION_PUNCH_MAX_AGE_SECONDS = 300
+
+# Which configured devices are station terminals, as device_id -> serial
+# number (System Info on the terminal). The same as adding
+# 'realtime': True and 'serial_number' to those entries in devices below, but
+# one line, which is what deployment/Install-StationTerminal.ps1 writes.
+STATION_DEVICES = {}
+
 # Where the ADMS listener binds. The terminals must be able to reach it, so
 # this is 0.0.0.0 rather than loopback - restrict it to the device VLAN at the
 # firewall. The port only opens when some device has 'realtime': True.

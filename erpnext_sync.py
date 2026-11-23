@@ -37,6 +37,7 @@ ERPNEXT_REQUEST_TIMEOUT = getattr(config, 'ERPNEXT_REQUEST_TIMEOUT', getattr(con
 STATION_PUNCH_TIMEOUT = getattr(config, 'STATION_PUNCH_TIMEOUT', 5)
 STATION_LISTENER_HOST = getattr(config, 'STATION_LISTENER_HOST', '0.0.0.0')
 STATION_LISTENER_PORT = getattr(config, 'STATION_LISTENER_PORT', 8090)
+STATION_PUNCH_MAX_AGE_SECONDS = getattr(config, 'STATION_PUNCH_MAX_AGE_SECONDS', 300)
 DEFAULT_ZK_PORT = 4370
 DEFAULT_ZK_PASSWORD = 0
 DEVICE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]+$')
@@ -348,6 +349,34 @@ def send_punch_event(event):
 _realtime_listener = None
 
 
+def station_devices():
+    """The devices list with STATION_DEVICES applied.
+
+    STATION_DEVICES = {'FP2_DEVICE_12': 'SERIAL'} marks a configured device as
+    a station terminal without rewriting the multi-line devices list, which is
+    what an install script can safely change. A device already flagged
+    'realtime' in devices keeps its own settings; a STATION_DEVICES entry for a
+    device that is not in devices is ignored. Copies are returned, so the poll
+    never sees these keys.
+    """
+    devices = getattr(config, 'devices', []) or []
+    stations = getattr(config, 'STATION_DEVICES', {}) or {}
+    if not isinstance(stations, dict):
+        error_logger.error('STATION_DEVICES must be a dict of device_id to serial number; station terminals stay off')
+        stations = {}
+    result = []
+    for device in devices:
+        device = dict(device)
+        device_id = str(device.get('device_id') or '')
+        if device_id in stations and not device.get('realtime'):
+            device['realtime'] = True
+            serial = str(stations[device_id] or '').strip()
+            if serial:
+                device['serial_number'] = serial
+        result.append(device)
+    return result
+
+
 def ensure_realtime_listener():
     """Start the ADMS listener once, if any device asks for it.
 
@@ -365,11 +394,12 @@ def ensure_realtime_listener():
         return _realtime_listener
     try:
         _realtime_listener = realtime_capture.start_if_configured(
-            getattr(config, 'devices', []) or [],
+            station_devices(),
             send_punch_event,
             host=STATION_LISTENER_HOST,
             port=STATION_LISTENER_PORT,
             logger=info_logger,
+            max_age_seconds=STATION_PUNCH_MAX_AGE_SECONDS,
         )
     except Exception:
         error_logger.exception('exception when starting the realtime ADMS listener; attendance sync continues')
