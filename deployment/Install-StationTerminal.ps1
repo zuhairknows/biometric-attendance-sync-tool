@@ -15,7 +15,9 @@
                  app.module.function, or a Server Script api_method name).
   -Stations      sets STATION_DEVICES, the complete list of station terminals,
                  as device_id=serial, e.g. FP2_DEVICE_12=CKJX201960123.
-                 Each device_id must already be in devices.
+                 A device_id in devices is also polled for attendance as
+                 before; any other device_id is a station-only terminal,
+                 recognised by its serial and never polled.
   -MaxAgeSeconds sets STATION_PUNCH_MAX_AGE_SECONDS (punches further than this
                  from the sync PC clock are not posted; default 300 in code).
   -AllowFrom     creates or updates an inbound firewall rule for the listener
@@ -52,13 +54,16 @@ $ErrorActionPreference = 'Stop'
 $RuleName = 'FPF Biometric Station ADMS'
 
 # SHA-256 of LF-normalized bytes. Old = the reviewed erpnext_sync.py installed by
-# the Phase 2 release (unchanged from 4f20179 to 88ee83a); New = this update.
-# realtime_capture.py is new: the installed copy must be absent or this version.
+# the Phase 2 release (unchanged from 4f20179 to 88ee83a) and the first station
+# release (598242c); New = this update (station-only terminals).
+# realtime_capture.py is new: the installed copy may be absent, the first station
+# release (598242c), or this version.
 $Files = [ordered]@{
-    'erpnext_sync.py'     = @{ Old = @('07a320b5f2f3b38f8567b85098c0ff2ed2ead96002c3f7f0f1067b2ce7d53be0')
-                               New = '9fe5c07f33c543472264aa693edeab33864d103cb49d33c48e02b403669ce5d7' }
-    'realtime_capture.py' = @{ Old = @()
-                               New = 'de9ec6d647cd2ac6bf1aae16ee98e3ce9efd067bf67d8130eecb37d3850b7d3d' }
+    'erpnext_sync.py'     = @{ Old = @('07a320b5f2f3b38f8567b85098c0ff2ed2ead96002c3f7f0f1067b2ce7d53be0',
+                                       '9fe5c07f33c543472264aa693edeab33864d103cb49d33c48e02b403669ce5d7')
+                               New = '05e03f87af33dad080d9ff2ecdec4d3394513b72b4261c5cea15e7e0bb440429' }
+    'realtime_capture.py' = @{ Old = @('de9ec6d647cd2ac6bf1aae16ee98e3ce9efd067bf67d8130eecb37d3850b7d3d'); MayBeAbsent = $true
+                               New = '52a4cc613f414442e799683c5792dae9065082c0b78715c5787be0257ae21aa2' }
 }
 
 function Get-NormalizedHash([string]$Path) {
@@ -96,7 +101,7 @@ foreach ($name in $Files.Keys) {
     $newHash = Get-NormalizedHash $incoming
     if ($newHash -ne $Files[$name].New) { throw "New $name does not match the reviewed update ($newHash)" }
     if (-not (Test-Path -LiteralPath $installed)) {
-        if ($Files[$name].Old.Count) { throw "Installed $name is missing" }
+        if (-not $Files[$name].MayBeAbsent) { throw "Installed $name is missing" }
         Say "  $name : new file, will be added"; $toCopy += $name; $absent += $name; continue
     }
     $current = Get-NormalizedHash $installed
@@ -135,7 +140,8 @@ elseif ($Stations.Count) {
     foreach ($entry in $Stations) {
         if ($entry -notmatch '^([A-Za-z0-9_-]+)=([A-Za-z0-9-]{3,40})$') { throw "Station must be device_id=serial: $entry" }
         $id = $Matches[1]; $serial = $Matches[2]
-        if ($deviceIds -notcontains $id) { throw "$id is not in devices in local_config.py" }
+        if ($deviceIds -contains $id) { Say "  $id : polled device, also a station terminal" }
+        else { Say "  $id : station-only terminal (not in devices, never polled for attendance)" }
         if ($seen.ContainsKey($id)) { throw "$id is listed twice" }
         $seen[$id] = $true
         $pairs += "'$id': '$serial'"

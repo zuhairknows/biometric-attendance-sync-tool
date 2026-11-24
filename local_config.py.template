@@ -100,6 +100,8 @@ STATION_PUNCH_MAX_AGE_SECONDS = 300
 # number (System Info on the terminal). The same as adding
 # 'realtime': True and 'serial_number' to those entries in devices below, but
 # one line, which is what deployment/Install-StationTerminal.ps1 writes.
+# A device_id that is not in devices is a station-only terminal: recognised by
+# its serial, never polled, so its punches are not attendance.
 STATION_DEVICES = {}
 
 # Where the ADMS listener binds. The terminals must be able to reach it, so

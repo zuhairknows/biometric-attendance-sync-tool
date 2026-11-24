@@ -173,6 +173,7 @@ class AdmsRouterTests(unittest.TestCase):
     def test_unknown_path_is_404(self):
         status, _ = self.router.handle("GET", "/iclock/nonsense", {"SN": ["ABC123"]}, "")
         self.assertEqual(status, 404)
+        self.assertTrue(any("Unhandled ADMS request" in m and "/iclock/nonsense" in m for _, m in self.logger.messages))
 
     def test_a_failing_callback_does_not_fail_the_batch(self):
         def explode(event):
@@ -360,10 +361,23 @@ class ListenerLifecycleTests(unittest.TestCase):
         # The poll's own device list is untouched.
         self.assertNotIn("realtime", self.sync.config.devices[0])
 
-    def test_station_devices_ignores_unknown_devices_and_bad_values(self):
+    def test_a_station_only_terminal_is_recognised_but_never_polled(self):
         self.sync.config.devices = [PLAIN]
-        self.sync.config.STATION_DEVICES = {"NOT_CONFIGURED": "SN"}
+        self.sync.config.STATION_DEVICES = {"STATION_ONLY_01": "AJE126001404"}
+        listener = self.sync.ensure_realtime_listener()
+        self.assertIsNotNone(listener)
+        self.assertEqual(listener.router.by_serial, {"AJE126001404": "STATION_ONLY_01"})
+        self.assertEqual(listener.router.by_ip, {})
+        # The poll's own device list is untouched.
+        self.assertEqual([d["device_id"] for d in self.sync.config.devices], ["GATE_01"])
+
+    def test_a_station_only_terminal_without_a_serial_is_ignored(self):
+        self.sync.config.devices = [PLAIN]
+        self.sync.config.STATION_DEVICES = {"STATION_ONLY_01": ""}
         self.assertIsNone(self.sync.ensure_realtime_listener())
+
+    def test_station_devices_that_is_not_a_dict_is_ignored(self):
+        self.sync.config.devices = [PLAIN]
         self.sync.config.STATION_DEVICES = ["GATE_01"]
         self.assertIsNone(self.sync.ensure_realtime_listener())
 
