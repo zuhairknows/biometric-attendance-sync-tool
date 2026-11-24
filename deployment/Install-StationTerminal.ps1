@@ -11,7 +11,8 @@
   With no station settings the new files are inert: no port is opened and
   nothing is posted, so step 1 can be installed on its own.
 
-  -PunchMethod   sets STATION_PUNCH_METHOD (the whitelisted ERPNext method).
+  -PunchMethod   sets STATION_PUNCH_METHOD (the whitelisted ERPNext method:
+                 app.module.function, or a Server Script api_method name).
   -Stations      sets STATION_DEVICES, the complete list of station terminals,
                  as device_id=serial, e.g. FP2_DEVICE_12=CKJX201960123.
                  Each device_id must already be in devices.
@@ -40,7 +41,7 @@
 param(
     [string]$AppRoot = "$env:ProgramFiles\FPFBiometricSyncPhase2",
     [string]$ServiceName = 'ERPNextBiometricPushService',
-    [ValidatePattern('^$|^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$')][string]$PunchMethod = '',
+    [ValidatePattern('^$|^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$')][string]$PunchMethod = '',
     [string[]]$Stations = @(),
     [ValidateRange(0, 3600)][int]$MaxAgeSeconds = 0,
     [string[]]$AllowFrom = @(),
