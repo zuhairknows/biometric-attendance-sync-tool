@@ -12,6 +12,10 @@ from logging.handlers import RotatingFileHandler
 from pickledb import PickleDB
 from zk import ZK, const
 
+import atexit
+
+import realtime_capture
+
 EMPLOYEE_NOT_FOUND_ERROR_MESSAGE = "No Employee found for the given employee field value"
 EMPLOYEE_INACTIVE_ERROR_MESSAGE = "Transactions cannot be created for an Inactive Employee"
 DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE = "This employee already has a log with the same timestamp"
@@ -27,6 +31,13 @@ device_punch_values_IN = getattr(config, 'device_punch_values_IN', [0,4])
 device_punch_values_OUT = getattr(config, 'device_punch_values_OUT', [1,5])
 ERPNEXT_VERSION = getattr(config, 'ERPNEXT_VERSION', 14)
 ERPNEXT_REQUEST_TIMEOUT = getattr(config, 'ERPNEXT_REQUEST_TIMEOUT', getattr(config, 'REQUEST_TIMEOUT', 30))
+# A station punch is on a person's critical path, so it gets a short timeout of
+# its own rather than the 30s attendance one: if the endpoint has not answered
+# in a few seconds the operator has already given up on the label.
+STATION_PUNCH_TIMEOUT = getattr(config, 'STATION_PUNCH_TIMEOUT', 5)
+STATION_LISTENER_HOST = getattr(config, 'STATION_LISTENER_HOST', '0.0.0.0')
+STATION_LISTENER_PORT = getattr(config, 'STATION_LISTENER_PORT', 8090)
+STATION_PUNCH_MAX_AGE_SECONDS = getattr(config, 'STATION_PUNCH_MAX_AGE_SECONDS', 300)
 DEFAULT_ZK_PORT = 4370
 DEFAULT_ZK_PASSWORD = 0
 DEVICE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]+$')
@@ -54,7 +65,12 @@ def main(stop_requested=None):
         error_logger.critical('DURABLE_SYNC_ENABLED must be a Python boolean; synchronization stopped')
         return
     if stop_requested():
+        stop_realtime_listener()
         return
+    # Before the durable/legacy split and before the PULL_FREQUENCY gate on
+    # purpose: the listener has to be up from the first cycle in either sync
+    # mode, not from the first time a poll comes due.
+    ensure_realtime_listener()
     if enabled:
         # Import lazily: inspecting the module or running legacy tests must not open a real DB.
         from durable_sync import run
@@ -280,6 +296,133 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
             error_logger.error('\t'.join(['Error during ERPNext API Call.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), error_str]))
         return response.status_code, error_str
 
+def send_punch_event(event):
+    """Hand a realtime punch from a station terminal to ERPNext.
+
+    This is the fast path that sits beside send_to_erpnext(). It does not
+    create the Employee Checkin - the ordinary poll still does that, and the
+    duplicate it would otherwise cause is exactly what we avoid by leaving it
+    alone. What this does is tell the station endpoint that a named person
+    verified at a named terminal, so a waiting tablet can resolve its intent
+    and print.
+
+    A failure here is NOT retried, and nothing about it reaches the ledger.
+    The operator is standing at the machine; a label that arrives two minutes
+    late is worse than one that never comes, because by then they have moved on
+    and the pack is unlabelled. The punch itself is still safe - the poll picks
+    it up as attendance - so the only thing lost is the automation, and that is
+    logged loudly rather than queued.
+
+    Returns (status_code, message) like send_to_erpnext, with 0 for a failure
+    that never reached ERPNext at all.
+    """
+    method = str(getattr(config, 'STATION_PUNCH_METHOD', '') or '')
+    if not method:
+        return 0, "No station punch method configured."
+    url = f"{config.ERPNEXT_URL}/api/method/{method}"
+    headers = {
+        'Authorization': "token "+ config.ERPNEXT_API_KEY + ":" + config.ERPNEXT_API_SECRET,
+        'Accept': 'application/json'
+    }
+    data = {
+        'device_id': event.device_id,
+        'serial_number': event.serial_number,
+        'user_id': event.user_id,
+        'timestamp': event.timestamp.__str__(),
+        'status': event.status,
+        'verify_mode': event.verify_mode,
+        'workcode': event.workcode,
+    }
+    try:
+        response = requests.request("POST", url, headers=headers, json=data, timeout=STATION_PUNCH_TIMEOUT)
+    except Exception as exc:
+        error_logger.error('\t'.join(['Station punch transport failure; not retried.', str(event.device_id), str(event.user_id), str(event.timestamp), type(exc).__name__]))
+        return 0, "Station punch transport failure."
+    if response.status_code == 200:
+        info_logger.info('\t'.join(['Station punch delivered.', str(event.device_id), str(event.user_id), str(event.timestamp)]))
+        return response.status_code, "Station punch delivered."
+    error_str = _safe_get_error_str(response)
+    error_logger.error('\t'.join(['Station punch refused; not retried.', str(event.device_id), str(event.user_id), str(event.timestamp), str(response.status_code), error_str[:200]]))
+    return response.status_code, error_str
+
+
+_realtime_listener = None
+
+
+def station_devices():
+    """The devices list with STATION_DEVICES applied.
+
+    STATION_DEVICES = {'FP2_DEVICE_12': 'SERIAL'} marks a configured device as
+    a station terminal without rewriting the multi-line devices list, which is
+    what an install script can safely change. A device already flagged
+    'realtime' in devices keeps its own settings; a STATION_DEVICES entry for a
+    device that is not in devices is ignored. Copies are returned, so the poll
+    never sees these keys.
+    """
+    devices = getattr(config, 'devices', []) or []
+    stations = getattr(config, 'STATION_DEVICES', {}) or {}
+    if not isinstance(stations, dict):
+        error_logger.error('STATION_DEVICES must be a dict of device_id to serial number; station terminals stay off')
+        stations = {}
+    result = []
+    for device in devices:
+        device = dict(device)
+        device_id = str(device.get('device_id') or '')
+        if device_id in stations and not device.get('realtime'):
+            device['realtime'] = True
+            serial = str(stations[device_id] or '').strip()
+            if serial:
+                device['serial_number'] = serial
+        result.append(device)
+    return result
+
+
+def ensure_realtime_listener():
+    """Start the ADMS listener once, if any device asks for it.
+
+    Called from main() rather than from the service entry points, because
+    there are several of those and main() is the one thing they all call.
+    Idempotent, so the every-15s cycle is free, and a start that failed - a
+    port briefly in use, say - is retried on the next cycle instead of being
+    lost until a restart.
+
+    It never raises. Realtime punches are an addition to attendance sync, and
+    attendance sync must not stop because the addition is unhappy.
+    """
+    global _realtime_listener
+    if _realtime_listener is not None:
+        return _realtime_listener
+    try:
+        _realtime_listener = realtime_capture.start_if_configured(
+            station_devices(),
+            send_punch_event,
+            host=STATION_LISTENER_HOST,
+            port=STATION_LISTENER_PORT,
+            logger=info_logger,
+            max_age_seconds=STATION_PUNCH_MAX_AGE_SECONDS,
+        )
+    except Exception:
+        error_logger.exception('exception when starting the realtime ADMS listener; attendance sync continues')
+        _realtime_listener = None
+    return _realtime_listener
+
+
+def stop_realtime_listener():
+    """Close the listener. Safe to call when it was never started."""
+    global _realtime_listener
+    listener = _realtime_listener
+    _realtime_listener = None
+    if listener is None:
+        return
+    try:
+        listener.stop()
+    except Exception:
+        error_logger.exception('exception when stopping the realtime ADMS listener')
+
+
+atexit.register(stop_realtime_listener)
+
+
 def is_duplicate_employee_checkin_response(status_code, message):
     return status_code == 417 and DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE in message
 
@@ -398,6 +541,14 @@ def normalize_device_config(device):
         info_logger.warning('Device '+str(device_id)+' has clear_from_device_on_fetch enabled. This can delete attendance records from the biometric device.')
     normalized_device['latitude'] = device.get('latitude')
     normalized_device['longitude'] = device.get('longitude')
+    # Station terminals only. A realtime device also pushes each punch over
+    # ADMS the moment it happens, so a tablet beside it can react in about a
+    # second instead of waiting for the next poll. It stays in the ordinary
+    # poll as well, which is what keeps attendance correct when the push path
+    # is down. serial_number is how the ADMS listener recognises the device;
+    # without it the listener falls back to matching on ip.
+    normalized_device['realtime'] = bool(device.get('realtime', False))
+    normalized_device['serial_number'] = device.get('serial_number')
     return normalized_device
 
 def validate_device_id(device_id):

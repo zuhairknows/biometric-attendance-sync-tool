@@ -68,6 +68,48 @@ UNMATCHED_RECHECK_HOURS = 6
 
 
 # ============================================================
+# Station Terminals (optional)
+# ============================================================
+#
+# Only for a terminal with a screen beside it that has to react to a punch -
+# an operator confirming production at a machine, for example. Leave
+# STATION_PUNCH_METHOD empty and every device's 'realtime' False, and none of
+# this does anything: no port is opened and nothing is posted, so attendance
+# sync behaves exactly as before.
+#
+# This path never creates the Employee Checkin. The ordinary poll still does
+# that, which is also what keeps attendance correct whenever the push path is
+# down.
+
+# The whitelisted ERPNext method a realtime punch is posted to, for example
+# 'advanced_manufacturing.station.punch'. Empty disables the push entirely.
+STATION_PUNCH_METHOD = ''
+
+# Seconds to wait for that method. Deliberately much shorter than
+# ERPNEXT_REQUEST_TIMEOUT: somebody is standing at the machine, and a reply
+# that arrives late is of no use to them. A station punch is never retried.
+STATION_PUNCH_TIMEOUT = 5
+
+# A station punch timed further than this many seconds from the sync PC's
+# clock is acknowledged but not posted. A terminal newly switched to ADMS may
+# upload its stored punches, and those must not each trigger a label. Keep the
+# terminal clocks right; a terminal more than this far out is ignored.
+STATION_PUNCH_MAX_AGE_SECONDS = 300
+
+# Which configured devices are station terminals, as device_id -> serial
+# number (System Info on the terminal). The same as adding
+# 'realtime': True and 'serial_number' to those entries in devices below, but
+# one line, which is what deployment/Install-StationTerminal.ps1 writes.
+STATION_DEVICES = {}
+
+# Where the ADMS listener binds. The terminals must be able to reach it, so
+# this is 0.0.0.0 rather than loopback - restrict it to the device VLAN at the
+# firewall. The port only opens when some device has 'realtime': True.
+STATION_LISTENER_HOST = '0.0.0.0'
+STATION_LISTENER_PORT = 8090
+
+
+# ============================================================
 # ZKTeco Biometric Devices
 # ============================================================
 #
@@ -95,6 +137,8 @@ UNMATCHED_RECHECK_HOURS = 6
 # - password = 0 means no ZKTeco communication password.
 # - punch_direction = None lets ERPNext Auto Attendance determine IN/OUT.
 # - clear_from_device_on_fetch MUST remain False in production.
+# - realtime defaults to False and belongs only on a station terminal; see
+#   the Station Terminals section above and docs/station-terminal-realtime-punch.md.
 
 devices = [
     # ----------------------------
@@ -166,7 +210,25 @@ devices = [
         'port': 4378,
         'password': 0,
         'punch_direction': None,
-        'clear_from_device_on_fetch': False
+        'clear_from_device_on_fetch': False,
+
+        # Station terminal keys. Both are optional and default to off, so
+        # every other device above behaves as it always has.
+        #
+        # 'realtime': True means this device ALSO pushes each punch over ADMS
+        # the moment it happens, so a screen beside it can react in about a
+        # second instead of waiting for the next PULL_FREQUENCY poll. It stays
+        # in the ordinary poll as well.
+        #
+        # Turning it on needs a change on the device itself, under
+        # Comm -> Cloud Server Setting: point it at this PC's IP and
+        # STATION_LISTENER_PORT. It is reversible from the device's own menu.
+        'realtime': False,
+
+        # The serial number as the terminal reports it, which is how the
+        # listener recognises the device. Without it the listener falls back to
+        # matching on 'ip'. Only needed when 'realtime' is True.
+        'serial_number': None
     },
     {
         'device_id': 'FP2_DEVICE_09',
