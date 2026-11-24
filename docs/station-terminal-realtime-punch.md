@@ -38,7 +38,7 @@ In `local_config.py`:
 | `STATION_LISTENER_HOST` | `'0.0.0.0'` | where the listener binds; the terminals must reach it, so restrict it to the device VLAN at the firewall |
 | `STATION_LISTENER_PORT` | `8090` | the listener's port |
 | `STATION_PUNCH_MAX_AGE_SECONDS` | `300` | a punch timed further than this from the sync PC clock, either way, is acknowledged but not posted |
-| `STATION_DEVICES` | `{}` | station terminals as `device_id -> serial`; the one-line alternative to the two keys below |
+| `STATION_DEVICES` | `{}` | station terminals as `device_id -> serial`; the one-line alternative to the two keys below. A `device_id` not in `devices` is a **station-only** terminal: recognised by its serial, never polled, so its punches are not attendance |
 
 And per device, in `devices`:
 

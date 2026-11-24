@@ -248,6 +248,9 @@ class AdmsRouter:
         if path.endswith("/devicecmd"):
             return 200, "OK"
 
+        # Logged so a terminal on newer firmware that speaks a part of the
+        # protocol this listener does not handle shows up in logs.log.
+        self._log("warning", "Unhandled ADMS request", device_id, method, path)
         return 404, "Not Found"
 
     def _log(self, level, *parts):

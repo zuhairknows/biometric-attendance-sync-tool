@@ -350,14 +350,19 @@ _realtime_listener = None
 
 
 def station_devices():
-    """The devices list with STATION_DEVICES applied.
+    """The devices the ADMS listener should know, with STATION_DEVICES applied.
 
     STATION_DEVICES = {'FP2_DEVICE_12': 'SERIAL'} marks a configured device as
     a station terminal without rewriting the multi-line devices list, which is
     what an install script can safely change. A device already flagged
-    'realtime' in devices keeps its own settings; a STATION_DEVICES entry for a
-    device that is not in devices is ignored. Copies are returned, so the poll
-    never sees these keys.
+    'realtime' in devices keeps its own settings.
+
+    An entry whose device_id is not in devices is a station-only terminal: it
+    is recognised by its serial number and its punches go only to the station
+    method. It is never polled, so its punches are not attendance. It needs a
+    serial number, since there is no ip to fall back on.
+
+    Copies are returned, so the poll never sees these keys or entries.
     """
     devices = getattr(config, 'devices', []) or []
     stations = getattr(config, 'STATION_DEVICES', {}) or {}
@@ -365,15 +370,26 @@ def station_devices():
         error_logger.error('STATION_DEVICES must be a dict of device_id to serial number; station terminals stay off')
         stations = {}
     result = []
+    polled = set()
     for device in devices:
         device = dict(device)
         device_id = str(device.get('device_id') or '')
+        polled.add(device_id)
         if device_id in stations and not device.get('realtime'):
             device['realtime'] = True
             serial = str(stations[device_id] or '').strip()
             if serial:
                 device['serial_number'] = serial
         result.append(device)
+    for device_id, serial in stations.items():
+        device_id = str(device_id or '').strip()
+        serial = str(serial or '').strip()
+        if not device_id or device_id in polled:
+            continue
+        if not serial:
+            error_logger.error('\t'.join(['Station-only terminal has no serial number; ignored.', device_id]))
+            continue
+        result.append({'device_id': device_id, 'serial_number': serial, 'realtime': True})
     return result
 
 
